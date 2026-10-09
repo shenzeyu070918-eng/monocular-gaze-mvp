@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+.env.*
+models/*
+!models/README.md
+test-results/
+gaze-evaluation-*.csv
+*.log
+build/
+dist/
+*.egg-info/

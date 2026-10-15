@@ -63,6 +63,29 @@ const meta={page_clock_id:'page1'},calibration={action:'reset',matrix:null,calib
  assert.equal(recording.state().error,'磁盘写入失败');
 }
 {
+ const states=[],requests=[];let finishStop;
+ const recording=new RecordingSession({onState:state=>states.push(state),request:async(path,body)=>{
+  requests.push({path,body});
+  if(path.endsWith('/start'))return {session_id:'invalid-result',active:true};
+  if(path.endsWith('/receipt'))return {active:false,error:'录制结果格式无效：raw 必须是有限数值'};
+  if(path.endsWith('/stop'))return new Promise(resolve=>{finishStop=()=>resolve({active:false,error:null});});
+  return {error:null};
+ }});
+ await recording.startManual(meta,calibration);
+ const context=recording.frameContext();
+ await recording.track(recording.receipt(context,1,130));
+ assert.equal(recording.state().active,false);
+ assert.equal(recording.state().manual,false);
+ assert.equal(recording.frameContext(),null);
+ assert.equal(states.at(-1).active,false);
+ assert.equal(recording.state().busy,true);
+ for(let i=0;i<5;i++)await Promise.resolve();
+ assert.equal(requests.at(-1).path,'/api/recording/stop');
+ finishStop();await recording.stop();
+ assert.equal(recording.state().busy,false);
+ assert.match(recording.state().error,/raw 必须是有限数值/);
+}
+{
  let finishStart;const recording=new RecordingSession({request:path=>path.endsWith('/start')?new Promise(resolve=>{finishStart=()=>resolve({session_id:'late',active:true});}):Promise.resolve({error:null})});
  const opening=recording.beginTask('t1',meta,calibration);
  await assert.rejects(recording.beginTask('t2',meta,calibration),/请等待/);
@@ -84,7 +107,7 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
 // Exercise the actual page handlers with a fake DOM and camera. No device,
 // calibration fitting or real-time measurements are involved.
 {
- let time=2000,animation,hangReceipt=false,holdNextFrame=false,releaseFrame,timerId=0,cameraStarts=0;
+ let time=2000,animation,hangReceipt=false,failReceipt=false,holdNextFrame=false,releaseFrame,timerId=0,cameraStarts=0;
  const requests=[],handlers={},timers=new Map(),rootClasses=new Set();
  const context=new Proxy({}, {get:()=>()=>{}});
  const elements=new Map();
@@ -98,7 +121,7 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
  globalThis.getComputedStyle=el=>el===element('jumpTarget')?{width:'32px',height:'32px'}:{width:'72px',height:'20px'};
  globalThis.window={addEventListener:(type,handler)=>{handlers[type]=handler;}};
  globalThis.requestAnimationFrame=callback=>{animation=callback;};globalThis.setTimeout=(callback,delay)=>{timers.set(++timerId,{callback,delay});return timerId;};globalThis.clearTimeout=id=>timers.delete(id);
- globalThis.fetch=async(path,options={})=>{const body=options.body?JSON.parse(options.body):undefined;requests.push({path,body});let result={error:null};if(path==='/api/status')result={ready:true};else if(path==='/api/recording/config')result={request_timeout_ms:250,jump:{point_count:8,dwell_ms:100,min_distance:.35,margin:.05}};else if(path==='/api/recording/start')result={session_id:`page-${requests.length}`,active:true};else if(path==='/api/frame')result={valid:true,raw:[.4,.5],status:'tracking',distance_cm:50,inference_ms:1};if(path.endsWith('/receipt')&&hangReceipt)return new Promise((resolve,reject)=>{options.signal.addEventListener('abort',()=>reject(new DOMException('fake request aborted','AbortError')));});if(path==='/api/frame'&&holdNextFrame){holdNextFrame=false;return new Promise(resolve=>{releaseFrame=()=>resolve({ok:true,json:async()=>result});});}return {ok:true,json:async()=>result};};
+ globalThis.fetch=async(path,options={})=>{const body=options.body?JSON.parse(options.body):undefined;requests.push({path,body});let result={error:null};if(path==='/api/status')result={ready:true};else if(path==='/api/recording/config')result={request_timeout_ms:250,jump:{point_count:8,dwell_ms:100,min_distance:.35,margin:.05}};else if(path==='/api/recording/start')result={session_id:`page-${requests.length}`,active:true};else if(path==='/api/frame')result={valid:true,raw:[.4,.5],status:'tracking',distance_cm:50,inference_ms:1};else if(path.endsWith('/receipt')&&failReceipt)result={active:false,error:'录制结果格式无效：raw 必须是有限数值'};if(path.endsWith('/receipt')&&hangReceipt)return new Promise((resolve,reject)=>{options.signal.addEventListener('abort',()=>reject(new DOMException('fake request aborted','AbortError')));});if(path==='/api/frame'&&holdNextFrame){holdNextFrame=false;return new Promise(resolve=>{releaseFrame=()=>resolve({ok:true,json:async()=>result});});}return {ok:true,json:async()=>result};};
  const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
  try{
   await import('../static/app.js?mock-browser');await flush();
@@ -164,6 +187,18 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
   await element('start').onclick();await flush();assert.equal(element('start').disabled,true);
   const [timeoutId,timeout]=[...timers.entries()].find(([,timer])=>timer.delay===250);timers.delete(timeoutId);timeout.callback();await flush();
   assert.equal(element('recordingError').hidden,false);assert.match(element('recordingError').textContent,/超时/);assert.equal(element('start').disabled,false);assert.equal(element('recording').checked,false);assert.equal(requests.at(-1).path,'/api/recording/stop');
+  hangReceipt=false;await element('start').onclick();await flush();
+  element('recording').checked=true;await element('recording').onchange();
+  assert.equal(element('recording').checked,true);
+  assert.equal(element('recordingError').hidden,true);
+  failReceipt=true;
+  const [failureId,failureTimer]=[...timers.entries()].filter(([,timer])=>timer.delay===33).at(-1);timers.delete(failureId);failureTimer.callback();await flush();
+  assert.equal(element('recordingError').hidden,false);assert.match(element('recordingError').textContent,/raw 必须是有限数值/);
+  assert.equal(element('recording').checked,false);
+  assert.equal(requests.some(r=>r.path==='/api/recording/status'),false);
+  assert.equal(requests.at(-1).path,'/api/recording/stop');
+  assert.equal(element('tracking').textContent,'跟踪中');
+  await element('start').onclick();await flush();
  }finally{globalThis.setTimeout=originals.setTimeout;globalThis.clearTimeout=originals.clearTimeout;globalThis.fetch=originals.fetch;Object.defineProperty(globalThis,'performance',{configurable:true,value:originals.performance});Object.defineProperty(globalThis,'navigator',{configurable:true,value:originals.navigator});globalThis.document=originals.document;globalThis.window=originals.window;globalThis.getComputedStyle=originals.getComputedStyle;}
  console.log('page fake-camera test passed: fullscreen gate, timing payload, jump isolation, manual-session reuse, camera-pause late ACK and hung-receipt timeout');
 }

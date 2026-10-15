@@ -16,7 +16,7 @@ async function recordingRequest(path,body){
  catch(error){if(error.name==='AbortError')throw Error('录制请求超时，已停止等待；请检查本地服务和录制文件。');throw error;}
  finally{if(timeout!==null)clearTimeout(timeout);}
 }
-function recordingState(state){$('recording').checked=state.active;$('recording').disabled=state.busy||!!task||taskOpening||taskClosing||calibrating;$('recordingState').textContent=state.active?`正在录制${state.manual?'':'（任务自动开启）'} · ${state.session?.file||state.session?.session_id}`:state.busy?'正在结束录制…':'未录制 · 不保存图像';buttons();}
+function recordingState(state){$('recording').checked=state.active;if(state.active&&!state.error)$('recordingError').hidden=true;$('recording').disabled=state.busy||!!task||taskOpening||taskClosing||calibrating;$('recordingState').textContent=state.active?`正在录制${state.manual?'':'（任务自动开启）'} · ${state.session?.file||state.session?.session_id}`:state.busy?'正在结束录制…':'未录制 · 不保存图像';buttons();}
 function screenMetadata(){const r=stage.getBoundingClientRect();return {width_px:screen.width,height_px:screen.height,device_pixel_ratio:devicePixelRatio,window_width_px:innerWidth,window_height_px:innerHeight,fullscreen:!!document.fullscreenElement,stage_left_px:r.left,stage_top_px:r.top,stage_width_px:r.width,stage_height_px:r.height,screen_x:screenX,screen_y:screenY,outer_width_px:outerWidth,outer_height_px:outerHeight};}
 function recordingMetadata(){return {page_clock_id:pageClockId,screen:screenMetadata(),geometry:geometry(),measured:$('measured').checked,grayscale:$('gray').checked,camera_width:capture.width||640,camera_height:capture.height||480};}
 function calibrationEvent(){return {action:matrix?'applied':'reset',matrix:matrix?.map(row=>[...row])||null,calibration_id:calibrationId,group:matrix?'B':'A'};}

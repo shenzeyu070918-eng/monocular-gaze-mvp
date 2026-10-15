@@ -43,22 +43,15 @@ def open_camera(options):
     if options.backend == 'dshow' and sys.platform != 'win32':
         raise ValueError('DirectShow 仅适用于 Windows；当前系统请使用 camera.backend: auto。')
     backend = cv2.CAP_DSHOW if options.backend == 'dshow' else cv2.CAP_ANY
-    camera = cv2.VideoCapture(options.index, backend)
-    try:
-        if not camera.isOpened():
-            raise RuntimeError('无法打开摄像头；请检查权限、设备编号或是否被浏览器/其他程序占用。')
-        camera.set(cv2.CAP_PROP_FRAME_WIDTH, options.width)
-        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, options.height)
-        return camera
-    except BaseException:
-        camera.release()
-        raise
+    # The caller owns the returned handle, including configuration failures.
+    return cv2.VideoCapture(options.index, backend)
 
 
 class CameraPipeline:
     """Two owned workers and one replaceable pending frame; never a frame queue.
 
-    start/resume creates new camera/model resources. pause/close releases them.
+    pause stops both workers and releases the camera on its owning thread.
+    resume reuses the loaded engine; only close releases it after joining workers.
     A result contains no image. Timing samples are retained only when explicitly
     enabled for a finite benchmark; ordinary use retains only the latest result.
     """
@@ -73,7 +66,7 @@ class CameraPipeline:
         self._stop, self._run = threading.Event(), threading.Event()
         self._threads = ()
         self._closed = False
-        self._camera = None
+        self._engine = None
         self._sequence = 0  # Result cursors remain valid across pause/resume.
         self._reset_session()
 
@@ -147,16 +140,6 @@ class CameraPipeline:
     def resume(self):
         return self.start()
 
-    def _release_camera(self):
-        with self._condition:
-            camera, self._camera = self._camera, None
-        if camera is not None:
-            try:
-                # Also unblocks read() for backends that support cancellation.
-                camera.release()
-            except Exception as exc:
-                self._fail(exc)
-
     def _stop_workers(self):
         if not self._threads:
             return
@@ -166,7 +149,6 @@ class CameraPipeline:
             self._stop.set()
             self._run.set()
             self._condition.notify_all()
-        self._release_camera()
         deadline = time.monotonic() + self.settings.camera.stop_timeout_s
         for worker in self._threads:
             worker.join(max(0, deadline-time.monotonic()))
@@ -186,13 +168,23 @@ class CameraPipeline:
     def close(self):
         with self._control:
             self._stop_workers()
+            # No worker can still be using the model after a successful join.
+            # Keep the handle on failure so that cleanup can be retried.
+            if self._engine is not None:
+                self._engine.close()
+                self._engine = None
             self._closed = True
 
     def _capture_loop(self):
+        camera = None
         try:
+            import cv2
             camera = self._camera_factory(self.settings.camera)
+            if not camera.isOpened():
+                raise RuntimeError('无法打开摄像头；请检查权限、设备编号或是否被浏览器/其他程序占用。')
+            camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.settings.camera.width)
+            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.settings.camera.height)
             with self._condition:
-                self._camera = camera
                 self._actual_backend = camera.getBackendName()
             self._capture_ready.set()
             self._run.wait()
@@ -219,12 +211,19 @@ class CameraPipeline:
             self._fail(exc)
         finally:
             self._capture_ready.set()
-            self._release_camera()
+            # Only the capture worker owns this handle. Never release from a
+            # different thread to interrupt a read; wait for read to return.
+            if camera is not None:
+                try:
+                    camera.release()
+                except Exception as exc:
+                    self._fail(exc)
 
     def _inference_loop(self):
-        engine = None
         try:
-            engine = self._engine_factory()
+            if self._engine is None:
+                self._engine = self._engine_factory()
+            engine = self._engine
             with self._condition:
                 self._device, self._device_name = engine.device, engine.device_name
             self._engine_ready.set()
@@ -254,15 +253,9 @@ class CameraPipeline:
             self._fail(exc)
         finally:
             self._engine_ready.set()
-            if engine is not None:
-                try:
-                    engine.close()
-                except Exception as exc:
-                    self._fail(exc)
             with self._condition:
                 self._in_flight = False
                 self._condition.notify_all()
-            self._release_camera()
 
     def wait_for_result(self, after_sequence=0, timeout=None):
         with self._condition:

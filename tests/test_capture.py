@@ -226,6 +226,8 @@ class BenchmarkTests(unittest.TestCase):
         pipeline.wait = lambda seconds: self.assertIsNotNone(pipeline.wait_for_result(timeout=3))
         report = run_benchmark(pipeline, 1)
         self.assertEqual(report['predicted_frames'], 1)
+        self.assertEqual(report['valid_predictions'], 0)
+        self.assertEqual(report['prediction_status_counts'], {'no_face':1})
         self.assertEqual(report['actual_resolution'], [8,6])
         self.assertEqual(report['device_name'], 'FAKE CPU')
         self.assertIn('不含摄像头曝光与驱动缓冲', report['latency_definition'])

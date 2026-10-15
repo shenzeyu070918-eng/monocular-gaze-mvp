@@ -84,6 +84,7 @@ class CameraPipeline:
         self._pending = self._latest = self._error = None
         self._in_flight = False
         self._captured = self._predicted = self._dropped = self._discarded_on_stop = 0
+        self._valid_predictions, self._status_counts = 0, {}
         self._inference_ms, self._latency_ms = [], []
         self._actual_resolution = self._actual_backend = None
         self._device = self._device_name = None
@@ -238,6 +239,9 @@ class CameraPipeline:
                 completed_ns = self._clock_ns()
                 with self._condition:
                     self._predicted += 1
+                    self._valid_predictions += int(bool(data.get('valid', False)))
+                    status = data.get('status', 'unknown')
+                    self._status_counts[status] = self._status_counts.get(status, 0) + 1
                     self._in_flight = False
                     if self._collect_timings:
                         self._inference_ms.append((completed_ns-started_ns)/1_000_000)
@@ -283,6 +287,7 @@ class CameraPipeline:
                 'grayscale': self.settings.camera.grayscale,
                 'requested_backend': self.settings.camera.backend, 'actual_backend': self._actual_backend,
                 'captured_frames': self._captured, 'predicted_frames': self._predicted,
+                'valid_predictions': self._valid_predictions, 'prediction_status_counts': dict(self._status_counts),
                 'capture_fps': self._captured/seconds if seconds > 0 else None,
                 'inference_ms': timing_summary(self._inference_ms),
                 'read_to_result_latency_ms': timing_summary(self._latency_ms),

@@ -1,5 +1,6 @@
 """Privacy and writer lifecycle checks using synthetic numeric data and files."""
 from copy import deepcopy
+from fractions import Fraction
 import json
 from pathlib import Path
 import tempfile
@@ -7,7 +8,10 @@ import threading
 import unittest
 import warnings
 
+import numpy as np
+
 from gaze_core.config import RecordingSettings
+from gaze_core.geometry import intersect_screen
 from gaze_core.recorder import SessionRecorder
 from tools.replay import ReplayWarning, read_session
 
@@ -107,6 +111,66 @@ class RecorderTests(unittest.TestCase):
         web = self.recorder(source='web')
         with self.assertRaises(ValueError):
             web.record_frame(frame(),browser_capture_ms=-.5,inference_completed_ns=2)
+
+    def test_numpy_geometry_roundtrip_preserves_coordinates_and_integer_nanoseconds(self):
+        raw=intersect_screen(np.array([1.,.3,.5]),np.array([0.,0.,-1.]),30.2,19.6)
+        self.assertTrue(all(isinstance(value,np.floating) for value in raw))
+        data=dict(frame(),raw=raw,origin_m=[np.float32(1),np.float64(.3),np.float16(.5)],
+                  gaze_vector=[np.int32(0),np.int64(0),np.float64(-1)],
+                  head_degrees=[Fraction(1,2),np.float32(0),np.float64(0)],
+                  distance_cm=np.float32(50),eye_openness=np.float64(.4),inference_ms=np.int64(2))
+        recorder=self.recorder()
+        self.assertTrue(self.record_frame(recorder,dict(frame(),raw=raw)))
+        timestamp=2**53+7  # Exact synthetic clock; converting this to float loses a nanosecond.
+        self.assertTrue(self.record_frame(recorder,data,capture_ns=np.int64(timestamp),
+                        inference_completed_ns=np.int64(timestamp+37),frame_id=np.int64(17)))
+        recorder.close()
+        session=read_session(recorder.path)
+        row=session.records[2]
+        self.assertEqual(session.summary()['frame_count'],2)
+        self.assertEqual(row['raw'],[float(v) for v in raw])
+        self.assertLess(row['raw'][0],0)
+        for key in ('raw','origin_m','gaze_vector','head_degrees'):
+            self.assertTrue(all(type(v) is float for v in row[key]),key)
+        for key in ('distance_cm','eye_openness','inference_ms'):
+            self.assertIs(type(row[key]),float,key)
+        self.assertEqual((row['capture_ns'],row['inference_completed_ns'],row['frame_id']),
+                         (timestamp,timestamp+37,17))
+        for key in ('capture_ns','inference_completed_ns','frame_id','seq','server_ns','schema_version'):
+            self.assertIs(type(row[key]),int,key)
+
+    def test_real_scalars_are_normalized_in_metadata_events_and_end(self):
+        meta=metadata('web')
+        meta['screen']['width_px']=np.int64(1000)
+        meta['camera']['matrix'][0][0]=np.float32(640)
+        recorder=SessionRecorder(meta,directory=self.temporary.name)
+        self.addCleanup(recorder.close)
+        self.assertTrue(recorder.emit('target',**target(index=np.int32(0),
+                        target=[np.float32(.25),np.int64(1)],browser_time_ms=np.float32(20.5))))
+        for index,kind in enumerate((float,int,np.float16,np.float32,np.float64,np.longdouble,Fraction)):
+            value=kind(1)
+            self.assertTrue(self.record_frame(recorder,dict(frame(),inference_ms=value),frame_id=index))
+        recorder.close(browser_time_ms=np.float64(30.5))
+        session=read_session(recorder.path)
+        self.assertIs(type(session.metadata['screen']['width_px']),float)
+        self.assertIs(type(session.metadata['camera']['matrix'][0][0]),float)
+        event=next(row for row in session.records if row['type']=='target')
+        self.assertEqual(event['target'],[.25,1.])
+        self.assertTrue(all(type(v) is float for v in event['target']))
+        self.assertIs(type(event['index']),int)
+        self.assertIs(type(event['browser_time_ms']),float)
+        self.assertIs(type(session.records[-1]['browser_time_ms']),float)
+
+    def test_bool_nonfinite_and_nonreal_scalars_are_rejected(self):
+        recorder=self.recorder()
+        for bad in (True,False,np.bool_(True),float('nan'),float('inf'),-float('inf'),
+                    np.float32('nan'),np.float64('inf'),np.longdouble('-inf'),complex(1,0),np.complex64(1)):
+            with self.subTest(value=repr(bad)),self.assertRaises(ValueError):
+                self.record_frame(recorder,dict(frame(),raw=[bad,.5]))
+            with self.subTest(scalar=repr(bad)),self.assertRaises(ValueError):
+                self.record_frame(recorder,dict(frame(),inference_ms=bad))
+        recorder.close()
+        self.assertEqual(len(read_session(recorder.path).records),2)
 
     def recorder(self, *, source="python", writer=None, queue_size=16):
         settings = RecordingSettings(self.temporary.name, queue_size, 3)

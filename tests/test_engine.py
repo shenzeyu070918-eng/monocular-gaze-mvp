@@ -108,6 +108,10 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(result['valid'])
         self.assertEqual(result['status'], 'tracking')
         np.testing.assert_allclose(result['raw'], [.5,.5])
+        for key in ('raw','origin_m','gaze_vector','head_degrees'):
+            self.assertTrue(all(type(value) is float for value in result[key]),key)
+        for key in ('distance_cm','eye_openness','inference_ms'):
+            self.assertIs(type(result[key]),float,key)
         face.center[0] = 1
         self.assertLess(engine.predict(image, geometry)['raw'][0], 0)
         face.gaze_vector[2] = 1

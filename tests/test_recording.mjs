@@ -111,8 +111,9 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
  const requests=[],handlers={},timers=new Map(),rootClasses=new Set();
  const context=new Proxy({}, {get:(_,key)=>key==='drawImage'?()=>{time+=drawCost;}:()=>{}});
  const elements=new Map();
- function element(id){if(!elements.has(id))elements.set(id,{hidden:false,disabled:false,checked:false,value:'',style:{},options:[{},{}],classList:{toggle(){}},getContext:()=>context,getBoundingClientRect:()=>({left:100,top:80,width:600,height:400}),addEventListener(){},checkValidity:()=>true,videoWidth:640,videoHeight:480,play:async()=>{},toDataURL:()=> 'data:image/jpeg;base64,FAKE_TRANSIENT_IMAGE'});return elements.get(id);}
+ function element(id){if(!elements.has(id))elements.set(id,{hidden:false,disabled:false,checked:false,value:'',style:{},options:[{},{}],classList:{toggle(){}},getContext:()=>context,getBoundingClientRect:()=>({left:100,top:80,width:600,height:400}),addEventListener(){},checkValidity:()=>true,click(){},videoWidth:640,videoHeight:480,play:async()=>{},toDataURL:()=> 'data:image/jpeg;base64,FAKE_TRANSIENT_IMAGE'});return elements.get(id);}
  for(const [id,value]of Object.entries({widthCm:30.2,heightCm:19.6,topCm:.2,focalScale:1}))element(id).value=String(value);
+ let exportedCsv;const createObjectURL=URL.createObjectURL,revokeObjectURL=URL.revokeObjectURL;URL.createObjectURL=blob=>{exportedCsv=blob.text();return 'blob:synthetic';};URL.revokeObjectURL=()=>{};
  const originals={setTimeout,clearTimeout,fetch,performance,document:globalThis.document,window:globalThis.window,navigator:globalThis.navigator,getComputedStyle:globalThis.getComputedStyle};
  Object.defineProperty(globalThis,'performance',{configurable:true,value:{now:()=>time,timeOrigin:0}});
  Object.defineProperty(globalThis,'navigator',{configurable:true,value:{mediaDevices:{getUserMedia:async()=>{cameraStarts++;return {getTracks:()=>[{stop(){}}]};}}}});
@@ -121,7 +122,7 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
  globalThis.getComputedStyle=el=>el===element('jumpTarget')?{width:'32px',height:'32px'}:{width:'72px',height:'20px'};
  globalThis.window={addEventListener:(type,handler)=>{handlers[type]=handler;}};
  globalThis.requestAnimationFrame=callback=>{animation=callback;};globalThis.setTimeout=(callback,delay)=>{timers.set(++timerId,{callback,delay});return timerId;};globalThis.clearTimeout=id=>timers.delete(id);
- globalThis.fetch=async(path,options={})=>{const body=options.body?JSON.parse(options.body):undefined;requests.push({path,body});let result={error:null};if(path==='/api/status')result={ready:true};else if(path==='/api/recording/config')result={request_timeout_ms:250,jump:{point_count:8,dwell_ms:100,min_distance:.35,margin:.05}};else if(path==='/api/recording/start')result={session_id:`page-${requests.length}`,active:true};else if(path==='/api/frame'){time+=frameCost;result={valid:true,raw:[.4,.5],status:'tracking',distance_cm:50,inference_ms:1};}else if(path.endsWith('/receipt')&&failReceipt)result={active:false,error:'录制结果格式无效：raw 必须是有限数值'};if(path.endsWith('/receipt')&&hangReceipt)return new Promise((resolve,reject)=>{options.signal.addEventListener('abort',()=>reject(new DOMException('fake request aborted','AbortError')));});if(path==='/api/frame'&&holdNextFrame){holdNextFrame=false;return new Promise(resolve=>{releaseFrame=()=>resolve({ok:true,json:async()=>result});});}return {ok:true,json:async()=>result};};
+ globalThis.fetch=async(path,options={})=>{const body=options.body?JSON.parse(options.body):undefined;requests.push({path,body});let result={error:null};if(path==='/api/status')result={ready:true};else if(path==='/api/recording/config')result={request_timeout_ms:250,jump:{point_count:8,dwell_ms:100,min_distance:.35,margin:.05},distance_check:{distances_cm:[40,50,60],settle_ms:10,duration_ms:100,min_samples:1,warning_cm:5}};else if(path==='/api/recording/start')result={session_id:`page-${requests.length}`,active:true};else if(path==='/api/frame'){time+=frameCost;result={valid:true,raw:[.4,.5],status:'tracking',distance_cm:50,inference_ms:1,camera:{intrinsics_source:'estimated',device_file:'synthetic.yaml',intrinsics_reason:'aspect_ratio_mismatch',undistort_enabled:true,undistort_applied:false,scaled:false,width_px:640,height_px:480}};}else if(path.endsWith('/receipt')&&failReceipt)result={active:false,error:'录制结果格式无效：raw 必须是有限数值'};if(path.endsWith('/receipt')&&hangReceipt)return new Promise((resolve,reject)=>{options.signal.addEventListener('abort',()=>reject(new DOMException('fake request aborted','AbortError')));});if(path==='/api/frame'&&holdNextFrame){holdNextFrame=false;return new Promise(resolve=>{releaseFrame=()=>resolve({ok:true,json:async()=>result});});}return {ok:true,json:async()=>result};};
  const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
  try{
   await import('../static/app.js?mock-browser');await flush();
@@ -180,11 +181,35 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
   const baselineStops=requests.filter(r=>r.path.endsWith('/stop')).length;
   element('recording').checked=true;await element('recording').onchange();
   const starts=requests.filter(r=>r.path.endsWith('/start')).length;
-  await element('evaluate').onclick();animation();await flush();element('cancel').onclick();await flush();
+  await element('evaluate').onclick();animation();await flush();time+=700;await nextFrame();element('cancel').onclick();await flush();
+  element('export').onclick();const csv=(await exportedCsv).replace(/^\uFEFF/,'').split('\n');
+  const legacy=['run_id','calibration_id','capture_time_ms','valid','status','grayscale','geometry_estimated','physical_dimensions_confirmed','fullscreen','stage_width_px','stage_height_px','screen_width_cm','screen_height_cm','target_x','target_y','raw_screen_x','raw_screen_y','uncalibrated_x','uncalibrated_y','calibrated_x','calibrated_y','error_a_px','error_b_px','error_a_cm','error_b_cm','inference_ms'];
+  const keys=csv[0].split(',');assert.deepEqual(keys.slice(0,legacy.length),legacy);
+  assert.equal(keys[legacy.length],'intrinsics_source');assert.equal(csv[1].split(',')[keys.indexOf('intrinsics_reason')],'aspect_ratio_mismatch');
+  assert.equal(csv[1].split(',')[keys.indexOf('error_a_cm')],''); // No measured dimensions: no cm result.
+  const beforeDistanceStarts=requests.filter(r=>r.path.endsWith('/start')).length;
+  for(const measured of [40,50,60]){
+   await element('distanceStart').onclick();await flush();await nextFrame();time+=100;animation();await flush();
+   const result=requests.filter(r=>r.body?.type==='distance_check').at(-1).body;
+   assert.equal(result.measured_cm,measured);assert.equal(result.estimated_cm,50);assert.equal(result.bias_cm,50-measured);
+   assert.equal(result.camera.intrinsics_reason,'aspect_ratio_mismatch');
+  }
+  assert.equal(requests.filter(r=>r.path.endsWith('/start')).length,beforeDistanceStarts);
+  assert.equal(element('recording').checked,true);assert.match(element('distanceHint').textContent,/自检完成/);
+  assert.equal(requests.some(r=>r.path==='/api/calibrate'),false);
   assert.equal(requests.filter(r=>r.path.endsWith('/start')).length,starts);
   assert.equal(requests.filter(r=>r.path.endsWith('/stop')).length,baselineStops);
   element('recording').checked=false;await element('recording').onchange();
   assert.equal(requests.filter(r=>r.path.endsWith('/stop')).length,baselineStops+1);
+  // Self-check also owns exactly one automatic session, and cancellation
+  // closes it without affecting calibration or evaluation records.
+  const autoStarts=requests.filter(r=>r.path.endsWith('/start')).length,autoStops=requests.filter(r=>r.path.endsWith('/stop')).length;
+  for(const measured of [40,50,60]){await element('distanceStart').onclick();await flush();await nextFrame();time+=100;animation();await flush();}
+  assert.equal(requests.filter(r=>r.path.endsWith('/start')).length,autoStarts+1);
+  assert.equal(requests.filter(r=>r.path.endsWith('/stop')).length,autoStops+1);
+  assert.equal(element('recording').checked,false);
+  await element('distanceStart').onclick();await flush();await element('distanceCancel').onclick();await flush();
+  assert.equal(requests.at(-1).path,'/api/recording/stop');assert.equal(requests.at(-1).body.reason,'cancelled');
   element('recording').checked=true;await element('recording').onchange();
   assert.equal(element('gray').disabled,true);assert.equal(element('widthCm').disabled,true);assert.equal(element('measured').disabled,true);
   holdNextFrame=true;const [waitId,waitTimer]=[...timers.entries()].find(([,timer])=>timer.delay===33);timers.delete(waitId);waitTimer.callback();await flush();
@@ -217,6 +242,6 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
   assert.equal(requests.at(-1).path,'/api/recording/stop');
   assert.equal(element('tracking').textContent,'跟踪中');
   await element('start').onclick();await flush();
- }finally{globalThis.setTimeout=originals.setTimeout;globalThis.clearTimeout=originals.clearTimeout;globalThis.fetch=originals.fetch;Object.defineProperty(globalThis,'performance',{configurable:true,value:originals.performance});Object.defineProperty(globalThis,'navigator',{configurable:true,value:originals.navigator});globalThis.document=originals.document;globalThis.window=originals.window;globalThis.getComputedStyle=originals.getComputedStyle;}
+ }finally{URL.createObjectURL=createObjectURL;URL.revokeObjectURL=revokeObjectURL;globalThis.setTimeout=originals.setTimeout;globalThis.clearTimeout=originals.clearTimeout;globalThis.fetch=originals.fetch;Object.defineProperty(globalThis,'performance',{configurable:true,value:originals.performance});Object.defineProperty(globalThis,'navigator',{configurable:true,value:originals.navigator});globalThis.document=originals.document;globalThis.window=originals.window;globalThis.getComputedStyle=originals.getComputedStyle;}
  console.log('page fake-camera test passed: fullscreen gate, timing payload, jump isolation, manual-session reuse, camera-pause late ACK and hung-receipt timeout');
 }

@@ -137,8 +137,8 @@ class WebRecording:
             recorder = self._current(session_id)
             if self._closing:
                 raise RecordingConflict('会话正在结束')
-            if kind not in {'target', 'calibration'}:
-                raise ValueError('网页只支持 target / calibration 事件；click 留待 M4')
+            if kind not in {'target', 'calibration', 'distance_check'}:
+                raise ValueError('网页只支持 target / calibration / distance_check 事件；click 留待 M4')
             if not recorder.emit(kind, **fields):
                 self._signal_failure(recorder.error or '录制器拒绝事件记录')
             return self.status()

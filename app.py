@@ -8,8 +8,8 @@ import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
-from engine import Engine
-from geometry import fit_affine
+from gaze_core.engine import Engine
+from gaze_core.geometry import fit_affine
 
 ROOT = Path(__file__).resolve().parent
 state = {'ready': False, 'error': None}
@@ -21,7 +21,7 @@ def load_engine():
     global engine
     try:
         engine = Engine()
-        state.update(ready=True, parameters=engine.parameters, model='ETH-XGaze / ResNet18', device='CPU')
+        state.update(ready=True, parameters=engine.parameters, model='ETH-XGaze / ResNet18', device=engine.device.upper(), device_name=engine.device_name)
     except Exception as exc:
         state['error'] = str(exc)
         import traceback

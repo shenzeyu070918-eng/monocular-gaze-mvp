@@ -43,13 +43,13 @@ async function start(){
 function fullScreenPointToStage(raw){const r=stage.getBoundingClientRect();let x=0,y=0;if(!document.fullscreenElement){const border=Math.max(0,(outerWidth-innerWidth)/2);x=screenX+border;y=screenY+Math.max(0,outerHeight-innerHeight-border);}return [(raw[0]*screen.width-x-r.left)/r.width,(raw[1]*screen.height-y-r.top)/r.height];}
 function updatePreview(result){const c=$('landmarks');c.width=capture.width;c.height=capture.height;const p=c.getContext('2d');p.clearRect(0,0,c.width,c.height);p.fillStyle='#6ff0cc';for(const [x,y] of result.landmarks||[]){p.beginPath();p.arc(x*c.width,y*c.height,2,0,Math.PI*2);p.fill();}}
 async function loop(token){
- while(running&&token===generation){const begin=drawCapture(ctx,video,capture),currentFrame=++frameId,frameRecording=recording.frameContext(),frameTask=task&&task.displayedIndex!==null?{id:task.id,index:task.index,kind:task.kind,target:task.points[task.index],elapsed:begin-task.since}:null;
+ while(running&&token===generation){const loopStart=performance.now(),begin=drawCapture(ctx,video,capture),currentFrame=++frameId,frameRecording=recording.frameContext(),frameTask=task&&task.displayedIndex!==null?{id:task.id,index:task.index,kind:task.kind,target:task.points[task.index],elapsed:begin-task.since}:null;
   const body={image:capture.toDataURL('image/jpeg',.78).split(',')[1],grayscale:$('gray').checked,geometry:geometry(),recording_session_id:frameRecording?.session_id||null,page_clock_id:pageClockId,frame_id:currentFrame,browser_capture_ms:begin,video_frame:videoFrameTiming(latestVideoFrame)};
   const operation=(async()=>{controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),15000);let response,responseTime;try{body.browser_request_ms=performance.now();response=await fetch('/api/frame',{method:'POST',headers:{'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify(body)});responseTime=performance.now();}finally{clearTimeout(timeout);}if(!response.ok)throw Error('本地推理服务响应异常');const data=await response.json();if(frameRecording)recording.track(recording.receipt(frameRecording,currentFrame,responseTime));if(!running||token!==generation)return;handleFrame(data,frameTask,begin);})();
   if(frameRecording)recording.track(operation);
   try{await operation;}
   catch(e){if(!running||token!==generation)return;message(e.name==='AbortError'?'单帧处理超时，请暂停后重试。':e.message);$('tracking').textContent='服务异常';$('gaze').hidden=true;cancelTask('frame_error');await wait(600);}
-  await wait(Math.max(0,33-(performance.now()-begin)));
+  await wait(Math.max(0,33-(performance.now()-loopStart)));
  }
 }
 function handleFrame(data,frameTask,capturedAt){

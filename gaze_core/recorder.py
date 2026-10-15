@@ -194,6 +194,7 @@ class SessionRecorder:
         self._writer.start()
         if not self._ready.wait(self.settings.close_timeout_s):
             self._failure('录制文件打开超时')
+            self._closing.set()
             raise RuntimeError(self.error)
         if self.error:
             raise RuntimeError(self.error)
@@ -211,17 +212,18 @@ class SessionRecorder:
             self._failed += 1
             if self._error is None: self._error = str(message)
             self._reason = 'recording_failed'
-            self._closing.set()
 
     def fail(self, message):
         """Stop admission on a producer error while the writer drains accepted rows."""
-        self._failure(message)
+        with self._lock:
+            if not self._closing.is_set() and not self._closed.is_set():
+                self._failure(message)
 
     def emit(self, kind, **fields):
         validate_payload(kind, fields, self.source)
         with self._lock:
-            if self._closing.is_set():
-                self._failed += 1
+            if self._closing.is_set() or self._closed.is_set() or self._error:
+                if not self._closing.is_set() and not self._closed.is_set(): self._failed += 1
                 return False
             record = self._envelope(kind, self._next_seq, **fields)
             if self.source == 'web': record['page_clock_id'] = self.page_clock_id
@@ -247,7 +249,7 @@ class SessionRecorder:
 
     def status(self):
         with self._lock:
-            return {'session_id': self.session_id, 'active': not self._closing.is_set() and not self._closed.is_set(),
+            return {'session_id': self.session_id, 'active': not self._closing.is_set() and not self._closed.is_set() and self._error is None,
                     'error': self._error, 'file': self.path.name, 'written_lines': self._written,
                     'failed_records': self._failed}
 
@@ -255,7 +257,8 @@ class SessionRecorder:
         text_value(reason, 'reason'); clock_value(browser_time_ms, 'browser_time_ms', nullable=True)
         with self._lock:
             if not self._closing.is_set():
-                self._reason, self._end_browser_ms = reason, browser_time_ms
+                self._reason = 'recording_failed' if self._error else reason
+                self._end_browser_ms = browser_time_ms
             self._closing.set()
         self._writer.join(self.settings.close_timeout_s)
         if self._writer.is_alive(): raise RuntimeError('录制写线程未能及时退出，文件尚未完成收尾。')

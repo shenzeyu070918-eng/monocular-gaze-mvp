@@ -6,6 +6,8 @@ import json
 import queue
 import threading
 import time
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -119,8 +121,47 @@ class FakeEngine:
             self.predicting.release()
 
 
+class FakeRecorder:
+    """The recorder boundary must receive scalars/results, never camera pixels."""
+    def __init__(self, failure=None):
+        self.failure = failure
+        self.error = 'fake recording error' if failure is not None else None
+        self.frames, self.close_calls = [], []
+        self.written = threading.Condition()
+
+    def record_frame(self, data, **timing):
+        if isinstance(self.failure, Exception):
+            raise self.failure
+        if self.failure is not None:
+            return False
+        assert not self.close_calls, 'record_frame() after close()'
+        assert not any(isinstance(value, np.ndarray) for value in data.values())
+        with self.written:
+            self.frames.append((dict(data), dict(timing)))
+            self.written.notify_all()
+        return True
+
+    def wait_for_frames(self, count):
+        with self.written:
+            if not self.written.wait_for(lambda: len(self.frames) >= count, 3):
+                raise AssertionError('fake recorder did not receive predictions')
+
+    def fail(self, message):
+        self.error = str(message)
+
+    def close(self, reason):
+        assert not [t for t in threading.enumerate()
+                    if t.name in {'gaze-capture', 'gaze-inference'}], 'close() before workers join'
+        self.close_calls.append(reason)
+
+    def status(self):
+        return {'state': 'closed' if self.close_calls else 'recording',
+                'error': self.error, 'written_rows': len(self.frames)}
+
+
 class PipelineTests(unittest.TestCase):
-    def make_pipeline(self, gate=None, failure=None, settings=None, controlled=False):
+    def make_pipeline(self, gate=None, failure=None, settings=None, controlled=False,
+                      recorder=None, recording_factory=None):
         cameras, engines = [], []
         def camera_factory(options):
             self.assertEqual((options.width, options.height), (640, 480))
@@ -132,7 +173,8 @@ class PipelineTests(unittest.TestCase):
             engines.append(engine)
             return engine
         pipeline = CameraPipeline(settings, camera_factory=camera_factory, engine_factory=engine_factory,
-                                  collect_timings=True)
+                                  collect_timings=True, recorder=recorder,
+                                  recording_factory=recording_factory)
         self.addCleanup(pipeline.close)
         return pipeline, cameras, engines
 
@@ -309,6 +351,274 @@ class PipelineTests(unittest.TestCase):
                 self.assert_camera_released_safely(camera)
                 self.assert_workers_stopped()
 
+    def test_recording_is_disabled_by_default_and_injection_modes_are_exclusive(self):
+        pipeline, _, _ = self.make_pipeline()
+        self.assertEqual(pipeline.recording_status(), {'enabled': False, 'pipeline_error': None,
+                                                      'buffered_predictions': 0, 'preparing': False})
+        with self.assertRaisesRegex(ValueError, '只能指定一个'):
+            CameraPipeline(recorder=FakeRecorder(), recording_factory=Mock())
+
+    def test_recorder_receives_invalid_result_and_exact_prediction_timestamps_without_image(self):
+        recorder = FakeRecorder()
+        pipeline, cameras, _ = self.make_pipeline(controlled=True, recorder=recorder)
+        pipeline.start()
+        cameras[0].send(2)
+        result = pipeline.wait_for_result(timeout=3)
+        pipeline.pause()
+        recorder.wait_for_frames(1)
+        self.assertEqual(recorder.frames, [
+            ({'valid': False, 'status': 'no_face', 'inference_ms': 0},
+             {'capture_ns': result.captured_ns,
+              'inference_completed_ns': result.completed_ns, 'frame_id': result.sequence})])
+        self.assertEqual(recorder.close_calls, [])
+        self.assertIsNone(pipeline.error)
+        pipeline.close()
+        pipeline.close()
+        self.assertEqual(recorder.close_calls, ['pipeline_closed'])
+
+    def test_lazy_recorder_uses_real_engine_and_resolution_and_survives_pause_resume(self):
+        recorder = FakeRecorder()
+        factory = Mock(return_value=recorder)
+        pipeline, cameras, engines = self.make_pipeline(controlled=True, recording_factory=factory)
+        last_sequence = 0
+        for _ in range(3):
+            pipeline.start()
+            if not recorder.frames:
+                factory.assert_not_called()
+            cameras[-1].send(1)
+            result = pipeline.wait_for_result(after_sequence=last_sequence, timeout=3)
+            last_sequence = result.sequence
+            pipeline.pause()
+            recorder.wait_for_frames(len(cameras))
+            self.assertEqual(recorder.close_calls, [])
+        factory.assert_called_once_with(engines[0], (8, 6))
+        self.assertEqual(len(recorder.frames), 3)
+        self.assertEqual(len(engines), 1)
+        pipeline.close()
+        self.assertEqual(recorder.close_calls, ['pipeline_closed'])
+
+    def test_recorder_errors_are_reported_without_stopping_predictions(self):
+        for failure in [False, OSError('fake disk failure')]:
+            with self.subTest(failure=failure):
+                recorder = FakeRecorder(failure=failure)
+                pipeline, cameras, _ = self.make_pipeline(controlled=True, recorder=recorder)
+                pipeline.start()
+                cameras[0].send(1)
+                first = pipeline.wait_for_result(timeout=3)
+                cameras[0].send(2)
+                second = pipeline.wait_for_result(after_sequence=first.sequence, timeout=3)
+                self.assertGreater(second.sequence, first.sequence)
+                self.assertTrue(pipeline.running)
+                self.assertIsNone(pipeline.error)
+                with pipeline._condition:
+                    self.assertTrue(pipeline._condition.wait_for(
+                        lambda: pipeline._recording_error is not None, 3))
+                self.assertIn('fake', pipeline.report()['recording']['pipeline_error'])
+                pipeline.close()
+                self.assertEqual(recorder.close_calls, ['recording_failed'])
+
+    def test_recorder_initialization_error_does_not_stop_inference_or_retry(self):
+        factory = Mock(side_effect=OSError('fake recording path failure'))
+        pipeline, cameras, _ = self.make_pipeline(controlled=True, recording_factory=factory)
+        pipeline.start()
+        cameras[0].send(1)
+        result = pipeline.wait_for_result(timeout=3)
+        cameras[0].send(2)
+        self.assertIsNotNone(pipeline.wait_for_result(after_sequence=result.sequence, timeout=3))
+        with pipeline._condition:
+            self.assertTrue(pipeline._condition.wait_for(lambda: pipeline._recording_error is not None, 3))
+        self.assertEqual(factory.call_count, 1)
+        self.assertIn('fake recording path failure', pipeline.recording_status()['pipeline_error'])
+        self.assertIsNone(pipeline.error)
+
+    def test_close_records_in_flight_prediction_before_closing_recorder(self):
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        recorder = FakeRecorder()
+        pipeline, cameras, engines = self.make_pipeline(gate, controlled=True, recorder=recorder)
+        pipeline.start()
+        cameras[0].send(1)
+        self.assertTrue(engines[0].started.wait(3))
+        closer = threading.Thread(target=pipeline.close)
+        closer.start()
+        try:
+            self.assertTrue(pipeline._stop.wait(3))
+            self.assertEqual(recorder.close_calls, [])
+            self.assertTrue(closer.is_alive())
+        finally:
+            gate.set()
+            closer.join(3)
+        self.assertFalse(closer.is_alive())
+        self.assertEqual(len(recorder.frames), 1)
+        self.assertEqual(recorder.close_calls, ['pipeline_closed'])
+        self.assert_camera_released_safely(cameras[0])
+
+    def test_real_recorder_integration_preserves_frame_coordinates_and_read_timestamps(self):
+        from gaze_core.recorder import SessionRecorder, session_metadata
+        settings = load_settings()
+        sessions = []
+        with TemporaryDirectory() as directory:
+            def factory(engine, actual_resolution):
+                recorder = SessionRecorder(session_metadata(
+                    source='python', engine=engine, geometry=settings.geometry,
+                    camera_size=actual_resolution, grayscale=settings.camera.grayscale),
+                    settings=settings.recording, directory=directory)
+                sessions.append(recorder)
+                return recorder
+            pipeline, cameras, engines = self.make_pipeline(controlled=True, recording_factory=factory)
+            pipeline.start()
+            raw = [-0.2, 1.4]  # Raw coordinates must not be clipped during recording.
+            engines[0].predict = lambda *_: {'valid': True, 'status': 'tracking', 'raw': raw,
+                                           'inference_ms': 0.0}
+            cameras[0].send(1)
+            result = pipeline.wait_for_result(timeout=3)
+            pipeline.close()
+            rows = [json.loads(line) for line in sessions[0].path.read_text().splitlines()]
+            self.assertEqual([row['type'] for row in rows], ['session', 'frame', 'end'])
+            self.assertEqual(rows[0]['camera']['width_px'], 8)
+            self.assertEqual(rows[0]['camera']['height_px'], 6)
+            self.assertEqual(rows[0]['inference_device_name'], 'FAKE CPU')
+            self.assertEqual(rows[1]['raw'], raw)
+            self.assertEqual(rows[1]['capture_ns'], result.captured_ns)
+            self.assertEqual(rows[1]['inference_completed_ns'], result.completed_ns)
+            self.assertEqual(rows[2]['reason'], 'pipeline_closed')
+
+    def test_blocked_recorder_initialization_does_not_block_inference_and_preserves_initial_frames(self):
+        gate, initializing = threading.Event(), threading.Event()
+        self.addCleanup(gate.set)
+        recorder, factory_threads = FakeRecorder(), []
+        def factory(engine, actual_resolution):
+            factory_threads.append(threading.current_thread().name)
+            self.assertEqual(actual_resolution, (8, 6))
+            initializing.set()
+            if not gate.wait(3):
+                raise RuntimeError('fake recorder initialization timed out')
+            return recorder
+        pipeline, cameras, engines = self.make_pipeline(controlled=True, recording_factory=factory)
+        results = []
+        pipeline.start()
+        for value in range(3):
+            cameras[-1].send(value)
+            results.append(pipeline.wait_for_result(after_sequence=results[-1].sequence if results else 0,
+                                                    timeout=3))
+        self.assertTrue(initializing.is_set())
+        self.assertEqual(recorder.frames, [])
+        self.assertEqual(pipeline.recording_status()['buffered_predictions'], 3)
+        self.assertTrue(pipeline.recording_status()['preparing'])
+        # The initialization buffer contains only validated result dictionaries
+        # and integer timing dictionaries, never CapturedFrame or pixel arrays.
+        with pipeline._recording_queue.mutex:
+            for numeric, timing in pipeline._recording_queue.queue:
+                json.dumps([numeric, timing], allow_nan=False)
+                self.assertNotIn('landmarks', numeric)
+        pipeline.pause()
+        self.assertTrue(pipeline._recording_thread.is_alive())
+        self.assertFalse(engines[0].closed)
+        pipeline.resume()
+        cameras[-1].send(4)
+        results.append(pipeline.wait_for_result(after_sequence=results[-1].sequence, timeout=3))
+        self.assertEqual(len(engines), 1)
+        self.assertEqual(factory_threads, ['gaze-recording'])
+        gate.set()
+        recorder.wait_for_frames(4)
+        pipeline.close()
+        self.assertEqual([timing for _, timing in recorder.frames], [
+            {'capture_ns': result.captured_ns, 'inference_completed_ns': result.completed_ns,
+             'frame_id': result.sequence} for result in results])
+        self.assertEqual(recorder.close_calls, ['pipeline_closed'])
+
+    def test_initialization_buffer_is_bounded_and_overflow_stops_recording_only(self):
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        recorder = FakeRecorder()
+        settings = load_settings()
+        settings = replace(settings, recording=replace(settings.recording, queue_size=2))
+        def factory(*_):
+            if not gate.wait(3):
+                raise RuntimeError('fake recorder initialization timed out')
+            return recorder
+        pipeline, cameras, _ = self.make_pipeline(settings=settings, controlled=True, recording_factory=factory)
+        pipeline.start()
+        last_sequence = 0
+        for value in range(4):
+            cameras[0].send(value)
+            result = pipeline.wait_for_result(after_sequence=last_sequence, timeout=3)
+            last_sequence = result.sequence
+        self.assertEqual(pipeline.recording_status()['buffered_predictions'], 2)
+        self.assertIn('队列已满', pipeline.recording_status()['pipeline_error'])
+        self.assertIsNone(pipeline.error)
+        self.assertTrue(pipeline.running)
+        gate.set()
+        recorder.wait_for_frames(2)
+        self.assertEqual(recorder.close_calls, [])  # Workers still own their resources.
+        pipeline.close()
+        self.assertIn('队列已满', recorder.error)
+        self.assertEqual(recorder.close_calls, ['recording_failed'])
+
+    def test_recording_initialization_close_timeout_preserves_engine_for_cleanup_retry(self):
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        recorder = FakeRecorder()
+        settings = load_settings()
+        settings = replace(settings, recording=replace(settings.recording, close_timeout_s=.01))
+        def factory(*_):
+            if not gate.wait(3):
+                raise RuntimeError('fake recorder initialization timed out')
+            return recorder
+        pipeline, cameras, engines = self.make_pipeline(settings=settings, controlled=True,
+                                                       recording_factory=factory)
+        pipeline.start()
+        cameras[0].send(1)
+        self.assertIsNotNone(pipeline.wait_for_result(timeout=3))
+        try:
+            with self.assertRaisesRegex(RuntimeError, '录制准备/转交线程未能及时退出'):
+                pipeline.close()
+            self.assertFalse(engines[0].closed)
+            self.assertTrue(pipeline._recording_thread.is_alive())
+            self.assert_camera_released_safely(cameras[0])
+            with self.assertRaisesRegex(RuntimeError, '正在关闭'):
+                pipeline.resume()
+        finally:
+            gate.set()
+            pipeline._recording_thread.join(3)
+            pipeline.close()
+        self.assertEqual(len(recorder.frames), 1)
+        self.assertEqual(recorder.close_calls, ['recording_failed'])
+        self.assertTrue(engines[0].closed)
+
+    def test_recorder_close_failure_can_be_retried_without_closing_engine_early(self):
+        recorder = FakeRecorder()
+        original_close = recorder.close
+        close = Mock(side_effect=[RuntimeError('fake recorder close timeout'), None])
+        def close_once(reason):
+            close()
+            original_close(reason)
+        recorder.close = close_once
+        pipeline, cameras, engines = self.make_pipeline(controlled=True, recorder=recorder)
+        pipeline.start()
+        cameras[0].send(1)
+        self.assertIsNotNone(pipeline.wait_for_result(timeout=3))
+        with self.assertRaisesRegex(RuntimeError, '录制器尚未完成关闭'):
+            pipeline.close()
+        self.assertFalse(engines[0].closed)
+        self.assertEqual(recorder.close_calls, [])
+        pipeline.close()
+        self.assertTrue(engines[0].closed)
+        self.assertEqual(recorder.close_calls, ['recording_failed'])
+
+    def test_non_numeric_or_image_result_is_never_stored_in_recording_buffer(self):
+        recorder = FakeRecorder()
+        pipeline, cameras, engines = self.make_pipeline(controlled=True, recorder=recorder)
+        pipeline.start()
+        engines[0].predict = lambda *_: {'valid': False, 'status': 'no_face',
+                                       'image': np.zeros((6, 8, 3), dtype=np.uint8)}
+        cameras[0].send(1)
+        self.assertIsNotNone(pipeline.wait_for_result(timeout=3))
+        self.assertIn('拒绝缓存', pipeline.recording_status()['pipeline_error'])
+        pipeline.close()
+        self.assertEqual(recorder.frames, [])
+        self.assertEqual(recorder.close_calls, ['recording_failed'])
+
 
 class BenchmarkTests(unittest.TestCase):
     def test_percentiles_and_no_sample_result(self):
@@ -351,8 +661,34 @@ class BenchmarkTests(unittest.TestCase):
              redirect_stdout(io.StringIO()) as output:
             self.assertEqual(main(['--benchmark','1','--grayscale']), 0)
         self.assertTrue(factory.call_args.args[0].camera.grayscale)
+        self.assertIsNone(factory.call_args.kwargs['recording_factory'])
         self.assertEqual(benchmark.call_args.args[1], 1)
         self.assertEqual(json.loads(output.getvalue()), {'test_only':True})
+
+    def test_cli_recording_is_lazy_and_metadata_uses_actual_camera_and_device(self):
+        settings = load_settings()
+        recorder_settings = object()
+        settings = SimpleNamespace(camera=settings.camera, geometry=settings.geometry,
+                                   recording=recorder_settings)
+        engine, recorder = FakeEngine(), FakeRecorder()
+        metadata = Mock(return_value={'type': 'session'})
+        recorder_factory = Mock(return_value=recorder)
+        def benchmark(pipeline, seconds):
+            recorder_factory.assert_not_called()
+            recording_factory = pipeline.call_args.kwargs['recording_factory']
+            self.assertIs(recording_factory(engine, (8, 6)), recorder)
+            return {'test_only': True}
+        with patch('gaze_core.capture.load_settings', return_value=settings), \
+             patch('gaze_core.capture.CameraPipeline') as pipeline, \
+             patch('gaze_core.capture.run_benchmark', side_effect=lambda *a: benchmark(pipeline, a[1])), \
+             patch.dict('sys.modules', {'gaze_core.recorder': SimpleNamespace(
+                 SessionRecorder=recorder_factory, session_metadata=metadata)}), \
+             redirect_stdout(io.StringIO()):
+            self.assertEqual(main(['--benchmark', '1', '--record']), 0)
+        metadata.assert_called_once_with(
+            source='python', engine=engine, geometry=settings.geometry, camera_size=(8, 6),
+            grayscale=False, screen=None, measured=False, page_clock_id=None)
+        recorder_factory.assert_called_once_with({'type': 'session'}, settings=recorder_settings)
 
     def test_opencv_factory_selects_backend_and_leaves_camera_lifecycle_to_capture_thread(self):
         settings = load_settings().camera

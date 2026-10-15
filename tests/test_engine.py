@@ -30,12 +30,21 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual((settings.camera.width, settings.camera.height), (640, 480))
         self.assertEqual(settings.camera.backend, 'auto')
         self.assertFalse(settings.camera.grayscale)
+        self.assertEqual(settings.recording.output_dir, 'data/sessions')
+        self.assertEqual((settings.jump.point_count,settings.jump.dwell_ms,settings.jump.min_distance,settings.jump.margin), (20,1500,.35,.05))
 
     def test_invalid_configuration_rejected(self):
         for section, name, value in [('inference', 'device', 'mps'), ('camera', 'backend', 'other'),
                                       ('camera', 'width', 0), ('camera', 'index', -1),
                                       ('camera', 'grayscale', 'false'), ('camera', 'stop_timeout_s', float('nan')),
-                                      ('inference', 'distance_min_m', 2)]:
+                                      ('inference', 'distance_min_m', 2), ('recording','queue_size',0),
+                                      ('recording','close_timeout_s',True), ('recording','output_dir',''),
+                                      ('recording','request_timeout_s',10),
+                                      ('jump','point_count',7), ('jump','dwell_ms',float('nan')),
+                                      ('jump','min_distance',2), ('jump','min_distance','invalid'),
+                                      ('jump','margin',0), ('jump','margin',.5), ('jump','margin',True),
+                                      ('jump','margin',float('nan')), ('jump','margin','invalid'),
+                                      ('jump','margin',.4)]:
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
                 data = yaml.safe_load(DEFAULT_CONFIG.read_text())
                 data[section][name] = value
@@ -99,6 +108,10 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(result['valid'])
         self.assertEqual(result['status'], 'tracking')
         np.testing.assert_allclose(result['raw'], [.5,.5])
+        for key in ('raw','origin_m','gaze_vector','head_degrees'):
+            self.assertTrue(all(type(value) is float for value in result[key]),key)
+        for key in ('distance_cm','eye_openness','inference_ms'):
+            self.assertIs(type(result[key]),float,key)
         face.center[0] = 1
         self.assertLess(engine.predict(image, geometry)['raw'][0], 0)
         face.gaze_vector[2] = 1

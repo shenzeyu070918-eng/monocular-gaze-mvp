@@ -19,3 +19,13 @@ geometry:
   height_cm: 19.6
   top_cm: 0.2
   focal_scale: 1.0
+recording:
+  output_dir: data/sessions
+  queue_size: 2048
+  close_timeout_s: 10.0
+  request_timeout_s: 15.0
+jump:
+  point_count: 20
+  dwell_ms: 1500.0
+  min_distance: 0.35
+  margin: 0.05  # Fraction of each screen dimension; target centers stay inside this inset.

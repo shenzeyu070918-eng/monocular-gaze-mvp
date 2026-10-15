@@ -1,4 +1,4 @@
 # Windows RTX 5070 build, paired versions from the official PyTorch installation table.
 --index-url https://download.pytorch.org/whl/cu128
-torch==2.11.0
-torchvision==0.26.0
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128

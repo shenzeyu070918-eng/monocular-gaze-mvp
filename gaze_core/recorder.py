@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 import json
 import math
+from numbers import Integral, Real
 from pathlib import Path
 import platform
 import queue
@@ -33,16 +34,42 @@ STATUSES = {'tracking', 'no_face', 'blink', 'geometry_invalid', 'prediction_erro
 def number(value, name, nullable=False):
     if value is None and nullable:
         return
-    if type(value) not in (int, float) or not math.isfinite(value):
+    if isinstance(value, bool) or not isinstance(value, Real):
         raise ValueError(f'{name} 必须是有限数值')
+    try:
+        converted = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError(f'{name} 必须是有限数值') from exc
+    if not math.isfinite(converted):
+        raise ValueError(f'{name} 必须是有限数值')
+    return converted
 
 
 def clock_value(value, name, nullable=False):
     if value is None and nullable:
         return
     number(value, name)
-    if value < 0 or (name.endswith('_ns') and type(value) is not int):
+    if value < 0 or (name.endswith('_ns') and not isinstance(value, Integral)):
         raise ValueError(f'{name} 必须是非负时间；纳秒使用整数')
+
+
+def _json_numbers(value, field=''):
+    """Normalize validated data; exact integer clocks/identifiers stay integers."""
+    if isinstance(value, dict):
+        return {key: _json_numbers(item, key) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_numbers(item) for item in value]
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    converted = number(value, field or '数值')
+    if isinstance(value, Integral) and (field.endswith('_ns') or field in {
+            'schema_version', 'seq', 'frame_id', 'index', 'written_lines', 'failed_records'}):
+        return int(value)
+    return converted
+
+
+def _json_line(record):
+    return json.dumps(_json_numbers(record), ensure_ascii=False, allow_nan=False)+'\n'
 
 
 def text_value(value, name, nullable=False):
@@ -133,7 +160,7 @@ def validate_payload(kind, fields, source):
                 clock_value(fields.get(key), key, nullable=True)
             else:
                 number(fields.get(key), key, nullable=True)
-        if fields.get('frame_id') is not None and (type(fields['frame_id']) is not int or fields['frame_id'] < 0):
+        if fields.get('frame_id') is not None and (not isinstance(fields['frame_id'], Integral) or fields['frame_id'] < 0):
             raise ValueError('frame_id 必须是非负整数')
         for key, size in [('raw',2),('origin_m',3),('gaze_vector',3),('head_degrees',3)]:
             vector(fields.get(key), size, key, nullable=not (key=='raw' and fields['valid']))
@@ -227,7 +254,7 @@ class SessionRecorder:
                 return False
             record = self._envelope(kind, self._next_seq, **fields)
             if self.source == 'web': record['page_clock_id'] = self.page_clock_id
-            encoded = json.dumps(record, ensure_ascii=False, allow_nan=False)+'\n'
+            encoded = _json_line(record)
             try:
                 self._queue.put_nowait(encoded)
             except queue.Full:
@@ -267,7 +294,7 @@ class SessionRecorder:
     def _write_loop(self):
         try:
             with self._open(self.path, 'x', encoding='utf-8') as output:
-                output.write(json.dumps(self._header, ensure_ascii=False, allow_nan=False)+'\n')
+                output.write(_json_line(self._header))
                 output.flush()
                 with self._lock: self._written += 1
                 self._ready.set()
@@ -282,7 +309,7 @@ class SessionRecorder:
                                          failed_records=self._failed, reason=self._reason,
                                          browser_time_ms=self._end_browser_ms)
                     if self.source == 'web': end['page_clock_id'] = self.page_clock_id
-                output.write(json.dumps(end, ensure_ascii=False, allow_nan=False)+'\n')
+                output.write(_json_line(end))
                 output.flush()
                 with self._lock: self._written += 1
         except Exception as exc:

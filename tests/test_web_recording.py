@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 import app as web
 from gaze_core.config import load_settings
+from gaze_core.geometry import intersect_screen
 from gaze_core.web_recording import RecordingConflict, WebRecording
 from tools.replay import read_session
 from tools.replay import ReplayWarning
@@ -86,6 +87,22 @@ class WebRecordingTests(unittest.TestCase):
             self.assertNotIn(forbidden, contents)
         self.assertEqual(session.metadata['camera']['intrinsics_source'],'estimated')
         self.assertEqual(session.metadata['screen']['device_pixel_ratio'],2)
+
+    def test_numpy_geometry_from_fake_engine_records_and_replays_without_failure(self):
+        raw=intersect_screen(np.array([1.,.3,.5]),np.array([0.,0.,-1.]),30.2,19.6)
+        self.result.update(raw=raw,distance_cm=np.float64(50),inference_ms=np.float64(1))
+        self.assertTrue(all(isinstance(v,np.floating) for v in self.engine.predict.return_value['raw']))
+        session_id=self.start()
+        prediction=self.request_frame(session_id)
+        self.assertEqual(prediction.status_code,200,prediction.text)
+        receipt=self.client.post('/api/recording/receipt',json={
+            'session_id':session_id,'frame_id':1,'browser_response_ms':130})
+        self.assertEqual(receipt.status_code,200,receipt.text)
+        self.assertTrue(receipt.json()['active'])
+        self.assertIsNone(receipt.json()['error'])
+        session=self.stop(session_id)
+        self.assertEqual(session.records[1]['raw'],[float(v) for v in raw])
+        self.assertEqual(session.records[-1]['failed_records'],0)
 
     def test_events_use_browser_time_even_when_receipt_arrives_later(self):
         session_id = self.start()

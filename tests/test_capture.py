@@ -5,6 +5,7 @@ import io
 import json
 import queue
 import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -15,22 +16,59 @@ from gaze_core.config import load_settings
 
 
 class FakeCamera:
-    def __init__(self):
+    def __init__(self, *, stop_requested=None, opened=True):
         self.frames = queue.Queue()
         self.reads = threading.Condition()
         self.read_count = self.releases = 0
         self.reader_ids = set()
+        self.setup_threads, self.properties = [], []
+        self.release_threads, self.release_during_read = [], []
+        self.active_reads = 0
+        self.stop_requested, self.opened = stop_requested, opened
 
-    def getBackendName(self): return 'FAKE'
+    def isOpened(self):
+        self.setup_threads.append(threading.current_thread().name)
+        return self.opened
+
+    def set(self, property_id, value):
+        self.setup_threads.append(threading.current_thread().name)
+        self.properties.append((property_id, value))
+        return True
+
+    def getBackendName(self):
+        self.setup_threads.append(threading.current_thread().name)
+        return 'FAKE'
 
     def read(self):
-        self.reader_ids.add(threading.get_ident())
         with self.reads:
+            self.reader_ids.add(threading.get_ident())
+            self.active_reads += 1
             self.read_count += 1
             self.reads.notify_all()
-        frame = self.frames.get(timeout=3)
-        if isinstance(frame, Exception): raise frame
-        return frame is not None, frame
+        try:
+            # A real camera can still be inside read() when pause is requested.
+            time.sleep(.03)
+            if self.stop_requested is None:
+                try:
+                    frame = self.frames.get_nowait()
+                except queue.Empty:
+                    frame = np.zeros((6, 8, 3), dtype=np.uint8)
+            else:
+                # Controlled frames make the latest-frame overwrite test exact.
+                # Stop is polled independently; release() must never unblock read().
+                while True:
+                    try:
+                        frame = self.frames.get(timeout=.03)
+                        break
+                    except queue.Empty:
+                        if self.stop_requested():
+                            return False, None
+            if isinstance(frame, Exception): raise frame
+            return frame is not None, frame
+        finally:
+            with self.reads:
+                self.active_reads -= 1
+                self.reads.notify_all()
 
     def send(self, value):
         self.frames.put(np.full((6, 8, 3), value, dtype=np.uint8))
@@ -41,8 +79,10 @@ class FakeCamera:
                 raise AssertionError('fake camera was not read')
 
     def release(self):
-        self.releases += 1
-        self.frames.put(None)
+        with self.reads:
+            self.releases += 1
+            self.release_threads.append(threading.current_thread().name)
+            self.release_during_read.append(self.active_reads > 0)
 
 
 class FakeEngine:
@@ -53,28 +93,38 @@ class FakeEngine:
         self.started = threading.Event()
         self.values, self.gray_values = [], []
         self.closed = False
+        self.close_count = 0
+        self.predicting = threading.Lock()
 
     def predict(self, image, geometry, grayscale):
-        assert threading.get_ident() == self.owner
-        self.values.append(int(image[0,0,0]))
-        self.gray_values.append(grayscale)
-        self.started.set()
-        if self.gate is not None and not self.gate.wait(3):
-            raise RuntimeError('fake engine gate timed out')
-        if self.failure is not None: raise self.failure
-        return {'valid': False, 'status': 'no_face', 'inference_ms': 0}
+        assert self.predicting.acquire(blocking=False), 'concurrent predict() calls'
+        try:
+            assert not self.closed
+            self.values.append(int(image[0,0,0]))
+            self.gray_values.append(grayscale)
+            self.started.set()
+            if self.gate is not None and not self.gate.wait(3):
+                raise RuntimeError('fake engine gate timed out')
+            if self.failure is not None: raise self.failure
+            return {'valid': False, 'status': 'no_face', 'inference_ms': 0}
+        finally:
+            self.predicting.release()
 
     def close(self):
-        assert threading.get_ident() == self.owner
-        self.closed = True
+        assert self.predicting.acquire(blocking=False), 'close() while predicting'
+        try:
+            self.closed = True
+            self.close_count += 1
+        finally:
+            self.predicting.release()
 
 
 class PipelineTests(unittest.TestCase):
-    def make_pipeline(self, gate=None, failure=None, settings=None):
+    def make_pipeline(self, gate=None, failure=None, settings=None, controlled=False):
         cameras, engines = [], []
         def camera_factory(options):
             self.assertEqual((options.width, options.height), (640, 480))
-            camera = FakeCamera()
+            camera = FakeCamera(stop_requested=pipeline._stop.is_set if controlled else None)
             cameras.append(camera)
             return camera
         def engine_factory():
@@ -89,10 +139,16 @@ class PipelineTests(unittest.TestCase):
     def assert_workers_stopped(self):
         self.assertFalse([t for t in threading.enumerate() if t.name in {'gaze-capture', 'gaze-inference'}])
 
+    def assert_camera_released_safely(self, camera):
+        self.assertEqual(camera.releases, 1)
+        self.assertEqual(camera.release_threads, ['gaze-capture'])
+        self.assertEqual(camera.release_during_read, [False])
+        self.assertEqual(camera.active_reads, 0)
+
     def test_latest_pending_frame_replaces_old_frames(self):
         gate = threading.Event()
         self.addCleanup(gate.set)
-        pipeline, cameras, engines = self.make_pipeline(gate)
+        pipeline, cameras, engines = self.make_pipeline(gate, controlled=True)
         pipeline.start()
         camera, engine = cameras[0], engines[0]
         try:
@@ -124,32 +180,45 @@ class PipelineTests(unittest.TestCase):
             gate.set()
             pipeline.close()
         self.assertTrue(engine.closed)
-        self.assertEqual(camera.releases, 1)
+        self.assert_camera_released_safely(camera)
         self.assert_workers_stopped()
 
-    def test_pause_resume_recreates_resources_and_close_is_idempotent(self):
+    def test_twenty_pause_resume_cycles_reuse_engine_and_release_only_in_capture_thread(self):
         settings = load_settings()
         settings = replace(settings, camera=replace(settings.camera, grayscale=True))
         pipeline, cameras, engines = self.make_pipeline(settings=settings)
         last_sequence = 0
-        for number in [1,2]:
+        for number in range(1, 21):
             pipeline.resume()
             pipeline.start()  # An already running pipeline is not duplicated.
             self.assertEqual(len(cameras), number)
+            self.assertEqual(len(engines), 1)
             cameras[-1].send(number)
             result = pipeline.wait_for_result(after_sequence=last_sequence, timeout=3)
             self.assertIsNotNone(result)
             self.assertGreater(result.sequence, last_sequence)
             last_sequence = result.sequence
+            cameras[-1].wait_for_reads(2)
             pipeline.pause()
             self.assertFalse(pipeline.running)
-            self.assertTrue(engines[-1].closed)
-            self.assertEqual(engines[-1].gray_values, [True])
-            self.assertEqual(cameras[-1].releases, 1)
+            self.assertFalse(engines[0].closed)
+            self.assertTrue(all(engines[0].gray_values))
+            self.assert_camera_released_safely(cameras[-1])
             self.assert_workers_stopped()
         pipeline.close()
         pipeline.close()
+        self.assertTrue(engines[0].closed)
+        self.assertEqual(engines[0].close_count, 1)
         with self.assertRaises(RuntimeError): pipeline.resume()
+
+    def test_close_waits_for_blocking_read_before_capture_thread_releases_camera(self):
+        pipeline, cameras, engines = self.make_pipeline()
+        pipeline.start()
+        cameras[0].wait_for_reads(1)
+        pipeline.close()
+        self.assert_camera_released_safely(cameras[0])
+        self.assertTrue(engines[0].closed)
+        self.assert_workers_stopped()
 
     def test_read_failure_stops_engine_and_releases_camera(self):
         pipeline, cameras, engines = self.make_pipeline()
@@ -158,18 +227,24 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'fake read error'):
             pipeline.wait_for_result(timeout=3)
         pipeline.close()
-        self.assertEqual(cameras[0].releases, 1)
+        self.assert_camera_released_safely(cameras[0])
         self.assertTrue(engines[0].closed)
         self.assert_workers_stopped()
 
-    def test_inference_failure_unblocks_camera_and_releases_resources(self):
-        pipeline, cameras, engines = self.make_pipeline(failure=ValueError('fake inference error'))
+    def test_inference_failure_signals_stop_and_capture_thread_releases_its_camera(self):
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+        pipeline, cameras, engines = self.make_pipeline(gate, failure=ValueError('fake inference error'),
+                                                       controlled=True)
         pipeline.start()
         cameras[0].send(1)
+        self.assertTrue(engines[0].started.wait(3))
+        cameras[0].wait_for_reads(2)
+        gate.set()
         with self.assertRaisesRegex(RuntimeError, 'fake inference error'):
             pipeline.wait_for_result(timeout=3)
         pipeline.close()
-        self.assertEqual(cameras[0].releases, 1)
+        self.assert_camera_released_safely(cameras[0])
         self.assertTrue(engines[0].closed)
         self.assert_workers_stopped()
 
@@ -188,7 +263,8 @@ class PipelineTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError): pipeline.start()
                 finally:
                     pipeline.close()
-                self.assertTrue(all(c.releases == 1 for c in cameras))
+                for camera in cameras:
+                    self.assert_camera_released_safely(camera)
                 self.assertTrue(all(e.closed for e in engines))
                 self.assert_workers_stopped()
 
@@ -204,13 +280,34 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue(engines[0].started.wait(3))
             with self.assertRaisesRegex(RuntimeError, '线程未能'):
                 pipeline.pause()
+            self.assertFalse(engines[0].closed)
         finally:
             gate.set()
             for worker in pipeline._threads: worker.join(3)
             pipeline.close()
-        self.assertEqual(cameras[0].releases, 1)
+        self.assert_camera_released_safely(cameras[0])
         self.assertTrue(engines[0].closed)
         self.assert_workers_stopped()
+
+    def test_camera_configuration_and_failed_open_cleanup_belong_to_capture_thread(self):
+        import cv2
+        for opened in [True, False]:
+            with self.subTest(opened=opened):
+                camera = FakeCamera(opened=opened)
+                pipeline = CameraPipeline(camera_factory=lambda _: camera, engine_factory=FakeEngine)
+                try:
+                    if opened:
+                        pipeline.start()
+                        self.assertEqual(camera.properties, [(cv2.CAP_PROP_FRAME_WIDTH, 640),
+                                                              (cv2.CAP_PROP_FRAME_HEIGHT, 480)])
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, '无法打开摄像头'):
+                            pipeline.start()
+                finally:
+                    pipeline.close()
+                self.assertEqual(set(camera.setup_threads), {'gaze-capture'})
+                self.assert_camera_released_safely(camera)
+                self.assert_workers_stopped()
 
 
 class BenchmarkTests(unittest.TestCase):
@@ -229,9 +326,9 @@ class BenchmarkTests(unittest.TestCase):
         # Finish the sample window on a deterministic result, not an assumed speed.
         pipeline.wait = lambda seconds: self.assertIsNotNone(pipeline.wait_for_result(timeout=3))
         report = run_benchmark(pipeline, 1)
-        self.assertEqual(report['predicted_frames'], 1)
+        self.assertGreaterEqual(report['predicted_frames'], 1)
         self.assertEqual(report['valid_predictions'], 0)
-        self.assertEqual(report['prediction_status_counts'], {'no_face':1})
+        self.assertEqual(report['prediction_status_counts'], {'no_face':report['predicted_frames']})
         self.assertEqual(report['actual_resolution'], [8,6])
         self.assertEqual(report['device_name'], 'FAKE CPU')
         self.assertIn('不含摄像头曝光与驱动缓冲', report['latency_definition'])
@@ -257,20 +354,17 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(benchmark.call_args.args[1], 1)
         self.assertEqual(json.loads(output.getvalue()), {'test_only':True})
 
-    def test_opencv_request_and_release_on_open_failure(self):
+    def test_opencv_factory_selects_backend_and_leaves_camera_lifecycle_to_capture_thread(self):
         settings = load_settings().camera
         import cv2
         camera = Mock()
-        camera.isOpened.return_value = True
+        camera.isOpened.return_value = False
         with patch.object(cv2, 'VideoCapture', return_value=camera) as factory:
             self.assertIs(open_camera(settings), camera)
         factory.assert_called_once_with(0, cv2.CAP_ANY)
-        self.assertIn(((cv2.CAP_PROP_FRAME_WIDTH, 640),), [(c.args,) for c in camera.set.call_args_list])
-        self.assertIn(((cv2.CAP_PROP_FRAME_HEIGHT, 480),), [(c.args,) for c in camera.set.call_args_list])
-        camera.isOpened.return_value = False
-        with patch.object(cv2, 'VideoCapture', return_value=camera):
-            with self.assertRaises(RuntimeError): open_camera(settings)
-        camera.release.assert_called_once()
+        camera.isOpened.assert_not_called()
+        camera.set.assert_not_called()
+        camera.release.assert_not_called()
         with patch('gaze_core.capture.sys.platform', 'win32'), \
              patch.object(cv2, 'VideoCapture', return_value=camera) as factory:
             camera.isOpened.return_value = True

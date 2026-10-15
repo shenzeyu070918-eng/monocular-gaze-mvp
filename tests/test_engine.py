@@ -30,12 +30,18 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual((settings.camera.width, settings.camera.height), (640, 480))
         self.assertEqual(settings.camera.backend, 'auto')
         self.assertFalse(settings.camera.grayscale)
+        self.assertEqual(settings.recording.output_dir, 'data/sessions')
+        self.assertEqual((settings.jump.point_count,settings.jump.dwell_ms,settings.jump.min_distance), (20,1500,.35))
 
     def test_invalid_configuration_rejected(self):
         for section, name, value in [('inference', 'device', 'mps'), ('camera', 'backend', 'other'),
                                       ('camera', 'width', 0), ('camera', 'index', -1),
                                       ('camera', 'grayscale', 'false'), ('camera', 'stop_timeout_s', float('nan')),
-                                      ('inference', 'distance_min_m', 2)]:
+                                      ('inference', 'distance_min_m', 2), ('recording','queue_size',0),
+                                      ('recording','close_timeout_s',True), ('recording','output_dir',''),
+                                      ('recording','request_timeout_s',10),
+                                      ('jump','point_count',7), ('jump','dwell_ms',float('nan')),
+                                      ('jump','min_distance',2), ('jump','min_distance','invalid')]:
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
                 data = yaml.safe_load(DEFAULT_CONFIG.read_text())
                 data[section][name] = value

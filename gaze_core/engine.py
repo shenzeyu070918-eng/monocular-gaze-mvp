@@ -62,16 +62,16 @@ class Engine:
             a,b,c,d,e,f = p[ids]
             return (np.linalg.norm(b-f)+np.linalg.norm(c-e))/(2*max(np.linalg.norm(a-d), 1e-6))
         openness = (ear([33,160,158,133,153,144])+ear([362,385,387,263,373,380]))/2
-        preview = (p[[33,133,159,145,362,263,386,374,1]] / [w,h]).tolist()
+        preview = [[float(v) for v in point] for point in p[[33,133,159,145,362,263,386,374,1]] / [w,h]]
         if openness < options.blink_threshold:
             return {'valid': False, 'status': 'blink', 'landmarks': preview, 'inference_ms': (time.perf_counter()-start)*1000}
         self.model.estimate_gaze(image, face)
         raw = intersect_screen(face.center, face.gaze_vector, geometry.width_cm, geometry.height_cm, geometry.top_cm)
         valid = raw is not None and np.isfinite(raw).all() and options.distance_min_m < face.center[2] < options.distance_max_m
         return {'valid': bool(valid), 'status': 'tracking' if valid else 'geometry_invalid',
-                'raw': raw if valid else None, 'landmarks': preview,
-                'origin_m': face.center.tolist(), 'gaze_vector': face.gaze_vector.tolist(),
-                'head_degrees': face.head_pose_rot.as_euler('xyz', degrees=True).tolist(),
+                'raw': [float(v) for v in raw] if valid else None, 'landmarks': preview,
+                'origin_m': [float(v) for v in face.center], 'gaze_vector': [float(v) for v in face.gaze_vector],
+                'head_degrees': [float(v) for v in face.head_pose_rot.as_euler('xyz', degrees=True)],
                 'distance_cm': float(face.center[2]*100), 'eye_openness': float(openness),
                 'inference_ms': (time.perf_counter()-start)*1000}
 

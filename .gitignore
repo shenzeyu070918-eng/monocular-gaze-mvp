@@ -12,3 +12,6 @@ gaze-evaluation-*.csv
 build/
 dist/
 *.egg-info/
+
+# Local recordings and personal calibration data
+/data/

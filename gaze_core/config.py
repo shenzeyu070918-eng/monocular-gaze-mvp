@@ -1,5 +1,5 @@
 """Shared configuration without UI or model imports."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 from pathlib import Path
 
@@ -27,14 +27,18 @@ class CameraSettings:
     grayscale: bool
     startup_timeout_s: float
     stop_timeout_s: float
+    undistort: bool = True
+    undistort_alpha: float = 0.0
 
 
 @dataclass(frozen=True)
 class ScreenGeometry:
-    width_cm: float
-    height_cm: float
+    width_cm: float | None
+    height_cm: float | None
     top_cm: float
     focal_scale: float
+    horizontal_cm: float = 0.0
+    measured: bool = False
 
 
 @dataclass(frozen=True)
@@ -54,12 +58,37 @@ class JumpSettings:
 
 
 @dataclass(frozen=True)
+class CalibrationSettings:
+    views: int = 20
+    max_error_px: float = 1.0
+    min_view_distance: float = 0.08
+    min_center_span: float = 0.2
+    min_tilt_span_deg: float = 15.0
+    refine_window_px: int = 11
+    refine_max_iterations: int = 30
+    refine_epsilon: float = 0.001
+
+
+@dataclass(frozen=True)
+class DistanceCheckSettings:
+    distances_cm: tuple = (40, 50, 60)
+    settle_ms: float = 1000.0
+    duration_ms: float = 3000.0
+    min_samples: int = 20
+    warning_cm: float = 5.0
+
+
+@dataclass(frozen=True)
 class Settings:
     inference: InferenceSettings
     camera: CameraSettings
     geometry: ScreenGeometry
     recording: RecordingSettings
     jump: JumpSettings
+    calibration: CalibrationSettings = CalibrationSettings()
+    distance_check: DistanceCheckSettings = DistanceCheckSettings()
+    device_file: str | None = None
+    device_profile: object = None
 
 
 def select_device(requested, cuda_available):
@@ -74,10 +103,13 @@ def load_settings(path=DEFAULT_CONFIG):
     import yaml
     with Path(path).open(encoding='utf-8') as source:
         data = yaml.safe_load(source)
-    if not isinstance(data, dict) or set(data) != {'inference', 'camera', 'geometry', 'recording', 'jump'}:
+    required = {'inference', 'camera', 'geometry', 'recording', 'jump'}
+    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check'}:
         raise ValueError('配置必须包含 inference、camera、geometry、recording、jump 五部分')
     settings = Settings(InferenceSettings(**data['inference']), CameraSettings(**data['camera']),
-                        ScreenGeometry(**data['geometry']), RecordingSettings(**data['recording']), JumpSettings(**data['jump']))
+                        ScreenGeometry(**data['geometry']), RecordingSettings(**data['recording']), JumpSettings(**data['jump']),
+                        CalibrationSettings(**data.get('calibration', {})), DistanceCheckSettings(**data.get('distance_check', {})),
+                        data.get('device_file'))
     i, c, g = settings.inference, settings.camera, settings.geometry
     # Validate the request separately from actual device availability.
     if i.device not in {'auto', 'cpu', 'cuda'}:
@@ -94,11 +126,27 @@ def load_settings(path=DEFAULT_CONFIG):
                         ('distance_max_m', i.distance_max_m),
                         ('normalized_camera_distance_m', i.normalized_camera_distance_m),
                         ('startup_timeout_s', c.startup_timeout_s), ('stop_timeout_s', c.stop_timeout_s),
-                        ('width_cm', g.width_cm), ('height_cm', g.height_cm), ('focal_scale', g.focal_scale)]:
+                        ('focal_scale', g.focal_scale)]:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ValueError(f'{name} 必须是有限正数')
-    if not isinstance(g.top_cm, (int, float)) or not math.isfinite(g.top_cm):
-        raise ValueError('top_cm 必须是有限数值')
+    from .devices import finite, load_device
+    for key in ('width_cm', 'height_cm'):
+        finite(getattr(g, key), key, positive=True, nullable=True)
+    if (g.width_cm is None) != (g.height_cm is None) or type(g.measured) is not bool or (g.measured and g.width_cm is None):
+        raise ValueError('屏幕宽高必须同时填写，实测状态必须明确')
+    finite(g.top_cm, 'top_cm'); finite(g.horizontal_cm, 'horizontal_cm')
+    if type(c.undistort) is not bool or not 0 <= finite(c.undistort_alpha, 'undistort_alpha') <= 1:
+        raise ValueError('去畸变开关必须为布尔值，alpha 必须在 [0, 1]')
+    if settings.device_file is not None:
+        if not isinstance(settings.device_file, str) or not settings.device_file.strip():
+            raise ValueError('device_file 必须是设备文件路径或 null')
+        device_path = Path(settings.device_file)
+        if not device_path.is_absolute():
+            device_path = Path(path).resolve().parent/device_path
+        profile = load_device(device_path)
+        settings = replace(settings, device_profile=profile,
+                           geometry=replace(g, width_cm=profile.width_cm, height_cm=profile.height_cm,
+                                            top_cm=profile.top_cm, horizontal_cm=profile.horizontal_cm, measured=profile.measured))
     if i.distance_min_m >= i.distance_max_m:
         raise ValueError('distance_min_m 必须小于 distance_max_m')
     r, j = settings.recording, settings.jump
@@ -120,4 +168,23 @@ def load_settings(path=DEFAULT_CONFIG):
         raise ValueError('jump.margin 必须大于 0 且小于 0.5')
     if j.min_distance > math.sqrt(2)*(1-2*j.margin):
         raise ValueError('jump.min_distance 超出边距内区域的对角线')
+    calibration, check = settings.calibration, settings.distance_check
+    for key in ('views',):
+        if type(getattr(calibration, key)) is not int or getattr(calibration, key) < 3:
+            raise ValueError('calibration.views 至少为 3')
+    for key in ('max_error_px', 'min_view_distance', 'min_center_span', 'min_tilt_span_deg', 'refine_epsilon'):
+        finite(getattr(calibration, key), 'calibration.'+key, positive=True)
+    for key in ('refine_window_px', 'refine_max_iterations'):
+        if type(getattr(calibration, key)) is not int or getattr(calibration, key) <= 0:
+            raise ValueError('calibration.'+key+' 必须为正整数')
+    if calibration.min_center_span > 1 or calibration.min_tilt_span_deg > 180:
+        raise ValueError('标定多样性阈值超出可用范围')
+    if not isinstance(check.distances_cm, (list, tuple)) or not check.distances_cm:
+        raise ValueError('distance_check.distances_cm 必须为非空数组')
+    for value in check.distances_cm:
+        finite(value, 'distances_cm', positive=True)
+    for key in ('settle_ms', 'duration_ms', 'warning_cm'):
+        finite(getattr(check, key), 'distance_check.'+key, positive=True)
+    if type(check.min_samples) is not int or check.min_samples <= 0:
+        raise ValueError('distance_check.min_samples 必须为正整数')
     return settings

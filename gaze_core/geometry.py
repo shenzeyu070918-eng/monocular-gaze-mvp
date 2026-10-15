@@ -2,7 +2,11 @@
 import numpy as np
 
 
-def intersect_screen(origin, direction, width_cm, height_cm, top_cm=0.2):
+def intersect_screen(origin, direction, width_cm, height_cm, top_cm=0.0, horizontal_cm=0.0):
+    if width_cm is None or height_cm is None:
+        return None
+    if not np.isfinite([width_cm, height_cm, top_cm, horizontal_cm]).all() or width_cm <= 0 or height_cm <= 0:
+        raise ValueError('屏幕尺寸和摄像头偏移无效')
     origin, direction = np.asarray(origin, float), np.asarray(direction, float)
     if not np.isfinite(origin).all() or not np.isfinite(direction).all() or direction[2] >= -1e-5:
         return None
@@ -11,7 +15,7 @@ def intersect_screen(origin, direction, width_cm, height_cm, top_cm=0.2):
         return None
     point = origin + distance * direction
     # Camera faces the viewer: its x axis is opposite the display x axis.
-    return [(width_cm / 2 - point[0] * 100) / width_cm,
+    return [(width_cm / 2 + horizontal_cm - point[0] * 100) / width_cm,
             (point[1] * 100 - top_cm) / height_cm]
 
 

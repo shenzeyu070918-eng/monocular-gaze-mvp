@@ -9,9 +9,9 @@ from ptgaze.config_schema import AppConfig
 from ptgaze.gaze_estimator import GazeEstimator
 from ptgaze.common import Camera
 from ptgaze.head_pose_estimation import HeadPoseNormalizer
-from geometry import intersect_screen
+from .geometry import intersect_screen
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class Engine:

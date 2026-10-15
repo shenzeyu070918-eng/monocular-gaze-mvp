@@ -275,6 +275,9 @@ class RecorderTests(unittest.TestCase):
         first = recorder.close(reason="synthetic-first")
         second = recorder.close(reason="synthetic-second")
         self.assertEqual(first, second)
+        self.assertFalse(self.record_frame(recorder,frame_id=2))
+        recorder.fail('synthetic late producer error')
+        self.assertEqual(recorder.status(),first)
         rows = [json.loads(line) for line in recorder.path.read_text().splitlines()]
         self.assertEqual(sum(row["type"] == "end" for row in rows), 1)
         self.assertEqual(rows[-1]["reason"], "synthetic-first")

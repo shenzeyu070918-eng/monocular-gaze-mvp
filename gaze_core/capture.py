@@ -3,6 +3,7 @@ import argparse
 from dataclasses import dataclass, replace
 import json
 import math
+import queue
 import sys
 import threading
 import time
@@ -54,9 +55,14 @@ class CameraPipeline:
     resume reuses the loaded engine; only close releases it after joining workers.
     A result contains no image. Timing samples are retained only when explicitly
     enabled for a finite benchmark; ordinary use retains only the latest result.
+    An optional recorder receives only result dictionaries and original timing;
+    recording failures are reported separately and never stop inference.
     """
     def __init__(self, settings=None, *, camera_factory=None, engine_factory=None,
-                 collect_timings=False, clock_ns=time.perf_counter_ns):
+                 collect_timings=False, clock_ns=time.perf_counter_ns,
+                 recorder=None, recording_factory=None):
+        if recorder is not None and recording_factory is not None:
+            raise ValueError('recorder 和 recording_factory 只能指定一个。')
         self.settings = settings or load_settings()
         self._camera_factory = camera_factory or open_camera
         self._engine_factory = engine_factory or self._new_engine
@@ -66,7 +72,18 @@ class CameraPipeline:
         self._stop, self._run = threading.Event(), threading.Event()
         self._threads = ()
         self._closed = False
+        self._closing = False
         self._engine = None
+        self._recorder = recorder
+        self._recording_factory = recording_factory
+        self._recording_attempted = False
+        self._recording_error = None
+        self._recorder_closed = False
+        self._recording_thread = None
+        self._recording_stop = threading.Event()
+        self._recording_finalize = threading.Event()
+        self._recording_queue = queue.Queue(self.settings.recording.queue_size)
+        self._recording_close_failure = None
         self._sequence = 0  # Result cursors remain valid across pause/resume.
         self._reset_session()
 
@@ -109,8 +126,8 @@ class CameraPipeline:
 
     def start(self):
         with self._control:
-            if self._closed:
-                raise RuntimeError('管线已关闭，不能重新启动。')
+            if self._closed or self._closing:
+                raise RuntimeError('管线已关闭或正在关闭，不能重新启动。')
             if self.running:
                 return self
             self._stop_workers()
@@ -167,13 +184,142 @@ class CameraPipeline:
 
     def close(self):
         with self._control:
+            self._closing = True
             self._stop_workers()
+            # Join first: an in-flight prediction still belongs in this session.
+            # pause intentionally keeps the recorder and the loaded model alive.
+            self._stop_recording()
             # No worker can still be using the model after a successful join.
             # Keep the handle on failure so that cleanup can be retried.
             if self._engine is not None:
                 self._engine.close()
                 self._engine = None
             self._closed = True
+
+    def _set_recording_error(self, error):
+        with self._condition:
+            if self._recording_error is None:
+                self._recording_error = str(error)
+            self._condition.notify_all()
+
+    def _prepare_recorder(self, engine, image):
+        if (self._recording_factory is None and self._recorder is None) or self._recording_attempted:
+            return
+        self._recording_attempted = True
+        height, width = image.shape[:2]
+        # Only engine provenance and dimensions cross this boundary; not pixels.
+        self._recording_thread = threading.Thread(
+            target=self._recording_loop, args=(engine, (width, height)),
+            name='gaze-recording', daemon=True)
+        try:
+            self._recording_thread.start()
+        except Exception as exc:
+            self._recording_thread = None
+            self._set_recording_error(exc)
+
+    def _record_prediction(self, frame, completed_ns, data):
+        if not self._recording_attempted or self._recording_error is not None:
+            return
+        try:
+            from .recorder import RESULT_FIELDS, validate_payload
+            if set(data)-RESULT_FIELDS-{'landmarks'}:
+                raise ValueError('推理结果含非数值录制字段，拒绝缓存。')
+            numeric = {key: (list(value) if isinstance(value, (list, tuple)) else value)
+                       for key, value in data.items() if key in RESULT_FIELDS}
+            timing = {'capture_ns': frame.captured_ns,
+                      'inference_completed_ns': completed_ns, 'frame_id': frame.sequence}
+            validate_payload('frame', {**numeric, **timing}, 'python')
+            self._recording_queue.put_nowait((numeric, timing))
+        except queue.Full:
+            self._set_recording_error('录制准备/转交队列已满；录制已停止，推理继续运行。')
+            self._recording_stop.set()
+        except Exception as exc:
+            self._set_recording_error(exc)
+            self._recording_stop.set()
+
+    def _recording_loop(self, engine, actual_resolution):
+        """Initialize/drain on a dedicated thread, including slow first flush."""
+        try:
+            if self._recorder is None:
+                self._recorder = self._recording_factory(engine, actual_resolution)
+                if self._recorder is None:
+                    raise RuntimeError('录制工厂未返回 recorder。')
+            while not self._recording_stop.is_set() or not self._recording_queue.empty():
+                try:
+                    data, timing = self._recording_queue.get(timeout=.05)
+                except queue.Empty:
+                    continue
+                try:
+                    if not self._recorder.record_frame(data, **timing):
+                        self._set_recording_error(self._recorder.error or '录制器拒绝帧记录。')
+                        self._recording_stop.set()
+                except Exception as exc:
+                    self._set_recording_error(exc)
+                    self._recording_stop.set()
+                finally:
+                    self._recording_queue.task_done()
+        except Exception as exc:
+            self._set_recording_error(exc)
+            self._recording_stop.set()
+            while True:
+                try:
+                    self._recording_queue.get_nowait()
+                    self._recording_queue.task_done()
+                except queue.Empty:
+                    break
+        finally:
+            # Even a failed bridge must not close its session before the
+            # capture/inference workers have delivered their final result.
+            self._recording_finalize.wait()
+            try:
+                self._close_recorder()
+            except Exception as exc:
+                self._recording_close_failure = exc
+                self._set_recording_error(exc)
+
+    def _close_recorder(self):
+        if self._recorder is None or self._recorder_closed:
+            return
+        # Drain accepted results before propagating a bridge failure; fail()
+        # stops the recorder's producer queue and marks the end record failed.
+        if self._recording_error and not self._recorder.error:
+            self._recorder.fail(self._recording_error)
+        self._recorder.close(reason='recording_failed' if self._recording_error else 'pipeline_closed')
+        self._recorder_closed = True
+
+    def _stop_recording(self):
+        self._recording_stop.set()
+        self._recording_finalize.set()  # Called only after both workers joined.
+        if self._recording_thread is not None:
+            self._recording_thread.join(self.settings.recording.close_timeout_s)
+            if self._recording_thread.is_alive():
+                error = RuntimeError('录制准备/转交线程未能及时退出；录制器与引擎尚未释放，可重试关闭。')
+                self._set_recording_error(error)
+                raise error
+            self._recording_thread = None
+            if self._recording_close_failure is not None:
+                error, self._recording_close_failure = self._recording_close_failure, None
+                raise RuntimeError(f'录制器尚未完成关闭，可重试：{error}') from error
+        else:
+            # Injected recorders may exist without a camera frame ever arriving.
+            self._close_recorder()
+
+    def recording_status(self):
+        if self._recorder is not None:
+            try:
+                status = dict(self._recorder.status())
+                if status.get('error'):
+                    self._set_recording_error(status['error'])
+            except Exception as exc:
+                self._set_recording_error(exc)
+                status = {}
+        else:
+            status = {'enabled': self._recording_factory is not None}
+        with self._condition:
+            return {**status, 'pipeline_error': self._recording_error,
+                    'buffered_predictions': self._recording_queue.qsize(),
+                    'preparing': self._recording_attempted and self._recorder is None and
+                                 bool(self._recording_thread and self._recording_thread.is_alive())}
 
     def _capture_loop(self):
         camera = None
@@ -235,9 +381,11 @@ class CameraPipeline:
                         break
                     frame, self._pending = self._pending, None
                     self._in_flight = True
+                self._prepare_recorder(engine, frame.image)
                 started_ns = self._clock_ns()
                 data = engine.predict(frame.image, self.settings.geometry, self.settings.camera.grayscale)
                 completed_ns = self._clock_ns()
+                self._record_prediction(frame, completed_ns, data)
                 with self._condition:
                     self._predicted += 1
                     self._valid_predictions += int(bool(data.get('valid', False)))
@@ -289,6 +437,7 @@ class CameraPipeline:
                 'dropped_frames': self._dropped,
                 'pending_frames': int(self._pending is not None), 'in_flight_frames': int(self._in_flight),
                 'discarded_on_stop': self._discarded_on_stop,
+                'recording': self.recording_status(),
                 'latency_definition': '从 OpenCV read() 返回到推理结果就绪；不含摄像头曝光与驱动缓冲，不是端到端延迟。',
                 'drop_definition': '仅统计新帧覆盖尚未推理的旧帧；统计截止时待处理和推理中的帧单列。',
             }
@@ -304,6 +453,7 @@ def run_benchmark(pipeline, seconds):
     finally:
         pipeline.close()
     pipeline.raise_if_failed()
+    report['recording'] = pipeline.recording_status()  # Include final flush/close failures.
     return report
 
 
@@ -313,6 +463,8 @@ def main(argv=None):
     parser.add_argument('--config', default=str(DEFAULT_CONFIG))
     parser.add_argument('--grayscale', action=argparse.BooleanOptionalAction, default=None,
                         help='覆盖配置中的灰度选项；--no-grayscale 使用彩色')
+    parser.add_argument('--record', action='store_true',
+                        help='同时录制原始数值结果到 data/sessions；不记录图像')
     args = parser.parse_args(argv)
     if not math.isfinite(args.benchmark) or args.benchmark <= 0:
         parser.error('--benchmark 必须是有限正数')
@@ -320,7 +472,17 @@ def main(argv=None):
         settings = load_settings(args.config)
         if args.grayscale is not None:
             settings = replace(settings, camera=replace(settings.camera, grayscale=args.grayscale))
-        report = run_benchmark(CameraPipeline(settings, collect_timings=True), args.benchmark)
+        recording_factory = None
+        if args.record:
+            from .recorder import SessionRecorder, session_metadata
+            def recording_factory(engine, actual_resolution):
+                metadata = session_metadata(
+                    source='python', engine=engine, geometry=settings.geometry,
+                    camera_size=actual_resolution, grayscale=settings.camera.grayscale,
+                    screen=None, measured=False, page_clock_id=None)
+                return SessionRecorder(metadata, settings=settings.recording)
+        report = run_benchmark(CameraPipeline(settings, collect_timings=True,
+                                             recording_factory=recording_factory), args.benchmark)
         print(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False))
     except (Exception, KeyboardInterrupt) as exc:
         print(f'测速未完成：{exc}', file=sys.stderr)

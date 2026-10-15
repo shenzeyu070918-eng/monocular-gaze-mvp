@@ -21,7 +21,7 @@ def load_engine():
     global engine
     try:
         engine = Engine()
-        state.update(ready=True, parameters=engine.parameters, model='ETH-XGaze / ResNet18', device='CPU')
+        state.update(ready=True, parameters=engine.parameters, model='ETH-XGaze / ResNet18', device=engine.device.upper(), device_name=engine.device_name)
     except Exception as exc:
         state['error'] = str(exc)
         import traceback

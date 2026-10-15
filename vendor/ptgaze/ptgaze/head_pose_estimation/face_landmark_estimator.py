@@ -1,3 +1,4 @@
+import time
 import numpy as np
 from omegaconf import DictConfig
 
@@ -38,9 +39,9 @@ class LandmarkEstimator:
             self._mp_image_cls = mediapipe.Image
             self._mp_image_format = mediapipe.ImageFormat.SRGB
             self._mp_static = config.face_detector.mediapipe_static_image_mode
-            # In VIDEO mode the timestamps only need to be monotonically
-            # increasing; the frame interval value itself does not matter.
-            self._mp_timestamp_ms = 0
+            # Use elapsed monotonic time so dropped frames and pauses retain
+            # their real spacing. Millisecond rounding must still increase strictly.
+            self._mp_timestamp_ms = -1
             options = vision.FaceLandmarkerOptions(
                 base_options=BaseOptions(model_asset_path=config.face_detector.mediapipe_model_path),
                 running_mode=vision.RunningMode.IMAGE if self._mp_static else vision.RunningMode.VIDEO,
@@ -127,8 +128,8 @@ class LandmarkEstimator:
         if self._mp_static:
             result = self.detector.detect(mp_image)
         else:
+            self._mp_timestamp_ms = max(time.perf_counter_ns() // 1_000_000, self._mp_timestamp_ms + 1)
             result = self.detector.detect_for_video(mp_image, self._mp_timestamp_ms)
-            self._mp_timestamp_ms += 33
         detected = []
         for landmarks in result.face_landmarks:
             pts = np.array(

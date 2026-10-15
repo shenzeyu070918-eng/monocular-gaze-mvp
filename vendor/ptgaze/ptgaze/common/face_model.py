@@ -28,13 +28,14 @@ class FaceModel:
         # correspond to an unrotated head in front of the camera.
         rvec = np.zeros(3, dtype=float)
         tvec = np.array([0, 0, 1], dtype=float)
-        # The landmarks are detected on the undistorted image, so the
-        # distortion coefficients must not be applied here again.
+        # The caller supplies the intrinsics for the actual landmark image.
+        # Rectified images use their new matrix and zero distortion; the
+        # optional unrectified comparison retains the original coefficients.
         _, rvec, tvec = cv2.solvePnP(
             self.LANDMARKS,
             landmarks2d,
             camera.camera_matrix,
-            np.zeros((1, 5)),
+            camera.dist_coefficients,
             rvec,
             tvec,
             useExtrinsicGuess=True,

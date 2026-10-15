@@ -16,19 +16,21 @@ from .config import ROOT, load_settings
 SCHEMA_VERSION = 1
 SCREEN_FIELDS = {'width_cm', 'height_cm', 'measured', 'width_px', 'height_px', 'device_pixel_ratio',
                  'window_width_px', 'window_height_px', 'fullscreen', 'stage_left_px', 'stage_top_px',
-                 'stage_width_px', 'stage_height_px', 'screen_x', 'screen_y', 'outer_width_px', 'outer_height_px'}
+                 'stage_width_px', 'stage_height_px', 'horizontal_cm', 'top_cm', 'screen_x', 'screen_y', 'outer_width_px', 'outer_height_px'}
 VIDEO_FIELDS = {'source', 'callback_ms', 'presentationTime', 'expectedDisplayTime', 'mediaTime',
                 'presentedFrames', 'captureTime', 'receiveTime', 'processingDuration', 'width', 'height'}
 RESULT_FIELDS = {'valid', 'status', 'raw', 'origin_m', 'gaze_vector', 'head_degrees', 'distance_cm',
-                 'eye_openness', 'inference_ms'}
+                 'eye_openness', 'inference_ms', 'camera'}
 FRAME_FIELDS = RESULT_FIELDS | {'capture_ns', 'request_received_ns', 'inference_completed_ns', 'frame_id',
                                'browser_capture_ms', 'browser_request_ms', 'browser_response_ms', 'video_frame'}
 EVENT_FIELDS = {
     'target': {'action', 'task_type', 'task_id', 'index', 'target', 'stage_target', 'browser_time_ms', 'reason'},
     'calibration': {'action', 'matrix', 'calibration_id', 'group', 'browser_time_ms'},
+    'distance_check': {'measured_cm', 'estimated_cm', 'bias_cm', 'bias_percent', 'sample_count',
+                       'sample_start_ms', 'sample_end_ms', 'browser_time_ms', 'warning', 'camera'},
     'click': {'x', 'y', 'button', 'browser_time_ms'},  # Reserved schema; no input listener in M0.
 }
-STATUSES = {'tracking', 'no_face', 'blink', 'geometry_invalid', 'prediction_error'}
+STATUSES = {'tracking', 'no_face', 'blink', 'geometry_invalid', 'prediction_error', 'screen_unconfigured'}
 
 
 def number(value, name, nullable=False):
@@ -63,7 +65,7 @@ def _json_numbers(value, field=''):
         return value
     converted = number(value, field or '数值')
     if isinstance(value, Integral) and (field.endswith('_ns') or field in {
-            'schema_version', 'seq', 'frame_id', 'index', 'written_lines', 'failed_records'}):
+            'schema_version', 'seq', 'frame_id', 'index', 'sample_count', 'written_lines', 'failed_records'}):
         return int(value)
     return converted
 
@@ -104,23 +106,27 @@ def validate_screen(screen):
 def session_metadata(*, source, engine, geometry, camera_size, grayscale, screen=None,
                      measured=False, page_clock_id=None):
     """Build provenance internally; never accept a request or image as metadata."""
-    width, height = camera_size
-    focal = width*geometry.focal_scale
+    from .camera import CameraAdapter
+    provider = getattr(engine, 'camera_metadata', None)
+    camera = (provider(camera_size, geometry) if provider is not None else
+              CameraAdapter().prepare(camera_size, geometry.focal_scale).metadata)
     try:
         result = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True, text=True, timeout=1)
         commit = result.stdout.strip() if result.returncode == 0 else 'unknown'
     except (OSError, subprocess.TimeoutExpired):
         commit = 'unknown'
     dimensions = dict(screen or {})
-    dimensions.update(width_cm=geometry.width_cm, height_cm=geometry.height_cm, measured=measured)
+    profile = getattr(getattr(engine, 'settings', None), 'device_profile', None)
+    if source == 'python' and profile and profile.screen_resolution:
+        dimensions.update(width_px=profile.screen_resolution[0], height_px=profile.screen_resolution[1])
+    dimensions.update(width_cm=geometry.width_cm, height_cm=geometry.height_cm, measured=measured,
+                      horizontal_cm=getattr(geometry, 'horizontal_cm', 0), top_cm=geometry.top_cm)
     return {
         'source': source, 'version': json.loads((ROOT/'package.json').read_text())['version'],
         'commit': commit, 'system': platform.platform(), 'device_name': platform.node() or platform.machine(),
         'inference_device': getattr(engine, 'device', 'unknown'),
         'inference_device_name': getattr(engine, 'device_name', 'unknown'),
-        'screen': dimensions, 'camera': {'width_px': width, 'height_px': height,
-            'intrinsics_source': 'estimated', 'matrix': [[focal,0,width/2],[0,focal,height/2],[0,0,1]],
-            'distortion': [0,0,0,0,0]},
+        'screen': dimensions, 'camera': camera,
         'grayscale': grayscale, 'page_clock_id': page_clock_id,
     }
 
@@ -136,16 +142,45 @@ def validate_metadata(metadata):
         raise ValueError('grayscale 必须是布尔值')
     text_value(metadata['page_clock_id'], 'page_clock_id', nullable=metadata['source']=='python')
     validate_screen(metadata['screen'])
-    camera = metadata['camera']
-    if not isinstance(camera, dict) or set(camera) != {'width_px','height_px','intrinsics_source','matrix','distortion'}:
+    validate_camera(metadata['camera'])
+
+
+def validate_camera(camera, nullable=False):
+    if camera is None and nullable:
+        return
+    required = {'width_px', 'height_px', 'intrinsics_source', 'matrix', 'distortion'}
+    extra = {'intrinsics_reason', 'device_file', 'calibration_resolution', 'reprojection_error_px',
+             'input_matrix', 'input_distortion', 'scaled', 'undistort_enabled', 'undistort_applied'}
+    if not isinstance(camera, dict) or not required <= set(camera) or set(camera)-required-extra:
         raise ValueError('camera 包含未允许的数据')
     if camera['intrinsics_source'] not in {'estimated', 'calibrated'}:
         raise ValueError('相机内参来源无效')
-    number(camera['width_px'], 'camera.width_px'); number(camera['height_px'], 'camera.height_px')
-    if not isinstance(camera['matrix'], list) or len(camera['matrix']) != 3:
-        raise ValueError('相机矩阵必须为 3×3')
-    for row in camera['matrix']: vector(row, 3, 'camera.matrix')
-    vector(camera['distortion'], 5, 'camera.distortion')
+    for key in ('width_px', 'height_px'):
+        if number(camera[key], key) <= 0:
+            raise ValueError('相机分辨率必须为正数')
+    for key in ('matrix', 'input_matrix'):
+        if key not in camera:
+            continue
+        if not isinstance(camera[key], list) or len(camera[key]) != 3:
+            raise ValueError('相机矩阵必须为 3×3')
+        for row in camera[key]:
+            vector(row, 3, 'camera.'+key)
+    for key in ('distortion', 'input_distortion'):
+        if key in camera:
+            vector(camera[key], 5, 'camera.'+key)
+    if camera.get('intrinsics_reason') not in {None, 'no_device_file', 'aspect_ratio_mismatch'}:
+        raise ValueError('相机内参回退原因无效')
+    if 'device_file' in camera:
+        text_value(camera['device_file'], 'device_file', nullable=True)
+    if camera.get('calibration_resolution') is not None:
+        vector(camera['calibration_resolution'], 2, 'calibration_resolution')
+    if 'reprojection_error_px' in camera:
+        value = number(camera['reprojection_error_px'], 'reprojection_error_px', nullable=True)
+        if value is not None and value < 0:
+            raise ValueError('重投影误差不能为负')
+    for key in ('scaled', 'undistort_enabled', 'undistort_applied'):
+        if key in camera and type(camera[key]) is not bool:
+            raise ValueError(key+' 必须为布尔值')
 
 
 def validate_payload(kind, fields, source):
@@ -155,7 +190,7 @@ def validate_payload(kind, fields, source):
     if kind == 'frame':
         if type(fields.get('valid')) is not bool or fields.get('status') not in STATUSES:
             raise ValueError('frame 状态无效')
-        for key in FRAME_FIELDS-{'valid','status','raw','origin_m','gaze_vector','head_degrees','video_frame'}:
+        for key in FRAME_FIELDS-{'valid','status','raw','origin_m','gaze_vector','head_degrees','video_frame','camera'}:
             if key.endswith(('_ns', '_ms')) and key != 'inference_ms':
                 clock_value(fields.get(key), key, nullable=True)
             else:
@@ -167,6 +202,7 @@ def validate_payload(kind, fields, source):
         clock_value(fields.get('inference_completed_ns'), 'inference_completed_ns')
         field = 'browser_capture_ms' if source=='web' else 'capture_ns'
         clock_value(fields.get(field), field)
+        validate_camera(fields.get('camera'), nullable=True)
         video = fields.get('video_frame')
         if video is not None:
             if not isinstance(video, dict) or set(video)-VIDEO_FIELDS:
@@ -192,6 +228,16 @@ def validate_payload(kind, fields, source):
             if matrix is not None:
                 if not isinstance(matrix, list) or len(matrix) != 3: raise ValueError('校准矩阵必须为 3×2')
                 for row in matrix: vector(row, 2, 'matrix')
+        elif kind == 'distance_check':
+            for key in ('measured_cm', 'estimated_cm', 'bias_cm', 'bias_percent', 'sample_count'):
+                number(fields.get(key), key, nullable=key in {'estimated_cm', 'bias_cm', 'bias_percent'})
+            if fields['measured_cm'] <= 0 or not isinstance(fields['sample_count'], Integral) or fields['sample_count'] < 0:
+                raise ValueError('视距自检的实测值和样本数无效')
+            if type(fields.get('warning')) is not bool:
+                raise ValueError('视距自检 warning 必须为布尔值')
+            for key in ('sample_start_ms', 'sample_end_ms'):
+                clock_value(fields.get(key), key, nullable=True)
+            validate_camera(fields.get('camera'), nullable=True)
         else:
             number(fields.get('x'), 'x'); number(fields.get('y'), 'y')
             if fields.get('button') not in {'left','middle','right'}: raise ValueError('按键类型无效')

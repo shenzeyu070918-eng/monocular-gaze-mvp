@@ -425,6 +425,7 @@ class CameraPipeline:
             return {
                 'measurement_seconds': seconds,
                 'device': self._device, 'device_name': self._device_name,
+                'camera': self._latest.data.get('camera') if self._latest else None,
                 'requested_resolution': [self.settings.camera.width, self.settings.camera.height],
                 'actual_resolution': self._actual_resolution,
                 'grayscale': self.settings.camera.grayscale,
@@ -479,7 +480,7 @@ def main(argv=None):
                 metadata = session_metadata(
                     source='python', engine=engine, geometry=settings.geometry,
                     camera_size=actual_resolution, grayscale=settings.camera.grayscale,
-                    screen=None, measured=False, page_clock_id=None)
+                    screen=None, measured=settings.geometry.measured, page_clock_id=None)
                 return SessionRecorder(metadata, settings=settings.recording)
         report = run_benchmark(CameraPipeline(settings, collect_timings=True,
                                              recording_factory=recording_factory), args.benchmark)

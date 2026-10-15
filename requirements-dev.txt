@@ -1,0 +1,2 @@
+# Additional dependency for unittest HTTP API tests; install after the runtime.
+httpx2==2.13.1

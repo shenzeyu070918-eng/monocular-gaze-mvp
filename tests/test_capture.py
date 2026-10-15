@@ -131,12 +131,16 @@ class PipelineTests(unittest.TestCase):
         settings = load_settings()
         settings = replace(settings, camera=replace(settings.camera, grayscale=True))
         pipeline, cameras, engines = self.make_pipeline(settings=settings)
+        last_sequence = 0
         for number in [1,2]:
             pipeline.resume()
             pipeline.start()  # An already running pipeline is not duplicated.
             self.assertEqual(len(cameras), number)
             cameras[-1].send(number)
-            self.assertIsNotNone(pipeline.wait_for_result(timeout=3))
+            result = pipeline.wait_for_result(after_sequence=last_sequence, timeout=3)
+            self.assertIsNotNone(result)
+            self.assertGreater(result.sequence, last_sequence)
+            last_sequence = result.sequence
             pipeline.pause()
             self.assertFalse(pipeline.running)
             self.assertTrue(engines[-1].closed)

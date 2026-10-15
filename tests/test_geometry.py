@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from geometry import intersect_screen, fit_affine
+from gaze_core.geometry import intersect_screen, fit_affine
 
 
 class GeometryTests(unittest.TestCase):

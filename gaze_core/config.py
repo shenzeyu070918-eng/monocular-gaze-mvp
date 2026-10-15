@@ -50,6 +50,7 @@ class JumpSettings:
     point_count: int
     dwell_ms: float
     min_distance: float
+    margin: float
 
 
 @dataclass(frozen=True)
@@ -115,4 +116,8 @@ def load_settings(path=DEFAULT_CONFIG):
         raise ValueError('jump.dwell_ms 必须是有限正数')
     if type(j.min_distance) not in (int, float) or not math.isfinite(j.min_distance) or not 0 < j.min_distance <= math.sqrt(2):
         raise ValueError('jump.min_distance 超出全屏归一化坐标可用范围')
+    if type(j.margin) not in (int, float) or not math.isfinite(j.margin) or not 0 < j.margin < .5:
+        raise ValueError('jump.margin 必须大于 0 且小于 0.5')
+    if j.min_distance > math.sqrt(2)*(1-2*j.margin):
+        raise ValueError('jump.min_distance 超出边距内区域的对角线')
     return settings

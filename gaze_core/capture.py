@@ -74,6 +74,7 @@ class CameraPipeline:
         self._threads = ()
         self._closed = False
         self._camera = None
+        self._sequence = 0  # Result cursors remain valid across pause/resume.
         self._reset_session()
 
     def _new_engine(self):
@@ -208,10 +209,11 @@ class CameraPipeline:
                     if self._stop.is_set():
                         break
                     self._captured += 1
+                    self._sequence += 1
                     self._actual_resolution = [width, height]
                     if self._pending is not None:
                         self._dropped += 1
-                    self._pending = CapturedFrame(self._captured, captured_ns, image)
+                    self._pending = CapturedFrame(self._sequence, captured_ns, image)
                     self._condition.notify_all()
         except Exception as exc:
             self._fail(exc)

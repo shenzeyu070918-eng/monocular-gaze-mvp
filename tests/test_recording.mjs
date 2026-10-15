@@ -85,19 +85,20 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
 // calibration fitting or real-time measurements are involved.
 {
  let time=2000,animation,hangReceipt=false,holdNextFrame=false,releaseFrame,timerId=0,cameraStarts=0;
- const requests=[],handlers={},timers=new Map();
+ const requests=[],handlers={},timers=new Map(),rootClasses=new Set();
  const context=new Proxy({}, {get:()=>()=>{}});
  const elements=new Map();
  function element(id){if(!elements.has(id))elements.set(id,{hidden:false,disabled:false,checked:false,value:'',style:{},options:[{},{}],classList:{toggle(){}},getContext:()=>context,getBoundingClientRect:()=>({left:100,top:80,width:600,height:400}),addEventListener(){},checkValidity:()=>true,videoWidth:640,videoHeight:480,play:async()=>{},toDataURL:()=> 'data:image/jpeg;base64,FAKE_TRANSIENT_IMAGE'});return elements.get(id);}
  for(const [id,value]of Object.entries({widthCm:30.2,heightCm:19.6,topCm:.2,focalScale:1}))element(id).value=String(value);
- const originals={setTimeout,clearTimeout,fetch,performance,document:globalThis.document,window:globalThis.window,navigator:globalThis.navigator};
+ const originals={setTimeout,clearTimeout,fetch,performance,document:globalThis.document,window:globalThis.window,navigator:globalThis.navigator,getComputedStyle:globalThis.getComputedStyle};
  Object.defineProperty(globalThis,'performance',{configurable:true,value:{now:()=>time,timeOrigin:0}});
  Object.defineProperty(globalThis,'navigator',{configurable:true,value:{mediaDevices:{getUserMedia:async()=>{cameraStarts++;return {getTracks:()=>[{stop(){}}]};}}}});
  globalThis.screen={width:1000,height:800};globalThis.innerWidth=1000;globalThis.innerHeight=800;globalThis.outerWidth=1000;globalThis.outerHeight=800;globalThis.screenX=0;globalThis.screenY=0;globalThis.devicePixelRatio=2;
- globalThis.document={fullscreenElement:null,documentElement:{},getElementById:element,createElement:()=>element('capture'),addEventListener:(type,handler)=>{handlers[type]=handler;}};
+ globalThis.document={fullscreenElement:null,documentElement:{classList:{add:name=>rootClasses.add(name),remove:name=>rootClasses.delete(name)}},getElementById:element,createElement:()=>element('capture'),addEventListener:(type,handler)=>{handlers[type]=handler;}};
+ globalThis.getComputedStyle=el=>el===element('jumpTarget')?{width:'32px',height:'32px'}:{width:'72px',height:'20px'};
  globalThis.window={addEventListener:(type,handler)=>{handlers[type]=handler;}};
  globalThis.requestAnimationFrame=callback=>{animation=callback;};globalThis.setTimeout=(callback,delay)=>{timers.set(++timerId,{callback,delay});return timerId;};globalThis.clearTimeout=id=>timers.delete(id);
- globalThis.fetch=async(path,options={})=>{const body=options.body?JSON.parse(options.body):undefined;requests.push({path,body});let result={error:null};if(path==='/api/status')result={ready:true};else if(path==='/api/recording/config')result={request_timeout_ms:250,jump:{point_count:8,dwell_ms:100,min_distance:.35}};else if(path==='/api/recording/start')result={session_id:`page-${requests.length}`,active:true};else if(path==='/api/frame')result={valid:true,raw:[.4,.5],status:'tracking',distance_cm:50,inference_ms:1};if(path.endsWith('/receipt')&&hangReceipt)return new Promise((resolve,reject)=>{options.signal.addEventListener('abort',()=>reject(new DOMException('fake request aborted','AbortError')));});if(path==='/api/frame'&&holdNextFrame){holdNextFrame=false;return new Promise(resolve=>{releaseFrame=()=>resolve({ok:true,json:async()=>result});});}return {ok:true,json:async()=>result};};
+ globalThis.fetch=async(path,options={})=>{const body=options.body?JSON.parse(options.body):undefined;requests.push({path,body});let result={error:null};if(path==='/api/status')result={ready:true};else if(path==='/api/recording/config')result={request_timeout_ms:250,jump:{point_count:8,dwell_ms:100,min_distance:.35,margin:.05}};else if(path==='/api/recording/start')result={session_id:`page-${requests.length}`,active:true};else if(path==='/api/frame')result={valid:true,raw:[.4,.5],status:'tracking',distance_cm:50,inference_ms:1};if(path.endsWith('/receipt')&&hangReceipt)return new Promise((resolve,reject)=>{options.signal.addEventListener('abort',()=>reject(new DOMException('fake request aborted','AbortError')));});if(path==='/api/frame'&&holdNextFrame){holdNextFrame=false;return new Promise(resolve=>{releaseFrame=()=>resolve({ok:true,json:async()=>result});});}return {ok:true,json:async()=>result};};
  const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
  try{
   await import('../static/app.js?mock-browser');await flush();
@@ -105,25 +106,44 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
   const frame=requests.find(r=>r.path==='/api/frame').body;
   assert.equal(frame.browser_capture_ms,2000);assert.equal(frame.browser_request_ms,2000);assert.equal(frame.page_clock_id.length>0,true);
   assert.equal(element('jumpCount').value,8);
+  assert.equal(element('jumpMargin').value,5);
   await element('jump').onclick();assert.match(element('message').textContent,/全屏/);assert.equal(requests.filter(r=>r.path.endsWith('/start')).length,0);
   document.fullscreenElement=document.documentElement;
-  await element('jump').onclick();animation();await flush();
+  element('jumpMargin').value=.1;await element('jump').onclick();assert.match(element('message').textContent,/完整显示目标圆/);assert.equal(requests.filter(r=>r.path.endsWith('/start')).length,0);
+  element('jumpMargin').value=40;await element('jump').onclick();assert.match(element('message').textContent,/最小间距/);assert.equal(requests.filter(r=>r.path.endsWith('/start')).length,0);
+  element('jumpMargin').value=5;await element('jump').onclick();
+  assert.equal(requests.some(r=>r.body?.type==='target'),false);
+  animation();await flush();
   const first=requests.find(r=>r.body?.type==='target').body;
-  assert.equal(first.action,'appear');assert.equal(first.task_type,'jump');assert.equal(first.stage_target,null);assert.ok([0,.5,1].includes(first.target[0]));
+  assert.equal(first.action,'appear');assert.equal(first.task_type,'jump');assert.equal(first.stage_target,null);assert.ok([.05,.5,.95].includes(first.target[0]));
+  assert.equal(first.browser_time_ms,time);
+  assert.deepEqual(first.target,[parseFloat(element('jumpTarget').style.left)/100,parseFloat(element('jumpTarget').style.top)/100]);
   assert.equal(element('jumpOverlay').hidden,false);
+  assert.equal(element('jumpEscape').hidden,false);assert.equal(rootClasses.has('jump-active'),true);
   time+=101;animation();await flush();
   const targets=requests.filter(r=>r.body?.type==='target');assert.equal(targets.at(-1).body.action,'switch');assert.ok(Math.hypot(...first.target.map((v,i)=>v-targets.at(-1).body.target[i]))>=.35);
+  assert.deepEqual(targets.at(-1).body.target,[parseFloat(element('jumpTarget').style.left)/100,parseFloat(element('jumpTarget').style.top)/100]);
+  assert.equal(targets.at(-1).body.browser_time_ms,time);
   assert.equal(element('export').disabled,true);assert.equal(requests.some(r=>r.path==='/api/calibrate'),false);
   document.fullscreenElement=null;handlers.fullscreenchange();await flush();
   assert.equal(requests.filter(r=>r.body?.type==='target').at(-1).body.reason,'fullscreen_exited');
   assert.equal(requests.filter(r=>r.path.endsWith('/stop')).length,1);
+  assert.equal(rootClasses.has('jump-active'),false);
+  document.fullscreenElement=document.documentElement;globalThis.innerWidth=640;globalThis.innerHeight=480;
+  await element('jump').onclick();animation();await flush();
+  assert.equal(element('jumpEscape').hidden,true);
+  handlers.keydown({key:'Escape'});await flush();
+  assert.equal(requests.filter(r=>r.body?.type==='target').at(-1).body.reason,'cancelled');
+  assert.equal(element('jumpOverlay').hidden,true);assert.equal(rootClasses.has('jump-active'),false);
+  document.fullscreenElement=null;globalThis.innerWidth=1000;globalThis.innerHeight=800;
+  const baselineStops=requests.filter(r=>r.path.endsWith('/stop')).length;
   element('recording').checked=true;await element('recording').onchange();
   const starts=requests.filter(r=>r.path.endsWith('/start')).length;
   await element('evaluate').onclick();animation();await flush();element('cancel').onclick();await flush();
   assert.equal(requests.filter(r=>r.path.endsWith('/start')).length,starts);
-  assert.equal(requests.filter(r=>r.path.endsWith('/stop')).length,1);
+  assert.equal(requests.filter(r=>r.path.endsWith('/stop')).length,baselineStops);
   element('recording').checked=false;await element('recording').onchange();
-  assert.equal(requests.filter(r=>r.path.endsWith('/stop')).length,2);
+  assert.equal(requests.filter(r=>r.path.endsWith('/stop')).length,baselineStops+1);
   element('recording').checked=true;await element('recording').onchange();
   assert.equal(element('gray').disabled,true);assert.equal(element('widthCm').disabled,true);assert.equal(element('measured').disabled,true);
   holdNextFrame=true;const [waitId,waitTimer]=[...timers.entries()].find(([,timer])=>timer.delay===33);timers.delete(waitId);waitTimer.callback();await flush();
@@ -144,6 +164,6 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
   await element('start').onclick();await flush();assert.equal(element('start').disabled,true);
   const [timeoutId,timeout]=[...timers.entries()].find(([,timer])=>timer.delay===250);timers.delete(timeoutId);timeout.callback();await flush();
   assert.equal(element('recordingError').hidden,false);assert.match(element('recordingError').textContent,/超时/);assert.equal(element('start').disabled,false);assert.equal(element('recording').checked,false);assert.equal(requests.at(-1).path,'/api/recording/stop');
- }finally{globalThis.setTimeout=originals.setTimeout;globalThis.clearTimeout=originals.clearTimeout;globalThis.fetch=originals.fetch;Object.defineProperty(globalThis,'performance',{configurable:true,value:originals.performance});Object.defineProperty(globalThis,'navigator',{configurable:true,value:originals.navigator});globalThis.document=originals.document;globalThis.window=originals.window;}
+ }finally{globalThis.setTimeout=originals.setTimeout;globalThis.clearTimeout=originals.clearTimeout;globalThis.fetch=originals.fetch;Object.defineProperty(globalThis,'performance',{configurable:true,value:originals.performance});Object.defineProperty(globalThis,'navigator',{configurable:true,value:originals.navigator});globalThis.document=originals.document;globalThis.window=originals.window;globalThis.getComputedStyle=originals.getComputedStyle;}
  console.log('page fake-camera test passed: fullscreen gate, timing payload, jump isolation, manual-session reuse, camera-pause late ACK and hung-receipt timeout');
 }

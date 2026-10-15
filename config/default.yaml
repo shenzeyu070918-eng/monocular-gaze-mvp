@@ -28,3 +28,4 @@ jump:
   point_count: 20
   dwell_ms: 1500.0
   min_distance: 0.35
+  margin: 0.05  # Fraction of each screen dimension; target centers stay inside this inset.

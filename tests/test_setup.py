@@ -2,7 +2,7 @@
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch, Mock
+from unittest.mock import patch
 import subprocess
 
 from setup_mvp import choose_torch_build, installation_commands, ROOT, main

@@ -107,9 +107,9 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
 // Exercise the actual page handlers with a fake DOM and camera. No device,
 // calibration fitting or real-time measurements are involved.
 {
- let time=2000,animation,hangReceipt=false,failReceipt=false,holdNextFrame=false,releaseFrame,timerId=0,cameraStarts=0;
+ let time=2000,drawCost=0,frameCost=0,animation,hangReceipt=false,failReceipt=false,holdNextFrame=false,releaseFrame,timerId=0,cameraStarts=0;
  const requests=[],handlers={},timers=new Map(),rootClasses=new Set();
- const context=new Proxy({}, {get:()=>()=>{}});
+ const context=new Proxy({}, {get:(_,key)=>key==='drawImage'?()=>{time+=drawCost;}:()=>{}});
  const elements=new Map();
  function element(id){if(!elements.has(id))elements.set(id,{hidden:false,disabled:false,checked:false,value:'',style:{},options:[{},{}],classList:{toggle(){}},getContext:()=>context,getBoundingClientRect:()=>({left:100,top:80,width:600,height:400}),addEventListener(){},checkValidity:()=>true,videoWidth:640,videoHeight:480,play:async()=>{},toDataURL:()=> 'data:image/jpeg;base64,FAKE_TRANSIENT_IMAGE'});return elements.get(id);}
  for(const [id,value]of Object.entries({widthCm:30.2,heightCm:19.6,topCm:.2,focalScale:1}))element(id).value=String(value);
@@ -121,13 +121,31 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
  globalThis.getComputedStyle=el=>el===element('jumpTarget')?{width:'32px',height:'32px'}:{width:'72px',height:'20px'};
  globalThis.window={addEventListener:(type,handler)=>{handlers[type]=handler;}};
  globalThis.requestAnimationFrame=callback=>{animation=callback;};globalThis.setTimeout=(callback,delay)=>{timers.set(++timerId,{callback,delay});return timerId;};globalThis.clearTimeout=id=>timers.delete(id);
- globalThis.fetch=async(path,options={})=>{const body=options.body?JSON.parse(options.body):undefined;requests.push({path,body});let result={error:null};if(path==='/api/status')result={ready:true};else if(path==='/api/recording/config')result={request_timeout_ms:250,jump:{point_count:8,dwell_ms:100,min_distance:.35,margin:.05}};else if(path==='/api/recording/start')result={session_id:`page-${requests.length}`,active:true};else if(path==='/api/frame')result={valid:true,raw:[.4,.5],status:'tracking',distance_cm:50,inference_ms:1};else if(path.endsWith('/receipt')&&failReceipt)result={active:false,error:'录制结果格式无效：raw 必须是有限数值'};if(path.endsWith('/receipt')&&hangReceipt)return new Promise((resolve,reject)=>{options.signal.addEventListener('abort',()=>reject(new DOMException('fake request aborted','AbortError')));});if(path==='/api/frame'&&holdNextFrame){holdNextFrame=false;return new Promise(resolve=>{releaseFrame=()=>resolve({ok:true,json:async()=>result});});}return {ok:true,json:async()=>result};};
+ globalThis.fetch=async(path,options={})=>{const body=options.body?JSON.parse(options.body):undefined;requests.push({path,body});let result={error:null};if(path==='/api/status')result={ready:true};else if(path==='/api/recording/config')result={request_timeout_ms:250,jump:{point_count:8,dwell_ms:100,min_distance:.35,margin:.05}};else if(path==='/api/recording/start')result={session_id:`page-${requests.length}`,active:true};else if(path==='/api/frame'){time+=frameCost;result={valid:true,raw:[.4,.5],status:'tracking',distance_cm:50,inference_ms:1};}else if(path.endsWith('/receipt')&&failReceipt)result={active:false,error:'录制结果格式无效：raw 必须是有限数值'};if(path.endsWith('/receipt')&&hangReceipt)return new Promise((resolve,reject)=>{options.signal.addEventListener('abort',()=>reject(new DOMException('fake request aborted','AbortError')));});if(path==='/api/frame'&&holdNextFrame){holdNextFrame=false;return new Promise(resolve=>{releaseFrame=()=>resolve({ok:true,json:async()=>result});});}return {ok:true,json:async()=>result};};
  const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
  try{
   await import('../static/app.js?mock-browser');await flush();
   await element('start').onclick();await flush();
   const frame=requests.find(r=>r.path==='/api/frame').body;
   assert.equal(frame.browser_capture_ms,2000);assert.equal(frame.browser_request_ms,2000);assert.equal(frame.page_clock_id.length>0,true);
+  // Synthetic clock costs: include drawing in pacing, but timestamp capture
+  // after drawing. None of these inputs are real camera/performance results.
+  function loopWait(){return [...timers.entries()].filter(([,timer])=>timer.delay<=33).at(-1);}
+  async function nextFrame(){const [id,timer]=loopWait();timers.delete(id);time+=timer.delay;const start=time;timer.callback();await flush();return start;}
+  drawCost=4;frameCost=7;
+  const loopStart=await nextFrame(),paced=requests.filter(r=>r.path==='/api/frame').at(-1).body;
+  assert.equal(paced.browser_capture_ms,loopStart+4);
+  assert.equal(paced.browser_request_ms,loopStart+4);
+  assert.equal(loopWait()[1].delay,22);
+  const followingStart=await nextFrame(),following=requests.filter(r=>r.path==='/api/frame').at(-1).body;
+  assert.equal(followingStart-loopStart,33);
+  assert.equal(following.browser_capture_ms-paced.browser_capture_ms,33);
+  assert.equal(following.browser_capture_ms,followingStart+4);
+  drawCost=20;frameCost=20;
+  const slowStart=await nextFrame();
+  assert.equal(requests.filter(r=>r.path==='/api/frame').at(-1).body.browser_capture_ms,slowStart+20);
+  assert.equal(loopWait()[1].delay,0);
+  drawCost=0;frameCost=0;await nextFrame();
   assert.equal(element('jumpCount').value,8);
   assert.equal(element('jumpMargin').value,5);
   await element('jump').onclick();assert.match(element('message').textContent,/全屏/);assert.equal(requests.filter(r=>r.path.endsWith('/start')).length,0);

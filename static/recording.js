@@ -14,11 +14,11 @@ export function videoFrameTiming(metadata) {
 export class RecordingSession {
  constructor({request, onState = () => {}, onError = () => {}, now = () => performance.now()}) {
   this.request=request;this.onState=onState;this.onError=onError;this.now=now;
-  this.session=null;this.manual=false;this.taskId=null;this.busy=false;this.closing=false;this.pending=new Set();this.error=null;
+  this.session=null;this.manual=false;this.taskId=null;this.busy=false;this.closing=false;this.stopping=null;this.pending=new Set();this.error=null;
  }
  state(){return {active:!!this.session,manual:this.manual,taskId:this.taskId,busy:this.busy,closing:this.closing,session:this.session,error:this.error};}
  changed(){this.onState(this.state());}
- fail(error){this.error=error instanceof Error?error.message:String(error);this.onError(this.error);this.changed();}
+ fail(error){this.error=error instanceof Error?error.message:String(error);if(this.session&&!this.closing)this.stop('recording_failed');this.onError(this.error);this.changed();}
  async send(path, body){const value=await this.request(path,body);if(value?.error)throw Error(value.error);return value;}
  track(promise){const tracked=Promise.resolve(promise).catch(error=>{this.fail(error);return null;});this.pending.add(tracked);tracked.finally(()=>this.pending.delete(tracked));return tracked;}
  frameContext(){return this.session&&!this.closing?{session_id:this.session.session_id}:null;}
@@ -27,7 +27,7 @@ export class RecordingSession {
   try{await this.send('/api/recording/event',{session_id:result.session_id,type:'calibration',...calibration,browser_time_ms:this.now()});}
   catch(error){try{await this.send('/api/recording/stop',{session_id:result.session_id,reason:'initial_calibration_failed',browser_time_ms:this.now()});}catch(cleanupError){this.fail(cleanupError);}throw error;}
   // Frames are admitted only after the initial calibration state is accepted.
-  this.session=result;this.changed();
+  this.error=null;this.session=result;this.changed();
  }
  async startManual(metadata,calibration){
   if(this.busy||this.taskId||this.session)throw Error('录制会话已开启或正在切换。');
@@ -49,16 +49,22 @@ export class RecordingSession {
   this.taskId=null;this.changed();
   if(!this.manual)await this.stop(reason);
  }
- async stop(reason='manual'){
-  if(!this.session||this.closing)return;
-  this.closing=true;this.busy=true;this.changed();
+ stop(reason='manual'){
+  if(this.closing)return this.stopping;
+  if(!this.session)return Promise.resolve();
   const session=this.session;
+  // Uncheck immediately, while preserving frozen frame contexts for cleanup.
+  this.session=null;this.manual=false;this.closing=true;this.busy=true;this.changed();
+  this.stopping=this.finishStop(session,reason);
+  return this.stopping;
+ }
+ async finishStop(session,reason){
   try{
    // No new frame contexts are issued while closing. Previously started frames
    // retain their session ID and complete their receipt before the end record.
    while(this.pending.size)await Promise.allSettled([...this.pending]);
    await this.send('/api/recording/stop',{session_id:session.session_id,reason,browser_time_ms:this.now()});
-  }catch(error){this.fail(error);}finally{this.session=null;this.manual=false;this.taskId=null;this.closing=false;this.busy=false;this.changed();}
+  }catch(error){this.fail(error);}finally{if(reason!=='recording_failed')this.taskId=null;this.closing=false;this.busy=false;this.stopping=null;this.changed();}
  }
  async poll(){
   if(!this.session||this.busy)return;

@@ -11,26 +11,29 @@ ROOT = Path(__file__).resolve().parent
 
 def installation_commands(executable, torch_build):
     pip = [str(executable), '-m', 'pip', 'install']
-    if torch_build == 'cu128':
+    if torch_build == 'cu130':
         # Install the selected torch pair before timm can pull a default build.
-        return [pip + ['-r', str(ROOT / 'requirements-cu128.txt')],
+        return [pip + ['-r', str(ROOT / 'requirements-cu130.txt')],
                 pip + ['-r', str(ROOT / 'requirements-runtime.txt')]]
     return [pip + ['-r', str(ROOT / 'requirements.txt')]]
 
 
 def choose_torch_build(profile, requested=None):
     build = requested or (profile.read_text().strip() if profile.exists() else 'default')
-    if build not in {'default', 'cu128'}:
-        raise ValueError('安装配置无效，请明确指定 --torch-build default 或 --torch-build cu128。')
-    if build == 'cu128' and sys.platform != 'win32':
-        raise ValueError('本项目的 cu128 安装入口仅用于 Windows；macOS 请使用默认安装。')
+    # Upgrade the previously saved CUDA profile to the matching public versions.
+    if build == 'cu128':
+        build = 'cu130'
+    if build not in {'default', 'cu130'}:
+        raise ValueError('安装配置无效，请明确指定 --torch-build default 或 --torch-build cu130。')
+    if build == 'cu130' and sys.platform != 'win32':
+        raise ValueError('本项目的 cu130 安装入口仅用于 Windows；macOS 请使用默认安装。')
     return build
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='安装项目运行环境和模型。')
-    parser.add_argument('--torch-build', choices=['default', 'cu128'], default=None,
-                        help='Windows RTX 5070 使用 cu128；省略时沿用此环境上次选择。')
+    parser.add_argument('--torch-build', choices=['default', 'cu130'], default=None,
+                        help='Windows RTX 5070 使用 cu130；省略时沿用此环境上次选择。')
     args = parser.parse_args(argv)
     if sys.version_info[:2] != (3, 12):
         raise SystemExit('请使用 Python 3.12：Windows 用 py -3.12 setup_mvp.py；macOS 用 python3.12 setup_mvp.py。')

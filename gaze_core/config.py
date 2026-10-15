@@ -48,7 +48,7 @@ def select_device(requested, cuda_available):
     if requested not in {'auto', 'cpu', 'cuda'}:
         raise ValueError('inference.device 必须是 auto、cpu 或 cuda')
     if requested == 'cuda' and not cuda_available:
-        raise RuntimeError('已指定 CUDA，但当前 PyTorch 无法使用 CUDA；请检查 cu128 安装及显卡驱动，或改用 cpu/auto。')
+        raise RuntimeError('已指定 CUDA，但当前 PyTorch 无法使用 CUDA；请检查 CUDA 版 PyTorch 安装及显卡驱动，或改用 cpu/auto。')
     return 'cuda' if requested != 'cpu' and cuda_available else 'cpu'
 
 

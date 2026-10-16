@@ -36,7 +36,10 @@ class SettingsTests(unittest.TestCase):
     def test_invalid_configuration_rejected(self):
         for section, name, value in [('inference', 'device', 'mps'), ('camera', 'backend', 'other'),
                                       ('camera', 'width', 0), ('camera', 'index', -1),
-                                      ('camera', 'grayscale', 'false'), ('camera', 'stop_timeout_s', float('nan')),
+                                      ('camera', 'grayscale', 'false'), ('camera','undistort','true'),
+                                      ('camera','undistort_alpha',float('nan')), ('camera','undistort_alpha',2),
+                                      ('calibration','views',2), ('calibration','max_error_px',0),
+                                      ('distance_check','min_samples',0), ('distance_check','distances_cm',[]), ('camera', 'stop_timeout_s', float('nan')),
                                       ('inference', 'distance_min_m', 2), ('recording','queue_size',0),
                                       ('recording','close_timeout_s',True), ('recording','output_dir',''),
                                       ('recording','request_timeout_s',10),
@@ -94,7 +97,7 @@ class EngineTests(unittest.TestCase):
     def test_prediction_statuses_geometry_and_raw_coordinates(self):
         engine, backend, _, _ = self.build_engine()
         image = np.zeros((480, 640, 3), dtype=np.uint8)
-        geometry = load_settings().geometry
+        geometry = replace(load_settings().geometry, width_cm=30.2, height_cm=19.6, top_cm=.2)
         self.assertEqual(engine.predict(image, geometry)['status'], 'no_face')
         landmarks = np.zeros((468, 2))
         face = SimpleNamespace(landmarks=landmarks, center=np.array([0., .1, .5]),

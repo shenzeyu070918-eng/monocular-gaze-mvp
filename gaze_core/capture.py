@@ -61,7 +61,7 @@ class CameraPipeline:
     """
     def __init__(self, settings=None, *, camera_factory=None, engine_factory=None,
                  collect_timings=False, clock_ns=time.perf_counter_ns,
-                 recorder=None, recording_factory=None):
+                 recorder=None, recording_factory=None, display_pipeline=None):
         if recorder is not None and recording_factory is not None:
             raise ValueError('recorder 和 recording_factory 只能指定一个。')
         self.settings = settings or load_settings()
@@ -85,6 +85,7 @@ class CameraPipeline:
         self._recording_finalize = threading.Event()
         self._recording_queue = queue.Queue(self.settings.recording.queue_size)
         self._recording_close_failure = None
+        self._display_pipeline = display_pipeline
         self._sequence = 0  # Result cursors remain valid across pause/resume.
         self._reset_session()
 
@@ -93,6 +94,7 @@ class CameraPipeline:
         return Engine(self.settings)
 
     def _reset_session(self):
+        if self._display_pipeline is not None:self._display_pipeline.reset()
         self._pending = self._latest = self._error = None
         self._in_flight = False
         self._captured = self._predicted = self._dropped = self._discarded_on_stop = 0
@@ -382,6 +384,10 @@ class CameraPipeline:
                 data = engine.predict(frame.image, self.settings.geometry, self.settings.camera.grayscale)
                 completed_ns = self._clock_ns()
                 self._record_prediction(frame, completed_ns, data)
+                if self._display_pipeline is not None:
+                    display=self._display_pipeline.process(data,source='python',capture_ns=frame.captured_ns,
+                                                           geometry=self.settings.geometry)
+                    data=dict(data,display=display)
                 with self._condition:
                     self._predicted += 1
                     self._valid_predictions += int(bool(data.get('valid', False)))

@@ -8,7 +8,7 @@ import threading
 import time
 import unittest
 from unittest.mock import patch
-from PySide6.QtCore import Qt,QTimer
+from PySide6.QtCore import Qt,QTimer,QSize
 from PySide6.QtGui import QImage,QAction,QIcon
 from PySide6.QtWidgets import QApplication,QSystemTrayIcon
 from dataclasses import replace
@@ -56,16 +56,45 @@ class QtAdapterTests(unittest.TestCase):
         from overlay.app import main
         old=signal.getsignal(signal.SIGINT)
         try:
-            with patch('overlay.platforms.prepare_application'),patch('overlay.platforms.configure_window'), \
-                 patch('overlay.platforms.builtin_screen',side_effect=lambda screens:screens[0]), \
-                 patch.object(QSystemTrayIcon,'isSystemTrayAvailable',return_value=True), \
-                 patch('gaze_core.capture.CameraPipeline',side_effect=AssertionError('camera must stay closed')), \
-                 redirect_stdout(io.StringIO()),redirect_stderr(io.StringIO()):
-                self.assertEqual(main(['--diagnostic','--duration','.02']),0)
+            for available,code in ((True,0),(False,1)):
+                with patch('overlay.platforms.prepare_application'),patch('overlay.platforms.configure_window'), \
+                     patch('overlay.platforms.builtin_screen',side_effect=lambda screens:screens[0]), \
+                     patch.object(QSystemTrayIcon,'isSystemTrayAvailable',return_value=available), \
+                     patch('gaze_core.capture.CameraPipeline',side_effect=AssertionError('camera must stay closed')), \
+                     redirect_stdout(io.StringIO()) as output,redirect_stderr(io.StringIO()):
+                    self.assertEqual(main(['--diagnostic','--duration','.02']),code)
+                    text=output.getvalue()
+                    for field in ('按 Ctrl+C 退出',f'isSystemTrayAvailable={available}',
+                                  'tray.isVisible()='+('True' if available else '未创建'),'tray.geometry()='):
+                        self.assertIn(field,text)
         finally:
             signal.signal(signal.SIGINT,old)
             for w in self.app.topLevelWidgets():w.close()
             self.app.processEvents()
+
+    def test_mac_template_icon_has_transparent_black_ring_at_both_pixel_densities(self):
+        from overlay.app import make_tray_icon
+        with patch('overlay.app.sys.platform','darwin'):icon=make_tray_icon('#35d6b4')
+        self.assertTrue(icon.isMask())
+        self.assertEqual({(s.width(),s.height()) for s in icon.availableSizes()},{(18,18),(36,36)})
+        for scale in (1,2):
+            pixmap=icon.pixmap(QSize(18,18),float(scale))
+            self.assertEqual(pixmap.devicePixelRatio(),scale)
+            image=pixmap.toImage()
+            self.assertEqual(image.size(),QSize(18*scale,18*scale))
+            self.assertEqual(image.pixelColor(0,0).alpha(),0)
+            self.assertEqual(image.pixelColor(9*scale,9*scale).alpha(),0)
+            ring=image.pixelColor(3*scale,9*scale)
+            self.assertGreater(ring.alpha(),0)
+            self.assertEqual((ring.red(),ring.green(),ring.blue()),(0,0,0))
+
+    def test_non_mac_tray_icon_remains_colored_and_not_a_mask(self):
+        from overlay.app import make_tray_icon
+        with patch('overlay.app.sys.platform','win32'):icon=make_tray_icon('#35d6b4')
+        self.assertFalse(icon.isMask())
+        image=icon.pixmap(32,32).toImage()
+        self.assertEqual(image.pixelColor(0,0).alpha(),0)
+        self.assertEqual(image.pixelColor(5,16).name(),'#35d6b4')
 
     def test_live_tray_pause_resume_and_exit_use_asynchronous_controller(self):
         from overlay.runtime import run_camera_overlay
@@ -78,26 +107,30 @@ class QtAdapterTests(unittest.TestCase):
                     self.seq+=1;ns=time.perf_counter_ns()
                     self.result=Prediction(self.seq,ns,ns,dict(valid=True,status='tracking',display=dict(position=[.5,.5],timestamp_source='capture_ns')))
             def snapshot(self):return ControllerView(self.status,None,self.result,False)
-        c=Controller();settings=load_settings(use_local=False)
+        settings=load_settings(use_local=False)
         settings=replace(settings,geometry=replace(settings.geometry,width_cm=30,height_cm=20,measured=True))
-        w=OverlayWindow(ScreenRect(0,0,800,600),settings.overlay)
-        tray=QSystemTrayIcon(QIcon());pause=QAction('暂停');quit_action=QAction('退出')
-        quit_action.triggered.connect(self.app.quit)
-        timer=QTimer();timer.start(settings.overlay.refresh_ms)
-        old=signal.getsignal(signal.SIGINT);timed_out=[]
-        def guard():
-            if not c.closed.is_set():timed_out.append(True);c.closed.set();self.app.quit()
-        try:
-            QTimer.singleShot(30,pause.trigger)
-            QTimer.singleShot(60,pause.trigger)
-            QTimer.singleShot(100,quit_action.trigger)
-            QTimer.singleShot(1000,guard)
-            with patch('overlay.runtime.OverlayController',return_value=c):
-                self.assertEqual(run_camera_overlay(self.app,w,tray,pause,quit_action,timer,settings,lambda:None),0)
-            self.assertEqual(c.requests,['running','paused','running','closed'])
-            self.assertFalse(timed_out)
-        finally:
-            signal.signal(signal.SIGINT,old);timer.stop();w.close();w.deleteLater()
+        for use_sigint in (False,True):
+            c=Controller();w=OverlayWindow(ScreenRect(0,0,800,600),settings.overlay)
+            tray=QSystemTrayIcon(QIcon());pause=QAction('暂停');quit_action=QAction('退出')
+            quit_action.triggered.connect(self.app.quit)
+            timer=QTimer();timer.start(settings.overlay.refresh_ms)
+            old=signal.getsignal(signal.SIGINT);timed_out=[]
+            def guard(controller=c,failures=timed_out):
+                if not controller.closed.is_set():failures.append(True);controller.closed.set();self.app.quit()
+            def finish():
+                if use_sigint:signal.getsignal(signal.SIGINT)(signal.SIGINT,None)
+                else:quit_action.trigger()
+            try:
+                QTimer.singleShot(30,pause.trigger)
+                QTimer.singleShot(60,pause.trigger)
+                QTimer.singleShot(100,finish)
+                QTimer.singleShot(1000,guard)
+                with patch('overlay.runtime.OverlayController',return_value=c):
+                    self.assertEqual(run_camera_overlay(self.app,w,tray,pause,quit_action,timer,settings,lambda:None),0)
+                self.assertEqual(c.requests,['running','paused','running','closed'])
+                self.assertFalse(timed_out)
+            finally:
+                signal.signal(signal.SIGINT,old);timer.stop();w.close();w.deleteLater()
 
 
 if __name__=='__main__':unittest.main()

@@ -33,7 +33,9 @@ class MappingTests(unittest.TestCase):
         for values in (dict(opacity=2),dict(stale_ms=0),dict(refresh_ms=True),dict(idle_fps=-1),dict(color='red'),
                        dict(label_position='center'),dict(label_autohide_s=-1),dict(label_autohide_s=True),
                        dict(label_autohide_s=float('nan')),dict(label_bottom_inset_px=-1),dict(label_padding_px=-1),
-                       dict(label_debounce_s=-1),dict(label_debounce_s=True),dict(label_debounce_s=float('inf'))):
+                       dict(label_debounce_s=-1),dict(label_debounce_s=True),dict(label_debounce_s=float('inf')),
+                       dict(task_radius_px=0),dict(profile_poll_s=0),dict(profile_name='../bad'),
+                       dict(tray_check_delay_ms=True),dict(web_url='https://example.com')):
             with self.assertRaises(ValueError):OverlaySettings(**values)
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'default.yaml';path.write_text(config.DEFAULT_CONFIG.read_text())

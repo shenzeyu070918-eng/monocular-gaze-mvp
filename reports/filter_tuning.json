@@ -1,0 +1,58 @@
+{
+  "skipped": [],
+  "candidates": [],
+  "pareto": [],
+  "eligible_pareto": [],
+  "recommended": null,
+  "homogeneous": true,
+  "tasks": [],
+  "source_hashes": {
+    "gaze_core/filters.py": "b37f5ce5b4d4ff847987d2c8f9a52ffd8aad4c80bb7e1bd4b6811626286906a0",
+    "gaze_core/fixation.py": "1122beba64ff8336d1b1993a45781d7755b1978c031534798e6444a2816889a5",
+    "gaze_core/display.py": "a5c060dadc29f949df200d827e5a3b8d0764785b125272a12727132191486c88",
+    "gaze_core/evaluation.py": "57e929d30c9fb49535d15e78ae551c2671c3d45a3aa26684a2dc703a435e7e17",
+    "gaze_core/tuning.py": "20224ac8f984c044e2b42d46a220f3559b2f736dd46d20592bfe94562ccfc84e",
+    "tools/tune_filter.py": "968aca162063d63dff5a3fd040f8ef2726889f4236bd2ed496034912e7864a6f"
+  },
+  "configuration": {
+    "min_cutoff": [
+      0.5,
+      1.0,
+      2.0
+    ],
+    "beta": [
+      0.0,
+      0.05,
+      0.2
+    ],
+    "d_cutoff": [
+      1.0,
+      2.0
+    ],
+    "angular_threshold_deg_s": [
+      45.0,
+      90.0,
+      180.0
+    ],
+    "stable_settle_ms": 500.0,
+    "min_stable_frames": 5,
+    "response_window_ms": 600.0,
+    "crossing_hold_ms": 0.0,
+    "min_valid_coverage": 0.8,
+    "min_angle_coverage": 0.8,
+    "min_fixation_coverage": 0.5,
+    "min_transition_coverage": 0.8,
+    "max_missed_rate": 0.3,
+    "max_false_detection_share": 0.3,
+    "min_tasks": 3,
+    "expected_points": 20,
+    "require_personal_calibration": true
+  },
+  "fixed_detector": {
+    "window_ms": 80.0,
+    "angular_threshold_deg_s": 90.0,
+    "fallback_threshold_norm_s": 1.5,
+    "min_duration_ms": 100.0,
+    "max_gap_ms": 250.0
+  }
+}

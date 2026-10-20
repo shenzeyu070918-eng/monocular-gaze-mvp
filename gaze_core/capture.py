@@ -9,6 +9,7 @@ import threading
 import time
 
 from .config import DEFAULT_CONFIG, load_settings
+from .camera_io import read_camera_frames
 
 
 @dataclass(frozen=True)
@@ -334,13 +335,8 @@ class CameraPipeline:
                 self._actual_backend = camera.getBackendName()
             self._capture_ready.set()
             self._run.wait()
-            while not self._stop.is_set():
-                ok, image = camera.read()
-                captured_ns = self._clock_ns()  # Immediately after OpenCV read() returns.
-                if self._stop.is_set():
-                    break
-                if not ok or image is None:
-                    raise RuntimeError('摄像头读帧失败。')
+            for image, captured_ns in read_camera_frames(camera, self.settings.camera,
+                                                        stop=self._stop, clock_ns=self._clock_ns):
                 height, width = image.shape[:2]
                 image = image.copy()  # Own the pixels even if a source reuses its buffer.
                 with self._condition:

@@ -95,11 +95,11 @@ def zero_phase_smooth(positions, timestamps_s, settings=None):
             count = int(math.ceil((t[-1]-t[0])/float(np.median(np.diff(t)))))+1
             grid = np.linspace(t[0],t[-1],count)
             fs = (count-1)/(t[-1]-t[0])
-            if settings.cutoff_hz >= fs/2:
-                raise ValueError('离线截止频率必须低于各段重采样频率的一半')
-            sos = butter(settings.order,settings.cutoff_hz,fs=fs,output='sos')
-            padlen = 3*(2*len(sos)+1-min(sum(sos[:,2]==0),sum(sos[:,5]==0)))
-            if count>padlen:
+            # Butterworth SOS default padding simplifies to 3*(order+1).
+            if count>3*(settings.order+1):
+                if settings.cutoff_hz >= fs/2:
+                    raise ValueError('离线截止频率必须低于各段重采样频率的一半')
+                sos = butter(settings.order,settings.cutoff_hz,fs=fs,output='sos')
                 resampled=np.column_stack([np.interp(grid,t,x[:,i]) for i in range(2)])
                 smoothed=sosfiltfilt(sos,resampled,axis=0)
                 output[start:end]=np.column_stack([np.interp(t,grid,smoothed[:,i]) for i in range(2)])

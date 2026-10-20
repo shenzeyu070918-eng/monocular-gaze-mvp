@@ -46,7 +46,7 @@ class DisplayIntegrationTests(unittest.TestCase):
             client.close()
     def test_python_pipeline_passes_read_return_capture_ns_not_compute_clock(self):
         settings=replace(self.settings,camera=replace(self.settings.camera,warmup_timeout_s=1))
-        pipe=DisplayPipeline(fixation_settings=FixationSettings(fallback_threshold_norm_s=1e6))
+        pipe=DisplayPipeline(fixation_settings=FixationSettings(fallback_threshold_norm_s=1e6),matrix=[[1,0],[0,2],[0,0]])
         wrapped=Mock(wraps=pipe)
         camera=FakeCamera(stop_requested=lambda:pipeline._stop.is_set())
         camera.send(100)
@@ -57,7 +57,7 @@ class DisplayIntegrationTests(unittest.TestCase):
         camera.send(110);second=pipeline.wait_for_result(first.sequence,timeout=3)
         args=wrapped.process.call_args.kwargs
         self.assertEqual(args['capture_ns'],second.captured_ns);self.assertNotIn('inference_completed_ns',args)
-        self.assertEqual(args['source'],'python')
+        self.assertEqual(args['source'],'python');self.assertEqual(second.data['display']['unfiltered'],[.5,1.])
         self.assertAlmostEqual(second.data['display']['dt_s'],(second.captured_ns-first.captured_ns)/1e9)
         self.assertNotEqual(second.captured_ns,second.completed_ns)
         pipeline.pause();self.assertEqual(camera.release_threads,['gaze-capture']);self.assertFalse(camera.release_during_read[0])

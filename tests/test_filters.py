@@ -48,6 +48,6 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(result['positions'],[[0,0],[1,1],[8,8]])
         self.assertEqual([r['status'] for r in result['segments']],['too_short_unfiltered']*2)
         with self.assertRaises(ValueError):zero_phase_smooth([[0,0]]*2,[1,1])
-        with self.assertRaises(ValueError):zero_phase_smooth([[0,0]]*2,[0,1],OfflineFilterSettings(max_gap_ms=2000))
+        with self.assertRaises(ValueError):zero_phase_smooth([[0,0]]*20,np.arange(20)/10,OfflineFilterSettings(cutoff_hz=6))
 
 if __name__=='__main__':unittest.main()

@@ -95,8 +95,8 @@ class EvaluationSettings:
 
 @dataclass(frozen=True)
 class FilterSettings:
-    # Provisional engineering values, not measured recommendations.
-    min_cutoff: float = 1.0
+    # Match default.yaml candidate 44: three Mac single-user tasks; multi-user validation pending.
+    min_cutoff: float = 2.0
     beta: float = 0.05
     d_cutoff: float = 1.0
 

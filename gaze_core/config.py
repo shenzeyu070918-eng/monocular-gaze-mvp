@@ -164,6 +164,10 @@ class OverlaySettings:
     color: str = '#35d6b4'
     label_font_px: int = 13
     label_inset_px: int = 40
+    label_position: str = 'bottom_center'
+    label_bottom_inset_px: int = 90
+    label_padding_px: int = 12
+    label_autohide_s: float = 4.0
     diagnostic_size_px: int = 12
 
     def __post_init__(self):
@@ -174,6 +178,12 @@ class OverlaySettings:
         if self.opacity>1:raise ValueError('overlay.opacity 必须在 (0,1]')
         for key in ('refresh_ms','label_font_px','label_inset_px','diagnostic_size_px'):
             if type(getattr(self,key)) is not int or getattr(self,key)<=0:raise ValueError('overlay.'+key+' 必须为正整数')
+        for key in ('label_bottom_inset_px','label_padding_px'):
+            if type(getattr(self,key)) is not int or getattr(self,key)<0:raise ValueError('overlay.'+key+' 必须为非负整数')
+        if self.label_position not in ('bottom_center','bottom_right','top_left'):
+            raise ValueError('overlay.label_position 必须为 bottom_center / bottom_right / top_left')
+        if finite(self.label_autohide_s,'overlay.label_autohide_s')<0:
+            raise ValueError('overlay.label_autohide_s 必须为非负数，0 表示常驻')
         if not isinstance(self.color,str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',self.color):
             raise ValueError('overlay.color 必须为 #RRGGBB')
 

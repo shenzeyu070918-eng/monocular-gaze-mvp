@@ -20,7 +20,7 @@ from tools import calibrate_camera as tool
 class CalibrationTests(unittest.TestCase):
     def run_camera_reads(self, reads=None):
         """Exercise the actual preview loop and shared reader, not a reader stub."""
-        settings = load_settings()
+        settings = load_settings(use_local=False)
         settings = replace(settings, camera=replace(settings.camera, warmup_timeout_s=.1,
                            read_retry_interval_s=.002, read_retry_count=2))
         camera = Mock()
@@ -71,6 +71,24 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(previews,1)
         self.assertEqual(camera.read.call_count,4)
 
+    def test_black_camera_preview_stops_with_selection_hint(self):
+        settings = load_settings(use_local=False)
+        settings = replace(settings,camera=replace(settings.camera,warmup_timeout_s=.001,black_frame_count=2))
+        camera=Mock();camera.isOpened.return_value=True
+        def read():
+            # Fake elapsed exposure time without a real camera.
+            import time
+            time.sleep(.002)
+            return True,np.zeros((6,8,3),np.uint8)
+        camera.read.side_effect=read
+        with patch.object(tool,'load_settings',return_value=settings),patch.object(tool.cv2,'VideoCapture',return_value=camera), \
+             patch.object(tool.cv2,'findChessboardCorners',return_value=(False,None)),patch.object(tool.cv2,'imshow'), \
+             patch.object(tool.cv2,'putText'),patch.object(tool.cv2,'waitKey',return_value=-1), \
+             patch.object(tool.cv2,'destroyAllWindows'),redirect_stdout(io.StringIO()),redirect_stderr(io.StringIO()) as error:
+            result=tool.main(['--device','synthetic','--corners','9','6','--square-mm','20','--camera-index','1'])
+        self.assertEqual(result,1);self.assertIn('index 1',error.getvalue());self.assertIn('全黑',error.getvalue())
+        camera.release.assert_called_once()
+
     def synthetic_views(self):
         points = board_points((9,6),np.float64(20))
         matrix = np.array([[620.,0,320],[0,625,240],[0,0,1.]])
@@ -95,7 +113,7 @@ class CalibrationTests(unittest.TestCase):
     def test_diversity_rejects_duplicates_and_requires_position_and_tilt_coverage(self):
         views,_ = self.synthetic_views()
         descriptor = view_descriptor(views[0],(9,6),(640,480),20)
-        settings = replace(load_settings().calibration,views=3)
+        settings = replace(load_settings(use_local=False).calibration,views=3)
         self.assertFalse(diverse_enough([descriptor]*3,settings))
         self.assertFalse(diverse_enough([[0,0,.2,0,0],[1,1,.2,0,0],[.5,.5,.2,0,0]],settings))
         self.assertTrue(diverse_enough([[0,0,.2,0,0],[1,1,.2,.4,.4],[.5,.5,.2,0,0]],settings))

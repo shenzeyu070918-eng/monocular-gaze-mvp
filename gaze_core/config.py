@@ -32,6 +32,8 @@ class CameraSettings:
     warmup_timeout_s: float = 3.0
     read_retry_interval_s: float = 0.05
     read_retry_count: int = 3
+    black_threshold: float = 2.0
+    black_frame_count: int = 10
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,16 @@ class DistanceCheckSettings:
 
 
 @dataclass(frozen=True)
+class EvaluationSettings:
+    center_points: tuple = ((.25, .25), (.75, .25), (.25, .75), (.75, .75), (.5, .34), (.34, .5))
+    calibration_points: tuple = ((.5, .5), (.12, .12), (.5, .12), (.88, .12), (.88, .5), (.88, .88), (.5, .88), (.12, .88), (.12, .5))
+    settle_ms: float = 650.0
+    dwell_ms: float = 2200.0
+    max_dwell_ms: float = 10000.0
+    calibration_min_samples: int = 8
+
+
+@dataclass(frozen=True)
 class Settings:
     inference: InferenceSettings
     camera: CameraSettings
@@ -92,6 +104,9 @@ class Settings:
     distance_check: DistanceCheckSettings = DistanceCheckSettings()
     device_file: str | None = None
     device_profile: object = None
+    evaluation: EvaluationSettings = EvaluationSettings()
+    config_sources: tuple = ()
+    key_sources: object = None
 
 
 def select_device(requested, cuda_available):
@@ -102,17 +117,47 @@ def select_device(requested, cuda_available):
     return 'cuda' if requested != 'cpu' and cuda_available else 'cpu'
 
 
-def load_settings(path=DEFAULT_CONFIG):
+def merge_config(base, overrides):
+    """Recursive mapping merge; lists/scalars/null replace the complete value."""
+    result = dict(base)
+    for key, value in overrides.items():
+        result[key] = merge_config(result[key], value) if isinstance(value, dict) and isinstance(result.get(key), dict) else value
+    return result
+
+
+def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
     import yaml
-    with Path(path).open(encoding='utf-8') as source:
+    path = Path(path).resolve()
+    with path.open(encoding='utf-8') as source:
         data = yaml.safe_load(source)
+    sources = [str(path)]
+    key_sources = {}
+    def note(mapping, filename, prefix=''):
+        for key, value in mapping.items():
+            name = prefix+key
+            if isinstance(value, dict):
+                note(value, filename, name+'.')
+            else:
+                key_sources[name] = filename
+    if isinstance(data, dict):
+        note(data, str(path))
+    local = path.with_name('local.yaml')
+    if use_local and path == DEFAULT_CONFIG.resolve() and local.exists():
+        with local.open(encoding='utf-8') as source:
+            override = yaml.safe_load(source)
+        if not isinstance(override, dict):
+            raise ValueError('local.yaml 必须为映射')
+        data = merge_config(data, override)
+        note(override, str(local))
+        sources.append(str(local))
     required = {'inference', 'camera', 'geometry', 'recording', 'jump'}
-    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check'}:
+    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation'}:
         raise ValueError('配置必须包含 inference、camera、geometry、recording、jump 五部分')
     settings = Settings(InferenceSettings(**data['inference']), CameraSettings(**data['camera']),
                         ScreenGeometry(**data['geometry']), RecordingSettings(**data['recording']), JumpSettings(**data['jump']),
                         CalibrationSettings(**data.get('calibration', {})), DistanceCheckSettings(**data.get('distance_check', {})),
                         data.get('device_file'))
+    settings = replace(settings, evaluation=EvaluationSettings(**data.get('evaluation', {})), config_sources=tuple(sources), key_sources=key_sources)
     i, c, g = settings.inference, settings.camera, settings.geometry
     # Validate the request separately from actual device availability.
     if i.device not in {'auto', 'cpu', 'cuda'}:
@@ -133,6 +178,9 @@ def load_settings(path=DEFAULT_CONFIG):
                         ('focal_scale', g.focal_scale)]:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ValueError(f'{name} 必须是有限正数')
+    if (type(c.black_frame_count) is not int or c.black_frame_count <= 0 or isinstance(c.black_threshold,bool)
+            or not isinstance(c.black_threshold,(int,float)) or not math.isfinite(c.black_threshold) or not 0 <= c.black_threshold <= 255):
+        raise ValueError('黑屏阈值必须在 [0,255] 且连续帧数必须为正整数')
     if type(c.read_retry_count) is not int or c.read_retry_count < 0:
         raise ValueError('camera.read_retry_count 必须是非负整数')
     from .devices import finite, load_device
@@ -150,6 +198,8 @@ def load_settings(path=DEFAULT_CONFIG):
         if not device_path.is_absolute():
             device_path = Path(path).resolve().parent/device_path
         profile = load_device(device_path)
+        for key in ('width_cm', 'height_cm', 'top_cm', 'horizontal_cm', 'measured'):
+            key_sources['geometry.'+key] = str(device_path)
         settings = replace(settings, device_profile=profile,
                            geometry=replace(g, width_cm=profile.width_cm, height_cm=profile.height_cm,
                                             top_cm=profile.top_cm, horizontal_cm=profile.horizontal_cm, measured=profile.measured))
@@ -193,4 +243,29 @@ def load_settings(path=DEFAULT_CONFIG):
         finite(getattr(check, key), 'distance_check.'+key, positive=True)
     if type(check.min_samples) is not int or check.min_samples <= 0:
         raise ValueError('distance_check.min_samples 必须为正整数')
+    e = settings.evaluation
+    for key in ('settle_ms', 'dwell_ms', 'max_dwell_ms'):
+        finite(getattr(e, key), 'evaluation.'+key, positive=True)
+    if not e.settle_ms < e.dwell_ms < e.max_dwell_ms or type(e.calibration_min_samples) is not int or e.calibration_min_samples < 1:
+        raise ValueError('评估/校准时间窗口或样本数无效')
+    for name, points in [('center_points', e.center_points), ('calibration_points', e.calibration_points)]:
+        if not isinstance(points, (list, tuple)) or not points:
+            raise ValueError(name+' 必须为非空点数组')
+        for point in points:
+            if not isinstance(point, (list, tuple)) or len(point) != 2 or any(not 0 < finite(v, name) < 1 for v in point):
+                raise ValueError(name+' 必须是全屏归一化坐标')
+    if len(e.calibration_points) != 9 or any(list(p) in [list(c) for c in e.calibration_points] for p in e.center_points):
+        raise ValueError('九点校准必须有九点，中央评估点必须与校准点错开')
     return settings
+
+
+def configuration_info(settings):
+    from dataclasses import asdict
+    return {'files': list(settings.config_sources), 'keys': dict(settings.key_sources or {}),
+            'device_file': settings.device_file, 'camera': asdict(settings.camera), 'geometry': asdict(settings.geometry)}
+
+
+def print_configuration(settings):
+    import json, sys
+    info = configuration_info(settings)
+    print('实际配置：'+json.dumps(info, ensure_ascii=False), file=sys.stderr)

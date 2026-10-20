@@ -31,10 +31,10 @@ class WebRecording:
             result['active'] = result['active'] and not self._closing and not result['error']
             return result
 
-    def start(self, *, engine, geometry, screen, measured, grayscale, camera_size, page_clock_id):
+    def start(self, *, engine, geometry, screen, measured, grayscale, camera_size, page_clock_id, browser_camera=None):
         metadata = session_metadata(source='web', engine=engine, geometry=geometry,
                                     screen=screen, measured=measured, grayscale=grayscale,
-                                    camera_size=camera_size, page_clock_id=page_clock_id)
+                                    camera_size=camera_size, page_clock_id=page_clock_id, **({'browser_camera': browser_camera} if browser_camera is not None else {}))
         with self._lifecycle:
             return self._start(metadata)
 
@@ -137,7 +137,7 @@ class WebRecording:
             recorder = self._current(session_id)
             if self._closing:
                 raise RecordingConflict('会话正在结束')
-            if kind not in {'target', 'calibration', 'distance_check'}:
+            if kind not in {'target', 'calibration', 'distance_check', 'evaluation_summary'}:
                 raise ValueError('网页只支持 target / calibration / distance_check 事件；click 留待 M4')
             if not recorder.emit(kind, **fields):
                 self._signal_failure(recorder.error or '录制器拒绝事件记录')

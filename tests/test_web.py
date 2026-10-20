@@ -48,7 +48,7 @@ class WebTests(unittest.TestCase):
 
     def test_calibration_and_static_web_still_available(self):
         samples = [{'raw':[x,y],'target':[x,y]} for x in [0,.5,1] for y in [0,.5,1]]
-        response = self.client.post('/api/calibrate',json={'samples':samples})
+        response = self.client.post('/api/calibrate',json={'samples':samples,'fullscreen':True})
         self.assertEqual(response.status_code, 200)
         np.testing.assert_allclose(response.json()['matrix'], [[1,0],[0,1],[0,0]], atol=1e-12)
         self.assertEqual(self.client.get('/').status_code, 200)

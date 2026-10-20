@@ -8,17 +8,18 @@ import time
 
 
 def read_camera_frames(camera, options, *, stop=None, clock_ns=time.perf_counter_ns,
-                       monotonic=time.monotonic):
+                       monotonic=time.monotonic, check_brightness=True):
     """Yield (image, read_return_ns), excluding failed reads from frame counts.
 
     Warmup starts on iteration, immediately before the first read attempt. A
     valid first frame ends warmup early. Thereafter read_retry_count is the
     number of additional attempts allowed after an initial failed read; any
-    successful frame resets that consecutive-failure budget.
+    successful frame resets that consecutive-failure budget. Brightness checks
+    wait the full exposure warmup deadline, then count consecutive dark frames.
     """
     stop = stop if stop is not None else threading.Event()
     deadline = monotonic() + options.warmup_timeout_s
-    seen_frame, failures = False, 0
+    seen_frame, failures, dark_frames = False, 0, 0
 
     def no_frame():
         return RuntimeError('从未读到画面：摄像头预热等待超时；请检查「系统设置 → 隐私与安全性 → 摄像头」'
@@ -32,6 +33,11 @@ def read_camera_frames(camera, options, *, stop=None, clock_ns=time.perf_counter
         if stop.is_set():
             return
         if ok and image is not None and image.size > 0:
+            if check_brightness and monotonic() >= deadline:
+                dark_frames = dark_frames+1 if float(image.mean()) <= options.black_threshold else 0
+                if dark_frames >= options.black_frame_count:
+                    raise RuntimeError(f'摄像头 index {options.index} 连续 {dark_frames} 帧接近全黑；'
+                                       '请运行 tools/list_cameras.py 并指定正确的 camera.index（或 --camera-index）。')
             seen_frame, failures = True, 0
             yield image, captured_ns
             continue

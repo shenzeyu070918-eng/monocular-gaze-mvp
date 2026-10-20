@@ -25,7 +25,7 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(ValueError): select_device('mps', True)
 
     def test_defaults_match_web_input(self):
-        settings = load_settings()
+        settings = load_settings(use_local=False)
         self.assertEqual(settings.inference.device, 'auto')
         self.assertEqual((settings.camera.width, settings.camera.height), (640, 480))
         self.assertEqual(settings.camera.backend, 'auto')
@@ -65,7 +65,7 @@ class SettingsTests(unittest.TestCase):
 
 class EngineTests(unittest.TestCase):
     def build_engine(self, mode='auto', available=False):
-        settings = load_settings()
+        settings = load_settings(use_local=False)
         settings = replace(settings, inference=replace(settings.inference, device=mode))
         backend = SimpleNamespace(_gaze_estimation_model=SimpleNamespace(parameters=lambda: []),
                                   _normalized_camera=object(), detect_faces=Mock(return_value=[]),
@@ -104,7 +104,7 @@ class EngineTests(unittest.TestCase):
     def test_prediction_statuses_geometry_and_raw_coordinates(self):
         engine, backend, _, _ = self.build_engine()
         image = np.zeros((480, 640, 3), dtype=np.uint8)
-        geometry = replace(load_settings().geometry, width_cm=30.2, height_cm=19.6, top_cm=.2)
+        geometry = replace(load_settings(use_local=False).geometry, width_cm=30.2, height_cm=19.6, top_cm=.2)
         self.assertEqual(engine.predict(image, geometry)['status'], 'no_face')
         landmarks = np.zeros((468, 2))
         face = SimpleNamespace(landmarks=landmarks, center=np.array([0., .1, .5]),

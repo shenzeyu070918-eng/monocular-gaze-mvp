@@ -25,7 +25,7 @@ class FakeTimeStop:
 
 class CameraReadTests(unittest.TestCase):
     def setUp(self):
-        self.options = replace(load_settings().camera, warmup_timeout_s=3,
+        self.options = replace(load_settings(use_local=False).camera, warmup_timeout_s=3,
                                read_retry_interval_s=.5, read_retry_count=2)
         self.clock = FakeTimeStop()
         self.image = np.ones((6,8,3), dtype=np.uint8)

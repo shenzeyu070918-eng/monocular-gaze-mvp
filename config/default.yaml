@@ -18,6 +18,8 @@ camera:
   warmup_timeout_s: 3.0  # Retry failed reads until the first frame, up to this deadline.
   read_retry_interval_s: 0.05  # Interruptible wait between failed reads; no delay on success.
   read_retry_count: 3  # After the first valid frame: extra attempts after a failed read.
+  black_threshold: 2.0  # Mean brightness on 0–255 scale.
+  black_frame_count: 10  # Consecutive dark frames after exposure warmup.
   undistort: true
   undistort_alpha: 0.0  # OpenCV new-camera-matrix alpha; no ROI crop is applied.
 geometry:
@@ -52,3 +54,12 @@ distance_check:
   duration_ms: 3000.0
   min_samples: 20
   warning_cm: 5.0  # Warning threshold, not a measured result.
+
+# Evaluation labels never enter calibration fitting.
+evaluation:
+  center_points: [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75], [0.5, 0.34], [0.34, 0.5]]
+  calibration_points: [[0.5, 0.5], [0.12, 0.12], [0.5, 0.12], [0.88, 0.12], [0.88, 0.5], [0.88, 0.88], [0.5, 0.88], [0.12, 0.88], [0.12, 0.5]]
+  settle_ms: 650.0
+  dwell_ms: 2200.0
+  max_dwell_ms: 10000.0
+  calibration_min_samples: 8

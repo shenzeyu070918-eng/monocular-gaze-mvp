@@ -46,7 +46,7 @@ def load_profile(*, name, device_file, screen, geometry, directory=None):
     if not isinstance(data,dict) or data.get('schema_version')!=1 or data.get('device_name')!=name or data.get('device_file')!=device_file:
         raise ValueError('个人档案与当前设备文件不匹配，请重新九点校准')
     coordinates=data.get('coordinates',{})
-    if not isinstance(coordinates,dict) or coordinates.get('input')!='unfiltered_unclipped_raw_fullscreen_normalized' or coordinates.get('output')!='corrected_fullscreen_normalized' or coordinates.get('formula')!='[raw_x, raw_y, 1] @ matrix' or coordinates.get('clip') is not False:
+    if coordinates != dict(input='unfiltered_unclipped_raw_fullscreen_normalized',output='corrected_fullscreen_normalized',origin='top_left',x='right',y='down',formula='[raw_x, raw_y, 1] @ matrix',clip=False):
         raise ValueError('个人档案坐标定义不匹配，请重新九点校准')
     if data.get('source')!='nine_point' or data.get('group')!='B':raise ValueError('本次只支持九点个人档案')
     saved=data.get('screen');validate_screen(saved);validate_screen(screen)

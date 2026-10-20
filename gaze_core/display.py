@@ -15,6 +15,9 @@ from .filters import OneEuro2D, position
 from .fixation import FixationDetector
 
 
+_UNSET = object()
+
+
 def calibration_matrix(value):
     if value is None:return None
     if not isinstance(value,(list,tuple,np.ndarray)) or len(value)!=3:
@@ -23,7 +26,8 @@ def calibration_matrix(value):
 
 
 class DisplayPipeline:
-    def __init__(self, filter_settings=None, fixation_settings=None):
+    def __init__(self, filter_settings=None, fixation_settings=None, *, matrix=None):
+        self.matrix=calibration_matrix(matrix)
         self.filter=OneEuro2D(filter_settings or FilterSettings())
         self.detector=FixationDetector(fixation_settings or FixationSettings())
         self.source=None;self.clock_origin_ns=None;self.last_seen_s=None
@@ -38,7 +42,7 @@ class DisplayPipeline:
         self.source=self.clock_origin_ns=self.last_seen_s=self.signature=None
         return finished
 
-    def process(self, data, *, source, geometry, matrix=None, browser_capture_ms=None, capture_ns=None):
+    def process(self, data, *, source, geometry, matrix=_UNSET, browser_capture_ms=None, capture_ns=None):
         if source not in {'web','python'}:raise ValueError('显示时间来源必须为 web/python')
         if self.source is not None and source!=self.source:raise ValueError('显示管线不能混用两种采集时钟')
         self.source=source
@@ -55,7 +59,7 @@ class DisplayPipeline:
         if self.last_seen_s is not None and timestamp<=self.last_seen_s:
             return dict(position=None,unfiltered=None,state='nonincreasing_capture_timestamp',finished_fixations=[])
         self.last_seen_s=timestamp
-        transform=calibration_matrix(matrix)
+        transform=calibration_matrix(self.matrix if matrix is _UNSET else matrix)
         signature=(None if transform is None else tuple(transform.flat),
                    tuple(getattr(geometry,k) for k in ('width_cm','height_cm','measured','horizontal_cm','top_cm')))
         finished=self._clear_signal() if signature!=self.signature else []

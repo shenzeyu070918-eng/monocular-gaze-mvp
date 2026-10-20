@@ -1,2 +1,5 @@
 # Additional dependency for unittest HTTP API tests; install after the runtime.
 httpx2==2.13.1
+
+# Offline report rendering is exercised by the full test suite.
+-r requirements-analysis.txt

@@ -108,6 +108,36 @@ class QtAdapterTests(unittest.TestCase):
                 if not diagnostic:self.assertGreater(image.pixelColor(428,300).alpha(),0)
             finally:w.close();w.deleteLater()
 
+    def test_hidden_label_timer_handles_pending_loss_and_recovery_without_full_repaint(self):
+        now=[0.]
+        w=OverlayWindow(ScreenRect(0,0,800,600),OverlaySettings(),clock=lambda:now[0])
+        try:
+            radius=(w.options.fallback_radius_px,)*2
+            w.set_display(None,radius,0,'未校准 · 正常跟踪',label_kind='tracking')
+            now[0]=5.;w._refresh_label()
+            self.assertEqual(w._label_opacity,0.);self.assertFalse(w._label_timer.isActive())
+            old=w._label_rect()
+            with patch.object(w,'update') as update:
+                w.set_display(None,radius,0,'未校准 · 无人脸',label_kind='transient')
+                self.assertEqual(w._label_opacity,0.);self.assertTrue(w._label_timer.isActive())
+                update.assert_not_called()
+                now[0]=5.9;w._refresh_label();update.assert_not_called()
+                now[0]=6.01;w._refresh_label()
+                self.assertEqual(w._label_opacity,1.)
+                self.assertEqual(w.label,'未校准 · 无人脸')
+                update.assert_called_once_with(QRegion(old.toAlignedRect())|QRegion(w._label_rect().toAlignedRect()))
+                now[0]=6.5
+                w.set_display(None,radius,0,'未校准 · 正常跟踪',label_kind='tracking')
+                now[0]=10.11;w._refresh_label();self.assertAlmostEqual(w._label_opacity,.5)
+                now[0]=10.3;w._refresh_label();self.assertEqual(w._label_opacity,0.)
+                self.assertFalse(w._label_timer.isActive())
+                w.set_display(None,radius,0,'未校准 · 正常跟踪',label_kind='tracking')
+                self.assertEqual(w._label_opacity,0.)
+                # Same-text user actions must redisplay even without a frame change.
+                w.set_status('未校准 · 正常跟踪',force=True)
+                self.assertEqual(w._label_opacity,1.)
+        finally:w.close();w.deleteLater()
+
     def test_diagnostic_entrypoint_never_constructs_camera_and_exits_without_hardware(self):
         from overlay.app import main
         old=signal.getsignal(signal.SIGINT)

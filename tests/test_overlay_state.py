@@ -18,6 +18,7 @@ class RingTests(unittest.TestCase):
     def test_raw_mode_numpy_unclipped_and_saccade_immediate(self):
         self.ring.accept(result(1,0,[np.float64(-.2),np.float64(1.2)]),0)
         self.assertEqual(self.ring.view(0).position,(-.2,1.2))
+        self.assertTrue(self.ring.view(0).tracking)
         self.assertIn('未校准',self.ring.view(0).label)
         self.ring.accept(result(2,10_000_000,[.9,.1],state='saccade'),10_000_000)
         self.assertEqual(self.ring.view(10_000_000).position,(.9,.1))
@@ -26,11 +27,13 @@ class RingTests(unittest.TestCase):
         self.ring.accept(result(1,0),0)
         self.ring.accept(result(2,50_000_000,[99,99],status='blink'),50_000_000)
         view=self.ring.view(150_000_000)
+        self.assertFalse(view.tracking)
         self.assertEqual(view.position,(.2,.3));self.assertAlmostEqual(view.opacity,self.options.opacity/2)
         self.ring.accept(result(3,200_000_000,[8,8],status='no_face'),200_000_000)
         self.assertIsNone(self.ring.view(250_000_000).position)
         self.ring.accept(result(4,260_000_000,[.7,.5]),260_000_000)
         self.assertEqual(self.ring.view(260_000_000).position,(.7,.5))
+        self.assertTrue(self.ring.view(260_000_000).tracking)
 
     def test_age_uses_capture_not_completion_and_clear_prevents_reappearance(self):
         stale=replace(result(1,0),completed_ns=999_000_000)
@@ -38,6 +41,7 @@ class RingTests(unittest.TestCase):
         self.assertIsNone(self.ring.view(999_000_000).position)
         self.ring.accept(result(2,1_000_000_000),1_000_000_000)
         self.assertIsNone(self.ring.view(1_500_000_000).position)
+        self.assertFalse(self.ring.view(1_500_000_000).tracking)
         self.ring.clear();self.assertIsNone(self.ring.view(1_500_000_000).position)
 
     def test_wrong_clock_future_duplicate_and_bad_numbers_rejected(self):

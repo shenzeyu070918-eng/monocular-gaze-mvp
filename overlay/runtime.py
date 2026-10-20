@@ -25,6 +25,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         closing=True;shutdown_requested=True;ring.clear()
         pause_action.setEnabled(False)
         quit_action.setText('正在退出…')
+        window.set_status('未校准 · 正在退出',force=True)
         controller.request('closed')
 
     class QuitGate(QObject):
@@ -43,6 +44,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         view=controller.snapshot()
         paused_requested=not paused_requested if view.status not in {'paused','error'} else False
         ring.clear()
+        window.set_status('未校准 · '+('正在暂停' if paused_requested else '正在恢复摄像头/模型'),force=True)
         controller.request('paused' if paused_requested else 'running')
     pause_action.triggered.connect(pause_or_resume)
 
@@ -50,6 +52,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         nonlocal screen_changed
         if screen_changed:return
         screen_changed=True;ring.clear();controller.request('paused')
+        window.set_status('未校准 · 屏幕变化，请重新启动',force=True)
         pause_action.setEnabled(False)
         print('屏幕配置变化：已暂停，请退出并在单块内置屏下重新启动。',file=sys.stderr)
         tray.showMessage('屏幕配置变化','已暂停摄像头，请退出并重新启动。',QSystemTrayIcon.MessageIcon.Warning)
@@ -65,6 +68,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             timer.stop();window.hide();tray.hide();app.quit();return
         if view.error and view.error!=last_error:
             last_error=view.error
+            window.set_status('未校准 · 采集失败，请查看提示',force=True)
             print('悬浮层：'+view.error,file=sys.stderr)
             if error_box is not None:error_box.close()
             error_box=QMessageBox(QMessageBox.Icon.Warning,'悬浮层已停止',view.error)
@@ -77,14 +81,16 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         elif not active:ring.clear()
         display=ring.view(now)
         label=display.label
+        label_kind='tracking' if display.tracking else 'transient'
         if not active:
             label='未校准 · '+({'starting':'正在启动摄像头/模型','paused':'已暂停','pausing':'正在暂停',
                                   'closing':'正在退出','error':'采集失败，请查看提示'}.get(view.status,'等待画面'))
-        if screen_changed:label='未校准 · 屏幕变化，请重新启动'
-        if active and view.idle:label='未校准 · 无人脸，降低读取频率'
+            label_kind='immediate'
+        if screen_changed:label='未校准 · 屏幕变化，请重新启动';label_kind='immediate'
+        if active and view.idle:label='未校准 · 无人脸，降低读取频率';label_kind='transient'
         position=None if display.position is None else window.rect_info.local(display.position)
         radii=window.rect_info.radii(settings.overlay.radius_cm,settings.geometry,settings.overlay.fallback_radius_px)
-        window.set_display(position,radii,display.opacity,label)
+        window.set_display(position,radii,display.opacity,label,label_kind=label_kind)
         tray.setToolTip(label)
         pause_action.setEnabled(not shutdown_requested and not screen_changed and view.status not in {'starting','pausing','closing'})
         pause_action.setText('恢复摄像头' if view.status in {'paused','error'} else '暂停摄像头')

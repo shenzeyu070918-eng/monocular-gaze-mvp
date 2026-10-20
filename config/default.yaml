@@ -1,3 +1,4 @@
+device_file: null  # Relative to this config: devices/<设备名>.yaml; null uses estimated intrinsics.
 inference:
   device: auto  # auto / cpu / cuda; auto uses CUDA when available, otherwise CPU
   cpu_threads: 4
@@ -14,10 +15,17 @@ camera:
   grayscale: false
   startup_timeout_s: 120.0
   stop_timeout_s: 5.0
+  warmup_timeout_s: 3.0  # Retry failed reads until the first frame, up to this deadline.
+  read_retry_interval_s: 0.05  # Interruptible wait between failed reads; no delay on success.
+  read_retry_count: 3  # After the first valid frame: extra attempts after a failed read.
+  undistort: true
+  undistort_alpha: 0.0  # OpenCV new-camera-matrix alpha; no ROI crop is applied.
 geometry:
-  width_cm: 30.2
-  height_cm: 19.6
-  top_cm: 0.2
+  width_cm: null  # Fill both measured dimensions, or select a measured device file.
+  height_cm: null
+  measured: false
+  horizontal_cm: 0.0  # Positive to the viewer's right of the screen centre.
+  top_cm: 0.0  # Positive ABOVE the top of the visible screen.
   focal_scale: 1.0
 recording:
   output_dir: data/sessions
@@ -29,3 +37,18 @@ jump:
   dwell_ms: 1500.0
   min_distance: 0.35
   margin: 0.05  # Fraction of each screen dimension; target centers stay inside this inset.
+calibration:
+  views: 20
+  max_error_px: 1.0  # Acceptance threshold, not a measured result.
+  min_view_distance: 0.08
+  min_center_span: 0.2
+  min_tilt_span_deg: 15.0
+  refine_window_px: 11
+  refine_max_iterations: 30
+  refine_epsilon: 0.001
+distance_check:
+  distances_cm: [40, 50, 60]
+  settle_ms: 1000.0
+  duration_ms: 3000.0
+  min_samples: 20
+  warning_cm: 5.0  # Warning threshold, not a measured result.

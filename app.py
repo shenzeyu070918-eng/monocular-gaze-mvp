@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from gaze_core.engine import Engine
 from gaze_core.geometry import fit_affine
 from gaze_core.config import load_settings
@@ -26,7 +26,7 @@ recording = WebRecording(settings)
 def load_engine():
     global engine
     try:
-        engine = Engine()
+        engine = Engine(settings)
         state.update(ready=True, parameters=engine.parameters, model='ETH-XGaze / ResNet18', device=engine.device.upper(), device_name=engine.device_name)
     except Exception as exc:
         state['error'] = str(exc)
@@ -53,10 +53,18 @@ app = FastAPI(lifespan=lifespan)
 
 class Geometry(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
-    width_cm: float = Field(default=30.2, ge=10, le=100)
-    height_cm: float = Field(default=19.6, ge=8, le=80)
-    top_cm: float = Field(default=0.2, ge=-5, le=10)
-    focal_scale: float = Field(default=1, ge=0.4, le=3)
+    width_cm: float | None = Field(default=settings.geometry.width_cm, gt=0)
+    height_cm: float | None = Field(default=settings.geometry.height_cm, gt=0)
+    top_cm: float = settings.geometry.top_cm
+    focal_scale: float = Field(default=settings.geometry.focal_scale, gt=0)
+    horizontal_cm: float = settings.geometry.horizontal_cm
+    measured: bool = settings.geometry.measured
+
+    @model_validator(mode='after')
+    def validate_dimensions(self):
+        if (self.width_cm is None) != (self.height_cm is None) or (self.measured and self.width_cm is None):
+            raise ValueError('屏幕宽高必须同时填写；没有尺寸不能标记为实测')
+        return self
 
 
 class Frame(BaseModel):
@@ -109,7 +117,7 @@ class Calibration(BaseModel):
 
 @app.get('/api/status')
 def status():
-    return state
+    return dict(state, camera=getattr(engine, 'current_camera', None))
 
 
 @app.post('/api/frame')
@@ -154,7 +162,11 @@ def recording_call(function, *args, **kwargs):
 
 @app.get('/api/recording/config')
 def recording_config():
-    return {'jump': asdict(settings.jump), 'request_timeout_ms': settings.recording.request_timeout_s*1000}
+    return {'jump': asdict(settings.jump), 'request_timeout_ms': settings.recording.request_timeout_s*1000,
+            'geometry': asdict(settings.geometry), 'distance_check': asdict(settings.distance_check),
+            'camera': engine.camera_metadata() if engine and hasattr(engine, 'camera_metadata') else None,
+            'device_file': settings.device_profile.filename if settings.device_profile else None,
+            'screen_resolution': settings.device_profile.screen_resolution if settings.device_profile else None}
 
 
 @app.get('/api/recording/status')

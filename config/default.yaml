@@ -104,3 +104,8 @@ overlay:
   label_autohide_s: 4.0  # Hold after startup/accepted notice, then fade_ms fade; 0 keeps visible.
   label_debounce_s: 1.0  # Transient status must persist; tracking recovery never restarts the hold.
   diagnostic_size_px: 12
+  task_radius_px: 12  # Logical pixels, calibration/check target circle.
+  profile_name: builtin  # Used only when there is no named device file.
+  profile_poll_s: 1.0  # Detect replacement/deletion without blocking the Qt loop.
+  tray_check_delay_ms: 500  # One final startup visibility check after Qt layout.
+  web_url: http://127.0.0.1:8765

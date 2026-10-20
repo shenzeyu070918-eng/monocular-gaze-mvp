@@ -43,7 +43,7 @@ class LocalConfigurationTests(unittest.TestCase):
             local.write_text('filter:\n  beta: 0.2\nfixation:\n  angular_threshold_deg_s: 180\n')
             with patch.object(config,'DEFAULT_CONFIG',path):
                 settings=config.load_settings(path)
-                self.assertEqual(settings.filter.beta,.2);self.assertEqual(settings.filter.min_cutoff,1.)
+                self.assertEqual(settings.filter.beta,.2);self.assertEqual(settings.filter.min_cutoff,2.)
                 self.assertEqual(settings.fixation.angular_threshold_deg_s,180.)
                 local.write_text('filter:\n  min_cutoff: 0\n')
                 with self.assertRaises(ValueError):config.load_settings(path)

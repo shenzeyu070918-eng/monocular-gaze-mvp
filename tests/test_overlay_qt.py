@@ -8,8 +8,8 @@ import threading
 import time
 import unittest
 from unittest.mock import patch
-from PySide6.QtCore import Qt,QTimer,QSize
-from PySide6.QtGui import QImage,QAction,QIcon
+from PySide6.QtCore import Qt,QTimer,QSize,QRectF
+from PySide6.QtGui import QImage,QAction,QIcon,QRegion
 from PySide6.QtWidgets import QApplication,QSystemTrayIcon
 from dataclasses import replace
 from gaze_core.config import OverlaySettings,load_settings
@@ -51,6 +51,62 @@ class QtAdapterTests(unittest.TestCase):
             w.set_display((-.2,700),(28,28),.5,'未校准')
             self.assertEqual(w.position,(-.2,700))
         finally:w.close();w.deleteLater()
+
+    def test_label_positions_fit_screen_and_use_measured_width(self):
+        for position in ('bottom_center','bottom_right','top_left'):
+            for size in ((1512,982),(320,180),(80,40)):
+                options=OverlaySettings(label_position=position)
+                w=OverlayWindow(ScreenRect(-100,20,*size,2),options)
+                try:
+                    for label in ('未校准','未校准 · '+('长状态文字'*30)):
+                        w.set_display(None,(28,28),0,label)
+                        rect=w._label_rect()
+                        self.assertTrue(QRectF(w.rect()).contains(rect),(position,size,rect))
+                    if size==(1512,982):
+                        w.set_display(None,(28,28),0,'未校准')
+                        rect=w._label_rect()
+                        expected=w._label_metrics.horizontalAdvance('未校准')+24
+                        self.assertEqual(rect.width(),expected)
+                        if position=='bottom_center':self.assertEqual(rect.center().x(),w.width()/2)
+                        if position.startswith('bottom_'):self.assertEqual(w.height()-rect.bottom(),90)
+                finally:w.close();w.deleteLater()
+
+    def test_label_clock_change_and_fade_only_invalidate_label_regions(self):
+        now=[0.]
+        w=OverlayWindow(ScreenRect(0,0,1512,982),OverlaySettings(),clock=lambda:now[0])
+        try:
+            with patch.object(w,'update') as update:
+                now[0]=4.;w._refresh_label();self.assertEqual(w._label_opacity,1.)
+                update.assert_not_called()
+                now[0]=4.1;w._refresh_label();self.assertAlmostEqual(w._label_opacity,.5)
+                rect=w._label_rect();self.assertEqual(update.call_args.args,(QRegion(rect.toAlignedRect()),))
+                now[0]=4.3;w._refresh_label();self.assertEqual(w._label_opacity,0.)
+                self.assertFalse(w._label_timer.isActive())
+                old=w._label_rect();update.reset_mock()
+                w.set_display(None,(w.options.fallback_radius_px,)*2,0,'未校准 · 新状态较长')
+                new=w._label_rect()
+                expected=QRegion(old.toAlignedRect())|QRegion(new.toAlignedRect())
+                update.assert_called_once_with(expected)
+                self.assertEqual(w._label_opacity,1.);self.assertTrue(w._label_timer.isActive())
+                now[0]=7.;w._refresh_label();self.assertEqual(w._label_opacity,1.)
+                # Unchanged status + moving gaze cannot restart its hold.
+                w.set_display((10,10),(28,28),.65,w.label)
+                now[0]=8.6;w._refresh_label();self.assertEqual(w._label_opacity,0.)
+                self.assertEqual(w.opacity,.65)
+        finally:w.close();w.deleteLater()
+
+    def test_diagnostic_and_zero_autohide_keep_label_and_ring_independent(self):
+        for diagnostic,hold in ((True,4.),(False,0.)):
+            now=[0.];w=OverlayWindow(ScreenRect(0,0,800,600),OverlaySettings(label_autohide_s=hold),
+                                   diagnostic=diagnostic,clock=lambda:now[0])
+            try:
+                now[0]=100.;w._refresh_label()
+                self.assertEqual(w._label_opacity,1.);self.assertFalse(w._label_timer.isActive())
+                w.set_display((400,300),(28,28),.65,'未校准 · 持续显示')
+                now[0]=200.;w._refresh_label();self.assertEqual(w._label_opacity,1.)
+                image=QImage(w.size(),QImage.Format.Format_ARGB32_Premultiplied);image.fill(0);w.render(image)
+                if not diagnostic:self.assertGreater(image.pixelColor(428,300).alpha(),0)
+            finally:w.close();w.deleteLater()
 
     def test_diagnostic_entrypoint_never_constructs_camera_and_exits_without_hardware(self):
         from overlay.app import main

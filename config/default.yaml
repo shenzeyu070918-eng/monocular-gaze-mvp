@@ -101,5 +101,6 @@ overlay:
   label_position: bottom_center  # bottom_center / bottom_right / top_left
   label_bottom_inset_px: 90  # Distance from label bottom to full-screen bottom.
   label_padding_px: 12  # Horizontal padding on each side; logical pixels.
-  label_autohide_s: 4.0  # Hold after startup/text change, then fade_ms fade; 0 keeps visible.
+  label_autohide_s: 4.0  # Hold after startup/accepted notice, then fade_ms fade; 0 keeps visible.
+  label_debounce_s: 1.0  # Transient status must persist; tracking recovery never restarts the hold.
   diagnostic_size_px: 12

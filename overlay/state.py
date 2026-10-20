@@ -8,6 +8,7 @@ class RingView:
     position: tuple | None
     opacity: float
     label: str
+    tracking: bool
 
 
 class RingState:
@@ -50,4 +51,5 @@ class RingState:
                 if self.invalid_ns is None:self.reason='数据过期'
         amount=1. if invalid is None else max(0.,1-(now_ns-invalid)/(self.options.fade_ms*1_000_000))
         opacity=self.options.opacity*amount if self.position is not None else 0.
-        return RingView(self.position if opacity>0 else None,opacity,'未校准 · '+self.reason)
+        return RingView(self.position if opacity>0 else None,opacity,'未校准 · '+self.reason,
+                        self.capture_ns is not None and invalid is None)

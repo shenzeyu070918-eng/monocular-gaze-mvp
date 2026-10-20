@@ -26,7 +26,7 @@ class OverlayWindow(QWidget):
         font=QFont();font.setPixelSize(options.label_font_px);self.setFont(font)
         self._label_metrics=QFontMetrics(font)
         self._label_visibility=LabelVisibility(self.label,options.label_autohide_s,options.fade_ms,
-                                               diagnostic=diagnostic,clock=clock)
+                                               debounce_s=options.label_debounce_s,diagnostic=diagnostic,clock=clock)
         self._label_opacity=1.
         self._label_timer=QTimer(self);self._label_timer.setInterval(options.refresh_ms)
         self._label_timer.timeout.connect(self._refresh_label)
@@ -42,19 +42,18 @@ class OverlayWindow(QWidget):
         x,y=self.position;rx,ry=self.radii;pad=self.options.stroke_px+2
         return QRectF(x-rx-pad,y-ry-pad,2*(rx+pad),2*(ry+pad))
 
-    def set_display(self,position,radii,opacity,label):
-        values=(position,radii,opacity,label)
-        if values==(self.position,self.radii,self.opacity,self.label):return
+    def set_display(self,position,radii,opacity,label,*,label_kind='immediate'):
         ring_changed=(position,radii,opacity)!=(self.position,self.radii,self.opacity)
-        old_bounds=self._ring_bounds();old_label=self.label;old_label_rect=self._label_rect()
-        self.position,self.radii,self.opacity,self.label=values
+        old_bounds=self._ring_bounds()
+        self.position,self.radii,self.opacity=position,radii,opacity
         if ring_changed:
             region=QRegion(old_bounds.toAlignedRect())|QRegion(self._ring_bounds().toAlignedRect())
             if not region.isEmpty():self.update(region.intersected(QRegion(self.rect())))
-        if old_label!=label:
-            self._label_visibility.set_text(label);self._label_opacity=1.
-            if not self.diagnostic and self.options.label_autohide_s>0:self._label_timer.start()
-            self._update_label_regions(old_label_rect,self._label_rect())
+        self.set_status(label,kind=label_kind)
+
+    def set_status(self,label,*,kind='immediate',force=False):
+        self._label_visibility.set_text(label,kind=kind,force=force)
+        self._refresh_label()
 
     def _label_rect(self):
         width,height=self.width(),self.height()
@@ -74,11 +73,15 @@ class OverlayWindow(QWidget):
         self.update(region.intersected(QRegion(self.rect())))
 
     def _refresh_label(self):
+        old_rect=self._label_rect();old_label=self.label
         opacity=self._label_visibility.opacity()
-        if opacity!=self._label_opacity:
-            self._label_opacity=opacity
-            rect=self._label_rect();self._update_label_regions(rect,rect)
-        if opacity==0:self._label_timer.stop()
+        self.label=self._label_visibility.text
+        changed=old_label!=self.label or opacity!=self._label_opacity
+        self._label_opacity=opacity
+        if changed:self._update_label_regions(old_rect,self._label_rect())
+        ticking=self._label_visibility.pending or (opacity>0 and not self.diagnostic and self.options.label_autohide_s>0)
+        if ticking and not self._label_timer.isActive():self._label_timer.start()
+        elif not ticking:self._label_timer.stop()
 
     def paintEvent(self,event):
         painter=QPainter(self)

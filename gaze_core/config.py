@@ -168,6 +168,7 @@ class OverlaySettings:
     label_bottom_inset_px: int = 90
     label_padding_px: int = 12
     label_autohide_s: float = 4.0
+    label_debounce_s: float = 1.0
     diagnostic_size_px: int = 12
 
     def __post_init__(self):
@@ -182,8 +183,9 @@ class OverlaySettings:
             if type(getattr(self,key)) is not int or getattr(self,key)<0:raise ValueError('overlay.'+key+' 必须为非负整数')
         if self.label_position not in ('bottom_center','bottom_right','top_left'):
             raise ValueError('overlay.label_position 必须为 bottom_center / bottom_right / top_left')
-        if finite(self.label_autohide_s,'overlay.label_autohide_s')<0:
-            raise ValueError('overlay.label_autohide_s 必须为非负数，0 表示常驻')
+        for key in ('label_autohide_s','label_debounce_s'):
+            if finite(getattr(self,key),'overlay.'+key)<0:
+                raise ValueError('overlay.'+key+' 必须为非负数')
         if not isinstance(self.color,str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',self.color):
             raise ValueError('overlay.color 必须为 #RRGGBB')
 

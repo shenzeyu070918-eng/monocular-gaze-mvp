@@ -13,7 +13,7 @@ import numpy as np
 import yaml
 
 from gaze_core.calibration import board_points, calibrate_views, diverse_enough, view_descriptor
-from gaze_core.config import ROOT, load_settings
+from gaze_core.config import ROOT, load_settings, print_configuration
 from gaze_core.devices import device_name, parse_device
 from gaze_core.camera_io import read_camera_frames
 
@@ -55,6 +55,7 @@ def save_device(name, camera, args, *, directory=None):
 
 def main(argv=None):
     settings = load_settings()
+    print_configuration(settings)
     parser = argparse.ArgumentParser(description='本地 OpenCV 棋盘格标定；默认不保存图像。')
     parser.add_argument('--device', required=True, help='设备名，输出 config/devices/<设备名>.yaml')
     parser.add_argument('--corners', nargs=2, type=int, required=True, metavar=('COLS', 'ROWS'))
@@ -97,7 +98,7 @@ def main(argv=None):
         views, descriptors, size = [], [], None
         limits = replace(settings.calibration, views=args.views, max_error_px=args.max_error_px)
         print('空格：采集角点；Enter：计算并保存；R：重新采集；Esc/Q：退出。请移动棋盘到不同位置、距离并倾斜。')
-        for image, _ in read_camera_frames(camera, settings.camera):
+        for image, _ in read_camera_frames(camera, replace(settings.camera, index=args.camera_index)):
             actual = (image.shape[1], image.shape[0])
             if size is None:
                 size = actual
@@ -142,7 +143,7 @@ def main(argv=None):
                 if result['reprojection_error_px'] > limits.max_error_px:
                     print('重投影误差过大；未保存参数。请按 R 重新采集，检查棋盘尺寸与清晰度。'); continue
                 path = save_device(args.device, result, args)
-                print(f'已保存参数：{path}\n请在 config/default.yaml 中设置 device_file: devices/{path.name}')
+                print(f'已保存参数：{path}\n请在 config/local.yaml 中设置 device_file: devices/{path.name}')
                 return 0
     except (ValueError, OSError, RuntimeError, cv2.error) as exc:
         print(f'标定失败：{exc}', file=sys.stderr)

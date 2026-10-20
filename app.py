@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from gaze_core.engine import Engine
 from gaze_core.geometry import fit_affine
-from gaze_core.config import load_settings
+from gaze_core.config import load_settings, configuration_info, print_configuration
 from gaze_core.web_recording import WebRecording, RecordingConflict
 
 ROOT = Path(__file__).resolve().parent
@@ -20,6 +20,7 @@ state = {'ready': False, 'error': None}
 lock = threading.Lock()
 engine = None
 settings = load_settings()
+print_configuration(settings)
 recording = WebRecording(settings)
 
 
@@ -87,6 +88,7 @@ class RecordingStart(BaseModel):
     geometry: Geometry
     measured: bool
     grayscale: bool
+    browser_camera: dict | None = None
     camera_width: int = Field(ge=1, le=1024)
     camera_height: int = Field(ge=1, le=768)
 
@@ -117,7 +119,7 @@ class Calibration(BaseModel):
 
 @app.get('/api/status')
 def status():
-    return dict(state, camera=getattr(engine, 'current_camera', None))
+    return dict(state, configuration=configuration_info(settings), camera=getattr(engine, 'current_camera', None))
 
 
 @app.post('/api/frame')
@@ -162,7 +164,7 @@ def recording_call(function, *args, **kwargs):
 
 @app.get('/api/recording/config')
 def recording_config():
-    return {'jump': asdict(settings.jump), 'request_timeout_ms': settings.recording.request_timeout_s*1000,
+    return {'configuration': configuration_info(settings), 'evaluation': asdict(settings.evaluation), 'jump': asdict(settings.jump), 'request_timeout_ms': settings.recording.request_timeout_s*1000,
             'geometry': asdict(settings.geometry), 'distance_check': asdict(settings.distance_check),
             'camera': engine.camera_metadata() if engine and hasattr(engine, 'camera_metadata') else None,
             'device_file': settings.device_profile.filename if settings.device_profile else None,
@@ -180,7 +182,7 @@ def recording_start(req: RecordingStart):
         raise HTTPException(503, state['error'] or '模型正在加载')
     return recording_call(recording.start, engine=engine, geometry=req.geometry, screen=req.screen,
                           measured=req.measured, grayscale=req.grayscale,
-                          camera_size=(req.camera_width, req.camera_height), page_clock_id=req.page_clock_id)
+                          camera_size=(req.camera_width, req.camera_height), page_clock_id=req.page_clock_id, browser_camera=req.browser_camera)
 
 
 @app.post('/api/recording/event')

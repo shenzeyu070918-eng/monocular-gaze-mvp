@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 
-from .config import DEFAULT_CONFIG, load_settings
+from .config import DEFAULT_CONFIG, load_settings, print_configuration
 from .camera_io import read_camera_frames
 
 
@@ -467,6 +467,7 @@ def main(argv=None):
         parser.error('--benchmark 必须是有限正数')
     try:
         settings = load_settings(args.config)
+        print_configuration(settings)
         if args.grayscale is not None:
             settings = replace(settings, camera=replace(settings.camera, grayscale=args.grayscale))
         recording_factory = None

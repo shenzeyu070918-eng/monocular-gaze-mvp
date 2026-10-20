@@ -20,7 +20,7 @@ from tools import calibrate_camera as tool
 class CalibrationTests(unittest.TestCase):
     def run_camera_reads(self, reads=None):
         """Exercise the actual preview loop and shared reader, not a reader stub."""
-        settings = load_settings()
+        settings = load_settings(use_local=False)
         settings = replace(settings, camera=replace(settings.camera, warmup_timeout_s=.1,
                            read_retry_interval_s=.002, read_retry_count=2))
         camera = Mock()
@@ -95,7 +95,7 @@ class CalibrationTests(unittest.TestCase):
     def test_diversity_rejects_duplicates_and_requires_position_and_tilt_coverage(self):
         views,_ = self.synthetic_views()
         descriptor = view_descriptor(views[0],(9,6),(640,480),20)
-        settings = replace(load_settings().calibration,views=3)
+        settings = replace(load_settings(use_local=False).calibration,views=3)
         self.assertFalse(diverse_enough([descriptor]*3,settings))
         self.assertFalse(diverse_enough([[0,0,.2,0,0],[1,1,.2,0,0],[.5,.5,.2,0,0]],settings))
         self.assertTrue(diverse_enough([[0,0,.2,0,0],[1,1,.2,.4,.4],[.5,.5,.2,0,0]],settings))

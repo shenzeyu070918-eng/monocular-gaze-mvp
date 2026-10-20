@@ -84,7 +84,7 @@ class CameraTests(unittest.TestCase):
         engine.cameras = CameraAdapter(profile)
         engine.settings = replace(engine.settings, device_profile=profile)
         image = np.ones((480,640,3),np.uint8)
-        result = engine.predict(image,load_settings().geometry)
+        result = engine.predict(image,load_settings(use_local=False).geometry)
         camera = engine._Camera.call_args.args
         prepared = engine.cameras.prepare((640,480))
         np.testing.assert_allclose(camera[2],prepared.matrix)

@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 
-from .config import DEFAULT_CONFIG, load_settings
+from .config import DEFAULT_CONFIG, load_settings, print_configuration
 from .camera_io import read_camera_frames
 
 
@@ -468,7 +468,9 @@ def main(argv=None):
     try:
         settings = load_settings(args.config)
         if args.grayscale is not None:
-            settings = replace(settings, camera=replace(settings.camera, grayscale=args.grayscale))
+            settings = replace(settings, camera=replace(settings.camera, grayscale=args.grayscale),
+                               key_sources=dict(settings.key_sources or {}, **{'camera.grayscale':'命令行'}))
+        print_configuration(settings)
         recording_factory = None
         if args.record:
             from .recorder import SessionRecorder, session_metadata

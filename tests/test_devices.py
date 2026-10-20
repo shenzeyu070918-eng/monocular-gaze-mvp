@@ -43,7 +43,7 @@ class DeviceTests(unittest.TestCase):
                 load_settings(settings_path)  # Configured-but-missing is not an estimated fallback.
 
     def test_no_device_has_no_fabricated_screen_size(self):
-        settings = load_settings()
+        settings = load_settings(use_local=False)
         self.assertIsNone(settings.device_profile)
         self.assertIsNone(settings.geometry.width_cm)
         self.assertIsNone(settings.geometry.height_cm)

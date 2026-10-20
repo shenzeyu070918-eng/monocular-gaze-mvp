@@ -1,0 +1,37 @@
+# 水平 horizontal：用户面对屏幕时，摄像头在可视区域中线右侧为正（cm）。
+# 垂直 vertical：摄像头在可视区域上沿上方为正（cm），与 top_cm 一致。
+# resolution 在 camera 中是实际采集像素，在 screen 中是系统逻辑像素。
+schema_version: 1
+name: mbp
+camera:
+  matrix:
+  - - 491.75529627574855
+    - 0.0
+    - 319.4042264157222
+  - - 0.0
+    - 491.6967952225398
+    - 239.1011365840997
+  - - 0.0
+    - 0.0
+    - 1.0
+  distortion:
+  - 0.01207556423121252
+  - -0.046989739427917905
+  - 0.00042003495532636067
+  - 0.0013779492847863972
+  - 0.16275711566123782
+  resolution:
+  - 640
+  - 480
+  reprojection_error_px: 0.17606769171589123
+  calibrated_at: '2026-10-20T02:36:21.296354+00:00'
+screen:
+  width_cm: 30.24
+  height_cm: 19.64
+  measured: true
+  resolution:
+  - 1512
+  - 982
+camera_offset_cm:
+  horizontal: 0.0
+  vertical: -0.32

@@ -24,7 +24,7 @@ class WebRecordingTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
-        self.settings = load_settings()
+        self.settings = load_settings(use_local=False)
         self.settings = replace(self.settings, recording=replace(self.settings.recording,
                                 output_dir=self.directory.name))
         self.manager = WebRecording(self.settings)

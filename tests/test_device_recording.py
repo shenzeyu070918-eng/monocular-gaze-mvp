@@ -23,7 +23,7 @@ class DeviceRecordingTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        settings = load_settings()
+        settings = load_settings(use_local=False)
         self.profile = parse_device(synthetic_device(), 'synthetic-test.yaml')
         self.settings = replace(settings, device_profile=self.profile,
                                 geometry=replace(settings.geometry,width_cm=30,height_cm=20,measured=True),
@@ -45,7 +45,8 @@ class DeviceRecordingTests(unittest.TestCase):
         recorder.close()
         session = read_session(recorder.path)
         self.assertEqual(session.metadata['camera']['device_file'],'synthetic-test.yaml')
-        self.assertEqual(session.records[1]['camera'],session.metadata['camera'])
+        self.assertEqual(session.records[1]['camera'], {k:v for k,v in session.metadata['camera'].items() if k not in {'camera_index','configured_camera_index'}})
+        self.assertEqual(session.metadata['camera']['camera_index'], self.settings.camera.index)
         self.assertEqual(session.records[1]['raw'][0],-.1)
 
     def test_aspect_fallback_marked_in_session_and_frame(self):

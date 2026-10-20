@@ -5,3 +5,5 @@
 #cameraStatus{font-size:12px;line-height:1.6;color:var(--muted,#567);overflow-wrap:anywhere}#distanceResults{white-space:pre-wrap;font:inherit;font-size:12px;line-height:1.7}#distanceCheck button{margin:4px 4px 4px 0}
 
 #pointResults,#configSources{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.7}#profileStatus.error{color:#b42318;font-weight:600}
+
+#gazeRaw{position:absolute;width:18px;height:18px;border:2px solid #d36b10;border-radius:50%;transform:translate(-50%,-50%);background:#f59e0b44;pointer-events:none;z-index:4}#gazeRaw.outside{border-style:dashed}#filterState{font-size:12px;color:#526775}

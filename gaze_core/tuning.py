@@ -26,6 +26,7 @@ class TuningSettings:
     min_stable_frames: int = 5
     response_window_ms: float = 600.
     crossing_hold_ms: float = 0.
+    min_signal_jump_snr: float = 3.
     min_valid_coverage: float = .8
     min_angle_coverage: float = .8
     min_fixation_coverage: float = .5
@@ -42,7 +43,7 @@ class TuningSettings:
             if not isinstance(values,(list,tuple)) or not values:raise ValueError(key+' 搜索数组不能为空')
             for value in values:
                 if finite(value,key,positive=key!='beta')<0:raise ValueError('beta 必须非负')
-        for key in ('stable_settle_ms','response_window_ms'):
+        for key in ('stable_settle_ms','response_window_ms','min_signal_jump_snr'):
             finite(getattr(self,key),key,positive=True)
         if finite(self.crossing_hold_ms,'crossing_hold_ms')<0:raise ValueError('crossing_hold_ms 必须非负')
         for key in ('min_stable_frames','min_tasks','expected_points'):
@@ -200,12 +201,22 @@ def _mean(values):
 
 def measure_task(task, samples, segments, detections, config, detector_settings):
     targets=task.targets;stable=[];stable_valid=stable_total=angle_count=fixation_frames=0
+    references={}
     invalid_origin=missing_origin=0
     for i,target in enumerate(targets):
         end=targets[i+1]['time_s'] if i+1<len(targets) else task.end_s
         start=target['time_s']+config.stable_settle_ms/1000
         window=[r for r in samples if start<=r['time_s']<end]
         valid=[r for r in window if r['position'] is not None and r['unfiltered'] is not None]
+        # Endpoints/noise come ONLY from the corrected unfiltered signal, never
+        # from a candidate's filtered positions or its fixation classification.
+        raw_valid=[r for r in window if r['unfiltered'] is not None]
+        timeline=[start,*[r['time_s'] for r in raw_valid],end]
+        if (len(raw_valid)>=config.min_stable_frames and window
+                and len(raw_valid)/len(window)>=config.min_valid_coverage
+                and max(np.diff(timeline),default=0)*1000<=detector_settings.max_gap_ms):
+            references[i]=dict(position=np.median([r['unfiltered'] for r in raw_valid],axis=0).tolist(),
+                               noise_cm=jitter(raw_valid,'unfiltered',task.geometry)['cm'])
         stable_total+=len(window);stable_valid+=len(valid)
         fixation_frames+=sum(r['state']=='fixation' for r in valid)
         missing_origin+=sum(r['origin_m'] is None for r in valid)
@@ -218,7 +229,9 @@ def measure_task(task, samples, segments, detections, config, detector_settings)
     for segment in segments:
         valid=[r for r in samples if segment['start_s']<=r['time_s']<=segment['end_s'] and r['position'] is not None]
         if len(valid)>=config.min_stable_frames:segment_values.append(jitter(valid,'position',task.geometry))
-    paired=[];raw_unreached=filtered_unreached=invalid_transition=0;switches=[];ranges=[]
+    paired=[];legacy=[];signal_transitions=[]
+    raw_unreached=filtered_unreached=invalid_transition=small_jumps=missing_stable=0
+    legacy_raw_unreached=legacy_filtered_unreached=0;switches=[];ranges=[]
     for i in range(1,len(targets)):
         previous,current=targets[i-1],targets[i]
         start=current['time_s'];end=targets[i+1]['time_s'] if i+1<len(targets) else task.end_s
@@ -227,11 +240,37 @@ def measure_task(task, samples, segments, detections, config, detector_settings)
         # Quality is based on raw validity/time coverage, shared across candidates.
         timeline=[start,*[r['time_s'] for r in valid],end]
         if not window or len(valid)/len(window)<config.min_valid_coverage or max(np.diff(timeline),default=0)*1000>detector_settings.max_gap_ms:
-            invalid_transition+=1;continue
+            invalid_transition+=1
+            signal_transitions.append(dict(index=current['index'],status='invalid_frames'))
+            continue
         switches.append(start);ranges.append((start,end))
+        # Retain the former target-based definition unchanged as auxiliary data.
         raw=crossing_time(valid,'unfiltered',previous['point'],current['point'],task.geometry,.9,config.crossing_hold_ms)
         filtered=crossing_time(valid,'position',previous['point'],current['point'],task.geometry,.9,config.crossing_hold_ms)
+        legacy_raw_unreached+=raw is None;legacy_filtered_unreached+=filtered is None
+        if raw is not None and filtered is not None:
+            legacy.append(dict(index=current['index'],raw_ms=(raw-start)*1000,filtered_ms=(filtered-start)*1000,extra_ms=(filtered-raw)*1000))
+        if i-1 not in references or i not in references:
+            missing_stable+=1
+            signal_transitions.append(dict(index=current['index'],status='missing_stable_reference'))
+            continue
+        before,after=references[i-1],references[i]
+        distance=float(np.linalg.norm((np.array(after['position'])-before['position'])*
+                                     [task.geometry.width_cm,task.geometry.height_cm]))
+        noise=float(np.sqrt((before['noise_cm']**2+after['noise_cm']**2)/2))
+        threshold=config.min_signal_jump_snr*noise
+        detail=dict(index=current['index'],before=before['position'],after=after['position'],
+                    distance_cm=distance,noise_cm=noise,min_distance_cm=threshold)
+        if distance<=0 or distance<threshold:
+            small_jumps+=1
+            signal_transitions.append(dict(**detail,status='small_signal_jump'))
+            continue
+        raw=crossing_time(valid,'unfiltered',before['position'],after['position'],task.geometry,.9,config.crossing_hold_ms)
+        filtered=crossing_time(valid,'position',before['position'],after['position'],task.geometry,.9,config.crossing_hold_ms)
         raw_unreached+=raw is None;filtered_unreached+=filtered is None
+        signal_transitions.append(dict(**detail,status='paired' if raw is not None and filtered is not None else 'unreached',
+                                       raw_ms=None if raw is None else (raw-start)*1000,
+                                       filtered_ms=None if filtered is None else (filtered-start)*1000))
         if raw is not None and filtered is not None:
             paired.append(dict(index=current['index'],raw_ms=(raw-start)*1000,filtered_ms=(filtered-start)*1000,extra_ms=(filtered-raw)*1000))
     matching=match_saccades(switches,[t for t in detections if any(a<=t<b for a,b in ranges)],config.response_window_ms/1000,[b for _,b in ranges])
@@ -250,9 +289,18 @@ def measure_task(task, samples, segments, detections, config, detector_settings)
                 extra_delay_ms=_mean([r['extra_ms'] for r in paired]),
                 raw_delay_ms=_mean([r['raw_ms'] for r in paired]),filtered_delay_ms=_mean([r['filtered_ms'] for r in paired]),
                 paired_transitions=len(paired),expected_transitions=max(0,len(targets)-1),
+                delay_transitions=max(0,len(targets)-1-small_jumps),small_signal_jumps=small_jumps,
+                missing_stable_transitions=missing_stable,
                 raw_unreached=int(raw_unreached),filtered_unreached=int(filtered_unreached),invalid_transitions=invalid_transition,
-                transition_coverage=len(paired)/max(1,len(targets)-1),
-                **matching,points=stable,transitions=paired)
+                transition_coverage=len(paired)/max(1,len(targets)-1-small_jumps),
+                legacy_target_extra_delay_ms=_mean([r['extra_ms'] for r in legacy]),
+                legacy_target_raw_delay_ms=_mean([r['raw_ms'] for r in legacy]),
+                legacy_target_filtered_delay_ms=_mean([r['filtered_ms'] for r in legacy]),
+                legacy_target_paired_transitions=len(legacy),legacy_target_raw_unreached=int(legacy_raw_unreached),
+                legacy_target_filtered_unreached=int(legacy_filtered_unreached),
+                legacy_target_transition_coverage=len(legacy)/max(1,len(targets)-1),
+                **matching,points=stable,transitions=paired,signal_transitions=signal_transitions,
+                legacy_target_transitions=legacy)
 
 
 def pareto_front(candidates):
@@ -310,7 +358,7 @@ def tune(tasks, config, base_detector=None):
             if miss_rate is None or miss_rate>config.max_missed_rate:rejection.append('missed_rate')
             if false_share is None or false_share>config.max_false_detection_share:rejection.append('false_detection_share')
             candidates.append(dict(params=dict(min_cutoff=cutoff,beta=beta,d_cutoff=d_cutoff,angular_threshold_deg_s=threshold),
-                                   **{key:_mean([r[key] for r in trials]) for key in ('jitter_cm','jitter_deg','raw_jitter_cm','raw_jitter_deg','extra_delay_ms','raw_delay_ms','filtered_delay_ms','fixation_jitter_cm','fixation_jitter_deg')},
+                                   **{key:_mean([r[key] for r in trials]) for key in ('jitter_cm','jitter_deg','raw_jitter_cm','raw_jitter_deg','extra_delay_ms','raw_delay_ms','filtered_delay_ms','fixation_jitter_cm','fixation_jitter_deg','legacy_target_extra_delay_ms','legacy_target_raw_delay_ms','legacy_target_filtered_delay_ms')},
                                    missed=missed,expected_switches=expected,missed_rate=miss_rate,
                                    false_detections=false,detected_saccades=detected,false_detection_share=false_share,
                                    eligible=not rejection,rejection_reasons=sorted(set(rejection)),trials=trials))

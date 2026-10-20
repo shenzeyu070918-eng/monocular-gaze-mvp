@@ -3,3 +3,6 @@ httpx2==2.13.1
 
 # Offline report rendering is exercised by the full test suite.
 -r requirements-analysis.txt
+
+# Offscreen Qt adapter tests; no physical camera or desktop interaction.
+-r requirements-overlay.txt

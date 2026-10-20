@@ -34,6 +34,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='安装项目运行环境和模型。')
     parser.add_argument('--torch-build', choices=['default', 'cu130'], default=None,
                         help='Windows RTX 5070 使用 cu130；省略时沿用此环境上次选择。')
+    parser.add_argument('--overlay',action='store_true',help='同时安装 M3a PySide6 悬浮层及当前平台桥接依赖。')
     args = parser.parse_args(argv)
     if sys.version_info[:2] != (3, 12):
         raise SystemExit('请使用 Python 3.12：Windows 用 py -3.12 setup_mvp.py；macOS 用 python3.12 setup_mvp.py。')
@@ -47,6 +48,8 @@ def main(argv=None):
     profile.write_text(torch_build + '\n')
     for command in installation_commands(executable, torch_build):
         subprocess.run(command, check=True)
+    if args.overlay:
+        subprocess.run([str(executable),'-m','pip','install','-r',str(ROOT/'requirements-overlay.txt')],check=True)
     # Other ptgaze detector backends are unused; avoid face-alignment/dlib
     # and a second OpenCV distribution sharing the cv2 import directory.
     subprocess.run([str(executable), '-m', 'pip', 'install', '--no-deps', str(ROOT / 'vendor/ptgaze')], check=True)

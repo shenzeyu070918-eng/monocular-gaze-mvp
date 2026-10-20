@@ -13,7 +13,8 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 from gaze_core.engine import Engine
 from gaze_core.geometry import fit_affine
 from gaze_core.evaluation import evaluate
-from gaze_core.profiles import save_profile
+from gaze_core.profiles import save_profile, load_profile
+from gaze_core.display import DisplaySessions
 from gaze_core.config import load_settings, configuration_info, print_configuration
 from gaze_core.web_recording import WebRecording, RecordingConflict
 
@@ -24,6 +25,7 @@ engine = None
 settings = load_settings()
 print_configuration(settings)
 recording = WebRecording(settings)
+display_sessions = DisplaySessions(settings)
 
 
 def load_engine():
@@ -70,6 +72,13 @@ class Geometry(BaseModel):
         return self
 
 
+class DisplayContext(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    generation: int = Field(ge=0, strict=True)
+    revision: int = Field(ge=0, strict=True)
+    matrix: list[tuple[float,float]] | None = Field(default=None,min_length=3,max_length=3)
+
+
 class Frame(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
     image: str = Field(max_length=1500000)
@@ -81,6 +90,13 @@ class Frame(BaseModel):
     browser_capture_ms: float | None = Field(default=None, ge=0)
     browser_request_ms: float | None = Field(default=None, ge=0)
     video_frame: dict | None = None
+    display_context: DisplayContext | None = None
+
+    @model_validator(mode='after')
+    def validate_display_clock(self):
+        if self.display_context is not None and not self.page_clock_id:
+            raise ValueError('显示管线需要页面时钟标识')
+        return self
 
 
 class RecordingStart(BaseModel):
@@ -184,7 +200,12 @@ def frame(req: Frame):
             except (ValueError, RuntimeError, cv2.error):
                 pass
             completed_ns = time.perf_counter_ns()
-        return result
+        if req.display_context is None:
+            return result
+        context=req.display_context
+        display=display_sessions.process(req.page_clock_id,context.generation,context.revision,result,
+                                         geometry=req.geometry,matrix=context.matrix,browser_capture_ms=req.browser_capture_ms)
+        return dict(result,display=display)
     finally:
         recording.complete_frame(ticket, result, locals().get('completed_ns', time.perf_counter_ns()))
 
@@ -202,7 +223,7 @@ def recording_call(function, *args, **kwargs):
 
 @app.get('/api/recording/config')
 def recording_config():
-    return {'configuration': configuration_info(settings), 'evaluation': asdict(settings.evaluation), 'jump': asdict(settings.jump), 'request_timeout_ms': settings.recording.request_timeout_s*1000,
+    return {'filter':asdict(settings.filter),'fixation':asdict(settings.fixation), 'configuration': configuration_info(settings), 'evaluation': asdict(settings.evaluation), 'jump': asdict(settings.jump), 'request_timeout_ms': settings.recording.request_timeout_s*1000,
             'geometry': asdict(settings.geometry), 'distance_check': asdict(settings.distance_check),
             'camera': engine.camera_metadata() if engine and hasattr(engine, 'camera_metadata') else None,
             'profile_name': settings.device_profile.name if settings.device_profile else None,
@@ -251,6 +272,25 @@ def evaluation_summary(req: Evaluation):
         fields = {key:getattr(req,key) for key in ('task_id','run_id','calibration_id','completed','reason','browser_time_ms')}
         recording_call(recording.event,req.session_id,'evaluation_summary',dict(fields,summary=summary))
     return summary
+
+
+class ProfileLoad(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    name: str = Field(min_length=1,max_length=64)
+    geometry: Geometry
+    screen: dict
+
+
+@app.post('/api/profile/load')
+def profile_load(req: ProfileLoad):
+    name=settings.device_profile.name if settings.device_profile else req.name
+    try:
+        return load_profile(name=name,device_file=settings.device_profile.filename if settings.device_profile else None,
+                            geometry=req.geometry,screen=req.screen)
+    except FileNotFoundError:
+        raise HTTPException(404,'尚无本机个人档案，请先九点校准')
+    except (ValueError,OSError) as exc:
+        raise HTTPException(422,str(exc))
 
 
 @app.post('/api/calibrate')

@@ -78,3 +78,8 @@ export function stagePointToScreen(point, screen) {
  if(!screen.fullscreen){const border=Math.max(0,(screen.outer_width_px-screen.window_width_px)/2);x=screen.screen_x+border;y=screen.screen_y+Math.max(0,screen.outer_height_px-screen.window_height_px-border);}
  return [(x+screen.stage_left_px+point[0]*screen.stage_width_px)/screen.width_px,(y+screen.stage_top_px+point[1]*screen.stage_height_px)/screen.height_px];
 }
+// Logical pixel transform: devicePixelRatio must not be multiplied a second time.
+export function screenPointToStage(point,screen){
+ const origin=stagePointToScreen([0,0],screen);
+ return [(point[0]-origin[0])*screen.width_px/screen.stage_width_px,(point[1]-origin[1])*screen.height_px/screen.stage_height_px];
+}

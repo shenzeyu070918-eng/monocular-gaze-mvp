@@ -107,7 +107,7 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
 // Exercise the actual page handlers with a fake DOM and camera. No device,
 // calibration fitting or real-time measurements are involved.
 {
- let time=2000,drawCost=0,frameCost=0,animation,hangReceipt=false,failReceipt=false,holdNextFrame=false,releaseFrame,timerId=0,cameraStarts=0;
+ let time=2000,drawCost=0,frameCost=0,animation,hangReceipt=false,failReceipt=false,holdNextFrame=false,failProfile=false,releaseFrame,timerId=0,cameraStarts=0;
  const requests=[],handlers={},timers=new Map(),rootClasses=new Set();
  const context=new Proxy({}, {get:(_,key)=>key==='drawImage'?()=>{time+=drawCost;}:()=>{}});
  const elements=new Map();
@@ -122,7 +122,7 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
  globalThis.getComputedStyle=el=>el===element('jumpTarget')?{width:'32px',height:'32px'}:{width:'72px',height:'20px'};
  globalThis.window={addEventListener:(type,handler)=>{handlers[type]=handler;}};
  globalThis.requestAnimationFrame=callback=>{animation=callback;};globalThis.setTimeout=(callback,delay)=>{timers.set(++timerId,{callback,delay});return timerId;};globalThis.clearTimeout=id=>timers.delete(id);
- globalThis.fetch=async(path,options={})=>{const body=options.body?JSON.parse(options.body):undefined;requests.push({path,body});let result={error:null};if(path==='/api/status')result={ready:true};else if(path==='/api/recording/config')result={request_timeout_ms:250,jump:{point_count:8,dwell_ms:100,min_distance:.35,margin:.05},distance_check:{distances_cm:[40,50,60],settle_ms:10,duration_ms:100,min_samples:1,warning_cm:5}};else if(path==='/api/recording/start')result={session_id:`page-${requests.length}`,active:true};else if(path==='/api/frame'){time+=frameCost;result={valid:true,raw:[.4,.5],status:'tracking',distance_cm:50,inference_ms:1,camera:{intrinsics_source:'estimated',device_file:'synthetic.yaml',intrinsics_reason:'aspect_ratio_mismatch',undistort_enabled:true,undistort_applied:false,scaled:false,width_px:640,height_px:480}};}else if(path.endsWith('/receipt')&&failReceipt)result={active:false,error:'录制结果格式无效：raw 必须是有限数值'};if(path.endsWith('/receipt')&&hangReceipt)return new Promise((resolve,reject)=>{options.signal.addEventListener('abort',()=>reject(new DOMException('fake request aborted','AbortError')));});if(path==='/api/frame'&&holdNextFrame){holdNextFrame=false;return new Promise(resolve=>{releaseFrame=()=>resolve({ok:true,json:async()=>result});});}return {ok:true,json:async()=>result};};
+ globalThis.fetch=async(path,options={})=>{const body=options.body?JSON.parse(options.body):undefined;requests.push({path,body});let result={error:null};if(path==='/api/status')result={ready:true};else if(path==='/api/recording/config')result={request_timeout_ms:250,jump:{point_count:8,dwell_ms:100,min_distance:.35,margin:.05},evaluation:{center_points:[[.25,.25],[.75,.75]],calibration_points:[[.5,.5],[.12,.12],[.5,.12],[.88,.12],[.88,.5],[.88,.88],[.5,.88],[.12,.88],[.12,.5]],settle_ms:650,dwell_ms:2200,max_dwell_ms:10000,calibration_min_samples:8},profile_name:'synthetic',distance_check:{distances_cm:[40,50,60],settle_ms:10,duration_ms:100,min_samples:1,warning_cm:5}};else if(path==='/api/calibrate')result={matrix:[[1,0],[0,1],[0,0]],profile_file:failProfile?null:'synthetic.json',profile_error:failProfile?'disk full':null};else if(path==='/api/evaluation/summary')result={groups:{A:{all:{valid_targets:1,expected_targets:10,angle_target_count:0,mean_cm:null,p90_cm:null,within15:null,within2:null,horizontal_cm:null,vertical_cm:null,angle_deg:null,yaw_deg:null,pitch_deg:null,horizontal_scale:null,vertical_scale:null,angle_frame_count:0,missing_origin_frames:1,invalid_origin_frames:0},center:{},edge:{}}}};else if(path==='/api/recording/start')result={session_id:`page-${requests.length}`,active:true};else if(path==='/api/frame'){time+=frameCost;result={valid:true,raw:[.4,.5],status:'tracking',distance_cm:50,inference_ms:1,camera:{intrinsics_source:'estimated',device_file:'synthetic.yaml',intrinsics_reason:'aspect_ratio_mismatch',undistort_enabled:true,undistort_applied:false,scaled:false,width_px:640,height_px:480}};}else if(path.endsWith('/receipt')&&failReceipt)result={active:false,error:'录制结果格式无效：raw 必须是有限数值'};if(path.endsWith('/receipt')&&hangReceipt)return new Promise((resolve,reject)=>{options.signal.addEventListener('abort',()=>reject(new DOMException('fake request aborted','AbortError')));});if(path==='/api/frame'&&holdNextFrame){holdNextFrame=false;return new Promise(resolve=>{releaseFrame=()=>resolve({ok:true,json:async()=>result});});}return {ok:true,json:async()=>result};};
  const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
  try{
   await import('../static/app.js?mock-browser');await flush();
@@ -178,18 +178,27 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
   assert.equal(requests.filter(r=>r.body?.type==='target').at(-1).body.reason,'cancelled');
   assert.equal(element('jumpOverlay').hidden,true);assert.equal(rootClasses.has('jump-active'),false);
   document.fullscreenElement=null;globalThis.innerWidth=1000;globalThis.innerHeight=800;
+  await element('evaluate').onclick();assert.match(element('message').textContent,/全屏/);await element('calibrate').onclick();assert.match(element('message').textContent,/全屏/);document.fullscreenElement=document.documentElement;
   const baselineStops=requests.filter(r=>r.path.endsWith('/stop')).length;
   element('recording').checked=true;await element('recording').onchange();
   const starts=requests.filter(r=>r.path.endsWith('/start')).length;
-  await element('evaluate').onclick();animation();await flush();time+=700;await nextFrame();element('cancel').onclick();await flush();
+  await element('evaluate').onclick();animation();await flush();time+=700;await nextFrame();
+  const firstEvaluationTarget=requests.filter(r=>r.body?.type==='target').at(-1).body.target;
+  holdNextFrame=true;await nextFrame();const summaryCount=requests.filter(r=>r.path==='/api/evaluation/summary').length;
+  time+=2300;animation();await flush();element('cancel').onclick();await flush();
+  assert.equal(requests.filter(r=>r.path==='/api/evaluation/summary').length,summaryCount);releaseFrame();await flush();
+  const evaluation=requests.filter(r=>r.path==='/api/evaluation/summary').at(-1).body;
+  assert.equal(evaluation.completed,false);assert.equal(evaluation.frames.length,2);assert.equal(evaluation.frames[0].target_id,evaluation.frames[1].target_id);
+  assert.deepEqual(evaluation.targets.find(t=>t.target_id===evaluation.frames[0].target_id).target,firstEvaluationTarget);
+  assert.equal(evaluation.targets.filter(t=>t.region==='edge').length,8);
   element('export').onclick();const csv=(await exportedCsv).replace(/^\uFEFF/,'').split('\n');
   const legacy=['run_id','calibration_id','capture_time_ms','valid','status','grayscale','geometry_estimated','physical_dimensions_confirmed','fullscreen','stage_width_px','stage_height_px','screen_width_cm','screen_height_cm','target_x','target_y','raw_screen_x','raw_screen_y','uncalibrated_x','uncalibrated_y','calibrated_x','calibrated_y','error_a_px','error_b_px','error_a_cm','error_b_cm','inference_ms'];
-  const keys=csv[0].split(',');assert.deepEqual(keys.slice(0,legacy.length),legacy);
-  assert.equal(keys[legacy.length],'intrinsics_source');assert.equal(csv[1].split(',')[keys.indexOf('intrinsics_reason')],'aspect_ratio_mismatch');
+  const keys=csv[0].split(',');const row=csv[1].split(',');assert.ok(Math.abs((+row[keys.indexOf('target_x')]*600+100)/1000-(+row[keys.indexOf('target_screen_x')]))<1e-12);assert.deepEqual(keys.slice(0,legacy.length),legacy);
+  assert.deepEqual(keys.slice(legacy.length,34),['intrinsics_source','device_file','intrinsics_reason','undistort_enabled','undistort_applied','intrinsics_scaled','camera_width_px','camera_height_px']);assert.deepEqual(keys.slice(34,36),['region','target_id']);assert.equal(csv[1].split(',')[keys.indexOf('intrinsics_reason')],'aspect_ratio_mismatch');
   assert.equal(csv[1].split(',')[keys.indexOf('error_a_cm')],''); // No measured dimensions: no cm result.
   const beforeDistanceStarts=requests.filter(r=>r.path.endsWith('/start')).length;
   for(const measured of [40,50,60]){
-   await element('distanceStart').onclick();await flush();await nextFrame();time+=100;animation();await flush();
+   await element('distanceStart').onclick();await flush();time+=11;await nextFrame();time+=100;animation();await flush();
    const result=requests.filter(r=>r.body?.type==='distance_check').at(-1).body;
    assert.equal(result.measured_cm,measured);assert.equal(result.estimated_cm,50);assert.equal(result.bias_cm,50-measured);
    assert.equal(result.camera.intrinsics_reason,'aspect_ratio_mismatch');
@@ -204,12 +213,29 @@ console.log('recording timing, coordinates, ownership, draining and error tests 
   // Self-check also owns exactly one automatic session, and cancellation
   // closes it without affecting calibration or evaluation records.
   const autoStarts=requests.filter(r=>r.path.endsWith('/start')).length,autoStops=requests.filter(r=>r.path.endsWith('/stop')).length;
-  for(const measured of [40,50,60]){await element('distanceStart').onclick();await flush();await nextFrame();time+=100;animation();await flush();}
+  for(const measured of [40,50,60]){await element('distanceStart').onclick();await flush();time+=11;await nextFrame();time+=100;animation();await flush();}
   assert.equal(requests.filter(r=>r.path.endsWith('/start')).length,autoStarts+1);
   assert.equal(requests.filter(r=>r.path.endsWith('/stop')).length,autoStops+1);
   assert.equal(element('recording').checked,false);
   await element('distanceStart').onclick();await flush();await element('distanceCancel').onclick();await flush();
   assert.equal(requests.at(-1).path,'/api/recording/stop');assert.equal(requests.at(-1).body.reason,'cancelled');
+  // Calibration uses the same fullscreen overlay and cancels before fitting on exit.
+  document.fullscreenElement=document.documentElement;await element('calibrate').onclick();animation();await flush();
+  const calibrationTarget=requests.filter(r=>r.body?.type==='target').at(-1).body;
+  assert.deepEqual(calibrationTarget.target,[.5,.5]);
+  document.fullscreenElement=null;handlers.fullscreenchange();await flush();
+  assert.equal(requests.some(r=>r.path==='/api/calibrate'),false);
+  document.fullscreenElement=document.documentElement;await nextFrame();await element('calibrate').onclick();animation();await flush();
+  for(let point=0;point<9;point++){
+   time+=700;for(let sample=0;sample<8;sample++)await nextFrame();time+=1400;animation();await flush();
+  }
+  const fit=requests.find(r=>r.path==='/api/calibrate').body;
+  assert.equal(fit.fullscreen,true);assert.equal(fit.samples.length,9);
+  assert.deepEqual(fit.samples[0].target,[.5,.5]);assert.deepEqual(fit.samples[1].target,[.12,.12]);
+  assert.deepEqual(fit.samples[0].raw,[.4,.5]);assert.match(element('profileStatus').textContent,/synthetic.json/);
+  failProfile=true;await nextFrame();await element('calibrate').onclick();animation();await flush();
+  for(let point=0;point<9;point++){time+=700;for(let sample=0;sample<8;sample++)await nextFrame();time+=1400;animation();await flush();}
+  assert.match(element('profileStatus').textContent,/保存失败.*disk full/);assert.match(element('message').textContent,/档案未保存/);
   element('recording').checked=true;await element('recording').onchange();
   assert.equal(element('gray').disabled,true);assert.equal(element('widthCm').disabled,true);assert.equal(element('measured').disabled,true);
   holdNextFrame=true;const [waitId,waitTimer]=[...timers.entries()].find(([,timer])=>timer.delay===33);timers.delete(waitId);waitTimer.callback();await flush();

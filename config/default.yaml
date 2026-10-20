@@ -83,3 +83,19 @@ offline_filter:
 display:
   max_pages: 16
   idle_timeout_s: 300.0
+
+# M3a: no personal profiles; radii are visual settings, NOT measured accuracy.
+overlay:
+  radius_cm: 2.0  # Illustrative fallback only; M3b will use a matching B check.
+  fallback_radius_px: 28.0  # Logical pixels if physical screen size is not measured.
+  opacity: 0.65
+  fade_ms: 200.0
+  stale_ms: 300.0  # Age from OpenCV capture_ns; stale data cannot reappear.
+  stroke_px: 2.0
+  refresh_ms: 16
+  idle_after_s: 3.0  # Continuous no_face before capture throttling.
+  idle_fps: 5.0  # Requested software read rate, not a measured camera rate.
+  color: '#35d6b4'
+  label_font_px: 13
+  label_inset_px: 40
+  diagnostic_size_px: 12

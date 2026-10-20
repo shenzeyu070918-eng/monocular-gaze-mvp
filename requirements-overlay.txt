@@ -1,0 +1,5 @@
+# Only QtCore/Gui/Widgets are used; avoid unrelated WebEngine/PDF downloads.
+PySide6-Essentials==6.12.0
+pyobjc-framework-Cocoa==12.2.2; sys_platform == 'darwin'
+pyobjc-framework-Quartz==12.2.2; sys_platform == 'darwin'
+pyobjc-framework-AVFoundation==12.2.2; sys_platform == 'darwin'

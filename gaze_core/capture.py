@@ -61,7 +61,7 @@ class CameraPipeline:
     """
     def __init__(self, settings=None, *, camera_factory=None, engine_factory=None,
                  collect_timings=False, clock_ns=time.perf_counter_ns,
-                 recorder=None, recording_factory=None, display_pipeline=None):
+                 recorder=None, recording_factory=None, display_pipeline=None, idle_after_s=None, idle_fps=None):
         if recorder is not None and recording_factory is not None:
             raise ValueError('recorder 和 recording_factory 只能指定一个。')
         self.settings = settings or load_settings()
@@ -86,6 +86,9 @@ class CameraPipeline:
         self._recording_queue = queue.Queue(self.settings.recording.queue_size)
         self._recording_close_failure = None
         self._display_pipeline = display_pipeline
+        if (idle_after_s is None)!=(idle_fps is None):raise ValueError('省电等待时间与帧率必须同时指定。')
+        from .power import NoFacePacing
+        self._pacing=None if idle_after_s is None else NoFacePacing(idle_after_s,idle_fps)
         self._sequence = 0  # Result cursors remain valid across pause/resume.
         self._reset_session()
 
@@ -94,6 +97,8 @@ class CameraPipeline:
         return Engine(self.settings)
 
     def _reset_session(self):
+        if self._pacing is not None:self._pacing.reset()
+        self._last_capture_ns=None
         if self._display_pipeline is not None:self._display_pipeline.reset()
         self._pending = self._latest = self._error = None
         self._in_flight = False
@@ -338,13 +343,15 @@ class CameraPipeline:
             self._capture_ready.set()
             self._run.wait()
             for image, captured_ns in read_camera_frames(camera, self.settings.camera,
-                                                        stop=self._stop, clock_ns=self._clock_ns):
+                                                        stop=self._stop, clock_ns=self._clock_ns,
+                                                        before_read=self._wait_capture_slot):
                 height, width = image.shape[:2]
                 image = image.copy()  # Own the pixels even if a source reuses its buffer.
                 with self._condition:
                     if self._stop.is_set():
                         break
                     self._captured += 1
+                    self._last_capture_ns=captured_ns
                     self._sequence += 1
                     self._actual_resolution = [width, height]
                     if self._pending is not None:
@@ -362,6 +369,14 @@ class CameraPipeline:
                     camera.release()
                 except Exception as exc:
                     self._fail(exc)
+
+    def _wait_capture_slot(self):
+        # Wait before read(), never discard a read or rewrite its capture_ns.
+        with self._condition:
+            while self._pacing is not None and self._pacing.idle and self._last_capture_ns is not None and not self._stop.is_set():
+                remaining=(self._last_capture_ns+self._pacing.period_ns-self._clock_ns())/1_000_000_000
+                if remaining<=0:return
+                self._condition.wait(remaining)  # stop/recovery wakes immediately.
 
     def _inference_loop(self):
         try:
@@ -389,6 +404,7 @@ class CameraPipeline:
                                                            geometry=self.settings.geometry)
                     data=dict(data,display=display)
                 with self._condition:
+                    if self._pacing is not None:self._pacing.observe(data.get('status'),frame.captured_ns)
                     self._predicted += 1
                     self._valid_predictions += int(bool(data.get('valid', False)))
                     status = data.get('status', 'unknown')
@@ -431,6 +447,7 @@ class CameraPipeline:
                 'requested_resolution': [self.settings.camera.width, self.settings.camera.height],
                 'actual_resolution': self._actual_resolution,
                 'grayscale': self.settings.camera.grayscale,
+                'software_idle_pacing': bool(self._pacing and self._pacing.idle),
                 'requested_backend': self.settings.camera.backend, 'actual_backend': self._actual_backend,
                 'captured_frames': self._captured, 'predicted_frames': self._predicted,
                 'valid_predictions': self._valid_predictions, 'prediction_status_counts': dict(self._status_counts),

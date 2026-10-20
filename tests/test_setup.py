@@ -51,5 +51,16 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn('torchvision==', runtime)
         self.assertEqual(Path(installation_commands(Path('/fake/python'), 'default')[0][-1]).name, 'requirements.txt')
 
+    def test_optional_overlay_install_does_not_change_torch_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);executable=root/'.venv/bin/python'
+            executable.parent.mkdir(parents=True);executable.touch()
+            with patch('setup_mvp.ROOT',root),patch('setup_mvp.sys.version_info',(3,12)), \
+                 patch('setup_mvp.subprocess.run') as run:
+                main(['--overlay'])
+            commands=[call.args[0] for call in run.call_args_list]
+            self.assertEqual(Path(commands[0][-1]).name,'requirements.txt')
+            self.assertEqual(Path(commands[1][-1]).name,'requirements-overlay.txt')
+
 
 if __name__ == '__main__': unittest.main()

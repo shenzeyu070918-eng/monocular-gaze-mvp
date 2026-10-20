@@ -176,7 +176,7 @@ async function finishCalibration(samples,screenInfo){
   const id=crypto.randomUUID(),response=await fetch('/api/calibrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({samples,fullscreen:true,screen:{...screenInfo,width_cm:geometry().width_cm,height_cm:geometry().height_cm,measured:geometry().measured,horizontal_cm:geometry().horizontal_cm,top_cm:geometry().top_cm},profile_name:$('profileName').value.trim(),calibration_id:id})}),result=await response.json();
   if(epoch!==calibrationEpoch||!document.fullscreenElement)return;
   if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:'校准失败，请重试。');
-  matrix=result.matrix;calibrationId=id;resetDisplay();await recordCalibration();$('mode').options[1].disabled=false;$('mode').value='calibrated';smooth=null;
+  matrix=result.matrix;calibrationId=id;$('mode').options[1].disabled=false;$('mode').value='calibrated';resetDisplay();await recordCalibration();
   $('profileStatus').textContent=result.profile_error?`个人档案保存失败：${result.profile_error}`:`个人档案已保存：data/profiles/${result.profile_file}`;
   $('profileStatus').classList.toggle('error',!!result.profile_error);
   message(result.profile_error?'校准已应用于本页面，但个人档案未保存，请检查上方提示。':'校准完成，个人档案已保存。请运行独立评估。');

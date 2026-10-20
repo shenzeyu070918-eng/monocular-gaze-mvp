@@ -3,6 +3,7 @@ import time
 import numpy as np
 from .geometry import intersect_screen
 from .config import load_settings, select_device
+from .camera import CameraAdapter
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,43 +38,53 @@ class Engine:
         cfg.gaze_estimator.dummy_camera_size = [self.settings.camera.width, self.settings.camera.height]
         cfg.gaze_estimator.normalized_camera_distance = options.normalized_camera_distance_m
         self.model = GazeEstimator(cfg)
+        self.cameras = CameraAdapter(self.settings.device_profile, undistort=self.settings.camera.undistort,
+                                     alpha=self.settings.camera.undistort_alpha)
         self.camera_key = None
+        self.current_camera = None
         self.parameters = sum(p.numel() for p in self.model._gaze_estimation_model.parameters())
+
+    def camera_metadata(self, size=None, geometry=None):
+        size = size or (self.settings.camera.width, self.settings.camera.height)
+        geometry = geometry or self.settings.geometry
+        return self.cameras.prepare(size, geometry.focal_scale).metadata
 
     def predict(self, image, geometry, grayscale=False):
         start = time.perf_counter()
         cv2, options = self._cv2, self.settings.inference
         h, w = image.shape[:2]
-        key = (w, h, geometry.focal_scale)
-        if key != self.camera_key:
-            focal = w * geometry.focal_scale
-            camera = self._Camera(w, h, np.array([[focal,0,w/2],[0,focal,h/2],[0,0,1.]], float), np.zeros((5,1)))
+        prepared = self.cameras.prepare((w, h), geometry.focal_scale)
+        if prepared is not self.camera_key:
+            camera = self._Camera(w, h, prepared.matrix, prepared.distortion.reshape(-1, 1))
             self.model.camera = camera
             self.model._head_pose_normalizer = self._Normalizer(camera, self.model._normalized_camera, options.normalized_camera_distance_m)
-            self.camera_key = key
+            self.camera_key = prepared
+        self.current_camera = prepared.metadata
+        image = self.cameras.transform(image, prepared)
         if grayscale:
             image = cv2.cvtColor(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
         faces = self.model.detect_faces(image)
         if not faces:
-            return {'valid': False, 'status': 'no_face', 'inference_ms': (time.perf_counter()-start)*1000}
+            return {'valid': False, 'status': 'no_face', 'camera': prepared.metadata, 'inference_ms': (time.perf_counter()-start)*1000}
         face = faces[0]
         p = face.landmarks
         def ear(ids):
             a,b,c,d,e,f = p[ids]
             return (np.linalg.norm(b-f)+np.linalg.norm(c-e))/(2*max(np.linalg.norm(a-d), 1e-6))
         openness = (ear([33,160,158,133,153,144])+ear([362,385,387,263,373,380]))/2
-        preview = [[float(v) for v in point] for point in p[[33,133,159,145,362,263,386,374,1]] / [w,h]]
+        preview_points = self.cameras.preview_points(p[[33,133,159,145,362,263,386,374,1]], prepared)
+        preview = [[float(v) for v in point] for point in preview_points / [w,h]]
         if openness < options.blink_threshold:
-            return {'valid': False, 'status': 'blink', 'landmarks': preview, 'inference_ms': (time.perf_counter()-start)*1000}
+            return {'valid': False, 'status': 'blink', 'landmarks': preview, 'camera': prepared.metadata, 'inference_ms': (time.perf_counter()-start)*1000}
         self.model.estimate_gaze(image, face)
-        raw = intersect_screen(face.center, face.gaze_vector, geometry.width_cm, geometry.height_cm, geometry.top_cm)
+        raw = intersect_screen(face.center, face.gaze_vector, geometry.width_cm, geometry.height_cm, geometry.top_cm, geometry.horizontal_cm)
         valid = raw is not None and np.isfinite(raw).all() and options.distance_min_m < face.center[2] < options.distance_max_m
-        return {'valid': bool(valid), 'status': 'tracking' if valid else 'geometry_invalid',
+        return {'valid': bool(valid), 'status': 'tracking' if valid else ('screen_unconfigured' if geometry.width_cm is None else 'geometry_invalid'),
                 'raw': [float(v) for v in raw] if valid else None, 'landmarks': preview,
                 'origin_m': [float(v) for v in face.center], 'gaze_vector': [float(v) for v in face.gaze_vector],
                 'head_degrees': [float(v) for v in face.head_pose_rot.as_euler('xyz', degrees=True)],
                 'distance_cm': float(face.center[2]*100), 'eye_openness': float(openness),
-                'inference_ms': (time.perf_counter()-start)*1000}
+                'camera': prepared.metadata, 'inference_ms': (time.perf_counter()-start)*1000}
 
     def close(self):
         self.model.close()

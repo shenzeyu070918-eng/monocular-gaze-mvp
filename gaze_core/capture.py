@@ -9,6 +9,7 @@ import threading
 import time
 
 from .config import DEFAULT_CONFIG, load_settings
+from .camera_io import read_camera_frames
 
 
 @dataclass(frozen=True)
@@ -334,13 +335,8 @@ class CameraPipeline:
                 self._actual_backend = camera.getBackendName()
             self._capture_ready.set()
             self._run.wait()
-            while not self._stop.is_set():
-                ok, image = camera.read()
-                captured_ns = self._clock_ns()  # Immediately after OpenCV read() returns.
-                if self._stop.is_set():
-                    break
-                if not ok or image is None:
-                    raise RuntimeError('摄像头读帧失败。')
+            for image, captured_ns in read_camera_frames(camera, self.settings.camera,
+                                                        stop=self._stop, clock_ns=self._clock_ns):
                 height, width = image.shape[:2]
                 image = image.copy()  # Own the pixels even if a source reuses its buffer.
                 with self._condition:
@@ -425,6 +421,7 @@ class CameraPipeline:
             return {
                 'measurement_seconds': seconds,
                 'device': self._device, 'device_name': self._device_name,
+                'camera': self._latest.data.get('camera') if self._latest else None,
                 'requested_resolution': [self.settings.camera.width, self.settings.camera.height],
                 'actual_resolution': self._actual_resolution,
                 'grayscale': self.settings.camera.grayscale,
@@ -479,7 +476,7 @@ def main(argv=None):
                 metadata = session_metadata(
                     source='python', engine=engine, geometry=settings.geometry,
                     camera_size=actual_resolution, grayscale=settings.camera.grayscale,
-                    screen=None, measured=False, page_clock_id=None)
+                    screen=None, measured=settings.geometry.measured, page_clock_id=None)
                 return SessionRecorder(metadata, settings=settings.recording)
         report = run_benchmark(CameraPipeline(settings, collect_timings=True,
                                              recording_factory=recording_factory), args.benchmark)

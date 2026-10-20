@@ -28,7 +28,7 @@ class WebTests(unittest.TestCase):
         self.image = base64.b64encode(encoded).decode()
 
     def test_frame_contract_raw_coordinates_and_input_forwarding(self):
-        geometry = {'width_cm':30.2,'height_cm':19.6,'top_cm':.2,'focal_scale':1.1}
+        geometry = {'width_cm':30.2,'height_cm':19.6,'top_cm':.2,'focal_scale':1.1,'horizontal_cm':0.,'measured':False}
         response = self.client.post('/api/frame', json={'image':self.image, 'grayscale':True,'geometry':geometry})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), self.result)

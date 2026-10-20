@@ -104,12 +104,21 @@ def validate_screen(screen):
 
 
 def session_metadata(*, source, engine, geometry, camera_size, grayscale, screen=None,
-                     measured=False, page_clock_id=None):
+                     measured=False, page_clock_id=None, browser_camera=None):
     """Build provenance internally; never accept a request or image as metadata."""
     from .camera import CameraAdapter
     provider = getattr(engine, 'camera_metadata', None)
     camera = (provider(camera_size, geometry) if provider is not None else
               CameraAdapter().prepare(camera_size, geometry.focal_scale).metadata)
+    engine_settings = getattr(engine, 'settings', None)
+    if engine_settings is not None:
+        camera = dict(camera, configured_camera_index=engine_settings.camera.index)
+        if source == 'python':
+            camera['camera_index'] = engine_settings.camera.index
+    if browser_camera is not None:
+        if not isinstance(browser_camera, dict) or set(browser_camera)-{'device_id', 'label'}:
+            raise ValueError('浏览器相机信息字段无效')
+        camera = dict(camera, browser_camera=browser_camera)
     try:
         result = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True, text=True, timeout=1)
         commit = result.stdout.strip() if result.returncode == 0 else 'unknown'
@@ -150,9 +159,19 @@ def validate_camera(camera, nullable=False):
         return
     required = {'width_px', 'height_px', 'intrinsics_source', 'matrix', 'distortion'}
     extra = {'intrinsics_reason', 'device_file', 'calibration_resolution', 'reprojection_error_px',
-             'input_matrix', 'input_distortion', 'scaled', 'undistort_enabled', 'undistort_applied'}
+             'input_matrix', 'input_distortion', 'scaled', 'undistort_enabled', 'undistort_applied',
+             'camera_index', 'configured_camera_index', 'browser_camera'}
     if not isinstance(camera, dict) or not required <= set(camera) or set(camera)-required-extra:
         raise ValueError('camera 包含未允许的数据')
+    for key in ('camera_index', 'configured_camera_index'):
+        if key in camera and (not isinstance(camera[key], Integral) or isinstance(camera[key], bool) or camera[key] < 0):
+            raise ValueError(key+' 必须是非负整数')
+    if 'browser_camera' in camera:
+        value = camera['browser_camera']
+        if not isinstance(value, dict) or set(value)-{'device_id', 'label'}:
+            raise ValueError('浏览器相机字段无效')
+        for key, item in value.items():
+            text_value(item, key, nullable=True)
     if camera['intrinsics_source'] not in {'estimated', 'calibrated'}:
         raise ValueError('相机内参来源无效')
     for key in ('width_px', 'height_px'):

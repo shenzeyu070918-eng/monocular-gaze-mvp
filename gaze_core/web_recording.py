@@ -31,10 +31,10 @@ class WebRecording:
             result['active'] = result['active'] and not self._closing and not result['error']
             return result
 
-    def start(self, *, engine, geometry, screen, measured, grayscale, camera_size, page_clock_id):
+    def start(self, *, engine, geometry, screen, measured, grayscale, camera_size, page_clock_id, browser_camera=None):
         metadata = session_metadata(source='web', engine=engine, geometry=geometry,
                                     screen=screen, measured=measured, grayscale=grayscale,
-                                    camera_size=camera_size, page_clock_id=page_clock_id)
+                                    camera_size=camera_size, page_clock_id=page_clock_id, **({'browser_camera': browser_camera} if browser_camera is not None else {}))
         with self._lifecycle:
             return self._start(metadata)
 

@@ -188,7 +188,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(camera.active_reads, 0)
 
     def make_retry_pipeline(self, frames, **camera_options):
-        settings = load_settings()
+        settings = load_settings(use_local=False)
         options = dict(warmup_timeout_s=1., read_retry_interval_s=.002, read_retry_count=2)
         options.update(camera_options)
         settings = replace(settings, camera=replace(settings.camera, **options))
@@ -293,7 +293,7 @@ class PipelineTests(unittest.TestCase):
         self.assert_workers_stopped()
 
     def test_twenty_pause_resume_cycles_reuse_engine_and_release_only_in_capture_thread(self):
-        settings = load_settings()
+        settings = load_settings(use_local=False)
         settings = replace(settings, camera=replace(settings.camera, grayscale=True))
         pipeline, cameras, engines = self.make_pipeline(settings=settings)
         last_sequence = 0
@@ -378,7 +378,7 @@ class PipelineTests(unittest.TestCase):
                 self.assert_workers_stopped()
 
     def test_stop_timeout_is_reported_and_cleanup_can_be_retried(self):
-        settings = load_settings()
+        settings = load_settings(use_local=False)
         settings = replace(settings, camera=replace(settings.camera, stop_timeout_s=.01))
         gate = threading.Event()
         self.addCleanup(gate.set)
@@ -522,7 +522,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_real_recorder_integration_preserves_frame_coordinates_and_read_timestamps(self):
         from gaze_core.recorder import SessionRecorder, session_metadata
-        settings = load_settings()
+        settings = load_settings(use_local=False)
         sessions = []
         with TemporaryDirectory() as directory:
             def factory(engine, actual_resolution):
@@ -598,7 +598,7 @@ class PipelineTests(unittest.TestCase):
         gate = threading.Event()
         self.addCleanup(gate.set)
         recorder = FakeRecorder()
-        settings = load_settings()
+        settings = load_settings(use_local=False)
         settings = replace(settings, recording=replace(settings.recording, queue_size=2))
         def factory(*_):
             if not gate.wait(3):
@@ -626,7 +626,7 @@ class PipelineTests(unittest.TestCase):
         gate = threading.Event()
         self.addCleanup(gate.set)
         recorder = FakeRecorder()
-        settings = load_settings()
+        settings = load_settings(use_local=False)
         settings = replace(settings, recording=replace(settings.recording, close_timeout_s=.01))
         def factory(*_):
             if not gate.wait(3):
@@ -733,10 +733,9 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue()), {'test_only':True})
 
     def test_cli_recording_is_lazy_and_metadata_uses_actual_camera_and_device(self):
-        settings = load_settings()
+        settings = load_settings(use_local=False)
         recorder_settings = object()
-        settings = SimpleNamespace(camera=settings.camera, geometry=settings.geometry,
-                                   recording=recorder_settings)
+        settings = replace(settings, recording=recorder_settings)
         engine, recorder = FakeEngine(), FakeRecorder()
         metadata = Mock(return_value={'type': 'session'})
         recorder_factory = Mock(return_value=recorder)
@@ -758,7 +757,7 @@ class BenchmarkTests(unittest.TestCase):
         recorder_factory.assert_called_once_with({'type': 'session'}, settings=recorder_settings)
 
     def test_opencv_factory_selects_backend_and_leaves_camera_lifecycle_to_capture_thread(self):
-        settings = load_settings().camera
+        settings = load_settings(use_local=False).camera
         import cv2
         camera = Mock()
         camera.isOpened.return_value = False

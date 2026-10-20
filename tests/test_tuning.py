@@ -13,7 +13,7 @@ from gaze_core.config import load_settings,ScreenGeometry,FilterSettings,Fixatio
 from gaze_core.tuning import (JumpTask,TuningSettings,read_jump_tasks,simulate,measure_task,tune,
                               crossing_time,jitter,match_saccades,pareto_front,choose_knee)
 from gaze_core.recorder import SessionRecorder,session_metadata
-from tools.tune_filter import write_report,main
+from tools.tune_filter import write_report,main,compare_configuration
 
 
 def synthetic_task(identifier='s0'):
@@ -54,6 +54,22 @@ class TuningTests(unittest.TestCase):
         self.assertAlmostEqual((filtered-raw)*1000,100)
         self.assertAlmostEqual((raw-filtered)*1000,-100)
         self.assertIsNone(crossing_time(rows,'position',[.2,.2],[.8,.2],g,.9,100))
+    def test_legacy_columns_preserve_original_target_crossings(self):
+        task=synthetic_task();detector=FixationSettings(angular_threshold_deg_s=30)
+        samples,segments,events=simulate(task,FilterSettings(),detector)
+        result=measure_task(task,samples,segments,events,small_config(),detector)
+        expected=[]
+        for i in range(1,len(task.targets)):
+            start=task.targets[i]['time_s']
+            end=task.targets[i+1]['time_s'] if i+1<len(task.targets) else task.end_s
+            window=[r for r in samples if start<=r['time_s']<end]
+            args=(task.targets[i-1]['point'],task.targets[i]['point'],task.geometry,.9,0)
+            raw=crossing_time(window,'unfiltered',*args)
+            filtered=crossing_time(window,'position',*args)
+            expected.append(dict(index=task.targets[i]['index'],raw_ms=(raw-start)*1000,
+                                 filtered_ms=(filtered-start)*1000,extra_ms=(filtered-raw)*1000))
+        self.assertEqual(result['legacy_target_transitions'],expected)
+        self.assertEqual(result['legacy_target_paired_transitions'],2)
     def test_jitter_is_position_sd_not_bias_and_numpy_origin(self):
         rows=[dict(unfiltered=[.8,.9],origin_m=np.array([0.,.1,.5])) for _ in range(5)]
         result=jitter(rows,'unfiltered',synthetic_task().geometry)
@@ -94,8 +110,95 @@ class TuningTests(unittest.TestCase):
         result=tune(tasks,small_config())
         self.assertIsNone(result['recommended']);self.assertIn('angle_coverage',result['candidates'][0]['rejection_reasons'])
     def test_bad_search_settings(self):
-        for change in [dict(beta=(-1,)),dict(min_cutoff=()),dict(min_tasks=0),dict(min_angle_coverage=2)]:
+        for change in [dict(beta=(-1,)),dict(min_cutoff=()),dict(min_tasks=0),dict(min_angle_coverage=2),
+                       dict(min_signal_jump_snr=0),dict(min_signal_jump_snr=float('nan'))]:
             with self.assertRaises(ValueError):replace(small_config(),**change)
+
+    def test_signal_endpoints_remove_bias_and_compressed_amplitude_not_delay(self):
+        task=synthetic_task();detector=FixationSettings(angular_threshold_deg_s=30)
+        samples,_,_=simulate(task,FilterSettings(),detector)
+        # Large offset + compressed response cannot reach the commanded target.
+        # Signal response is at 100 ms; filtered response is at 160 ms.
+        points=[np.array(p['point'])*.5+[.04,.1] for p in task.targets]
+        for row in samples:
+            raw_i=sum(row['time_s']>=t['time_s']+.1 for t in task.targets[1:])
+            filtered_i=sum(row['time_s']>=t['time_s']+.16 for t in task.targets[1:])
+            row['unfiltered']=points[raw_i].copy()
+            row['position']=points[filtered_i].copy()
+        before=[r['unfiltered'].copy() for r in samples]
+        result=measure_task(task,samples,[],[1.1,2.1],small_config(),detector)
+        self.assertEqual(result['paired_transitions'],2)
+        self.assertAlmostEqual(result['raw_delay_ms'],100)
+        self.assertAlmostEqual(result['filtered_delay_ms'],160)
+        self.assertAlmostEqual(result['extra_delay_ms'],60)
+        self.assertGreater(result['legacy_target_raw_unreached'],0)
+        self.assertLess(result['legacy_target_paired_transitions'],2)
+        np.testing.assert_allclose(result['signal_transitions'][0]['before'],points[0])
+        np.testing.assert_allclose(result['signal_transitions'][0]['after'],points[1])
+        np.testing.assert_array_equal(before,[r['unfiltered'] for r in samples])
+
+    def test_shared_raw_median_endpoints_not_filtered_endpoints_or_mean(self):
+        task=synthetic_task();detector=FixationSettings(angular_threshold_deg_s=30)
+        samples,_,_=simulate(task,FilterSettings(),detector)
+        points=[np.array(p['point']) for p in task.targets]
+        for row in samples:
+            active=max(0,min(2,int(max(0,row['time_s']-.1))))
+            row['unfiltered']=points[active].copy()
+            # Filter never reaches 90% of raw displacement. Its own stable
+            # endpoint would incorrectly declare successful arrival.
+            row['position']=points[0]+.5*(points[active]-points[0])
+        # A single stable outlier must not move the median endpoint.
+        samples[80]['unfiltered']=points[1]+[.1,0]
+        result=measure_task(task,samples,[],[],small_config(),detector)
+        np.testing.assert_allclose(result['signal_transitions'][0]['after'],points[1])
+        self.assertEqual(result['raw_unreached'],0)
+        self.assertEqual(result['filtered_unreached'],2)
+        self.assertIsNone(result['extra_delay_ms'])
+
+    def test_small_signal_jump_threshold_denominator_and_detection_unchanged(self):
+        task=synthetic_task();detector=FixationSettings(angular_threshold_deg_s=30)
+        samples,_,_=simulate(task,FilterSettings(),detector)
+        points=[np.array(p) for p in [[.2,.2],[.201,.2],[.8,.8]]]
+        for i,row in enumerate(samples):
+            active=max(0,min(2,int(max(0,row['time_s']-.1))))
+            row['unfiltered']=row['position']=points[active]+(.002 if i%2 else -.002)
+        result=measure_task(task,samples,[],[1.1,2.1],small_config(),detector)
+        self.assertEqual(result['small_signal_jumps'],1)
+        self.assertEqual(result['delay_transitions'],1)
+        self.assertEqual(result['paired_transitions'],1)
+        self.assertEqual(result['transition_coverage'],1)
+        self.assertEqual(result['expected_transitions'],2)
+        self.assertEqual(result['expected_switches'],2)
+        self.assertEqual(result['matched'],2)
+        detail=result['signal_transitions'][0]
+        self.assertLess(detail['distance_cm'],detail['min_distance_cm'])
+        self.assertAlmostEqual(detail['min_distance_cm'],3*detail['noise_cm'])
+        permissive=measure_task(task,samples,[],[],small_config(min_signal_jump_snr=.1),detector)
+        self.assertEqual(permissive['small_signal_jumps'],0)
+        for i,row in enumerate(samples):row['unfiltered']=row['position']=points[0]+(.002 if i%2 else -.002)
+        all_small=measure_task(task,samples,[],[],small_config(),detector)
+        self.assertEqual(all_small['small_signal_jumps'],2)
+        self.assertEqual(all_small['delay_transitions'],0)
+        self.assertEqual(all_small['transition_coverage'],0)
+        self.assertIsNone(all_small['extra_delay_ms'])
+
+    def test_missing_stable_reference_not_hidden_from_coverage(self):
+        task=synthetic_task();detector=FixationSettings(angular_threshold_deg_s=30)
+        samples,_,_=simulate(task,FilterSettings(),detector)
+        for row in samples:
+            if row['time_s']<1:row['unfiltered']=row['position']=None
+        result=measure_task(task,samples,[],[],small_config(),detector)
+        self.assertEqual(result['missing_stable_transitions'],1)
+        self.assertEqual(result['delay_transitions'],2)
+        self.assertEqual(result['paired_transitions'],1)
+        self.assertEqual(result['transition_coverage'],.5)
+
+    def test_local_comparison_matches_all_effective_parameters(self):
+        result=tune([synthetic_task(str(i)) for i in range(3)],small_config())
+        compare_configuration(result,FilterSettings(1,0,1),FixationSettings(angular_threshold_deg_s=30))
+        self.assertEqual(result['local_comparison']['candidate_index'],0)
+        compare_configuration(result,FilterSettings(1,.05,1),FixationSettings(angular_threshold_deg_s=30))
+        self.assertIsNone(result['local_comparison']['candidate_index'])
 
     def test_unscorable_gap_is_not_counted_as_false_detection(self):
         task=synthetic_task();detector=FixationSettings(angular_threshold_deg_s=30)
@@ -140,12 +243,16 @@ class TuningTests(unittest.TestCase):
 
     def test_report_plot_and_machine_readable_results_are_only_temporary_synthetic(self):
         config=small_config();result=tune([synthetic_task(str(i)) for i in range(3)],config)
+        compare_configuration(result,FilterSettings(1,0,1),FixationSettings(angular_threshold_deg_s=30))
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'synthetic-report.md'
             write_report(result,config,FixationSettings(),path,['synthetic']*3)
             text=path.read_text();self.assertIn('推荐候选',text);self.assertIn('FP/(TP+FP)',text)
+            self.assertIn('当前本机探索配置对比',text);self.assertIn('旧目标额外 ms',text)
             self.assertEqual(path.with_name('synthetic-report-pareto.png').read_bytes()[:8],b'\x89PNG\r\n\x1a\n')
             values=json.loads(path.with_suffix('.json').read_text());self.assertEqual(values['recommended'],0)
+            self.assertEqual(values['local_comparison']['candidate_index'],0)
+            self.assertIn('signal_transitions',values['candidates'][0]['trials'][0])
     def test_pending_cli_has_no_fake_results_or_chart(self):
         with tempfile.TemporaryDirectory() as folder,redirect_stdout(io.StringIO()),redirect_stderr(io.StringIO()):
             path=Path(folder)/'pending.md'

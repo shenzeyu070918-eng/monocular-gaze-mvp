@@ -14,7 +14,7 @@ from gaze_core.config import load_settings,FixationSettings
 from gaze_core.display import DisplaySessions,DisplayPipeline
 from gaze_core.capture import CameraPipeline
 from gaze_core.profiles import save_profile,load_profile
-from test_capture import FakeCamera,FakeEngine
+from test_capture import FakeCamera,FakeEngine,FakeRecorder
 
 class DisplayIntegrationTests(unittest.TestCase):
     def setUp(self):
@@ -51,7 +51,8 @@ class DisplayIntegrationTests(unittest.TestCase):
         camera=FakeCamera(stop_requested=lambda:pipeline._stop.is_set())
         camera.send(100)
         engine=FakeEngine();engine.predict=Mock(return_value=dict(valid=True,status='tracking',raw=[.5,.5],inference_ms=0))
-        pipeline=CameraPipeline(settings,camera_factory=lambda _:camera,engine_factory=lambda:engine,display_pipeline=wrapped)
+        recorder=FakeRecorder()
+        pipeline=CameraPipeline(settings,camera_factory=lambda _:camera,engine_factory=lambda:engine,display_pipeline=wrapped,recorder=recorder)
         self.addCleanup(pipeline.close);pipeline.start()
         first=pipeline.wait_for_result(timeout=3);self.assertIsNotNone(first)
         camera.send(110);second=pipeline.wait_for_result(first.sequence,timeout=3)
@@ -60,6 +61,7 @@ class DisplayIntegrationTests(unittest.TestCase):
         self.assertEqual(args['source'],'python');self.assertEqual(second.data['display']['unfiltered'],[.5,1.])
         self.assertAlmostEqual(second.data['display']['dt_s'],(second.captured_ns-first.captured_ns)/1e9)
         self.assertNotEqual(second.captured_ns,second.completed_ns)
+        recorder.wait_for_frames(2);self.assertNotIn('display',recorder.frames[-1][0]);self.assertEqual(recorder.frames[-1][0]['raw'],[.5,.5])
         pipeline.pause();self.assertEqual(camera.release_threads,['gaze-capture']);self.assertFalse(camera.release_during_read[0])
     def test_explicit_profile_device_coordinates_and_geometry_checks(self):
         screen=dict(fullscreen=True,width_px=1000,height_px=800,width_cm=30,height_cm=20,measured=True,horizontal_cm=0,top_cm=0)

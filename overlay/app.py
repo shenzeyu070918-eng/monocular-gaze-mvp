@@ -4,6 +4,31 @@ import signal
 import sys
 
 
+def make_tray_icon(color):
+    """Cocoa template image with 1x/2x representations; retain Windows color."""
+    from PySide6.QtCore import Qt,QRectF
+    from PySide6.QtGui import QColor,QIcon,QPainter,QPen,QPixmap
+    icon=QIcon()
+    if sys.platform=='darwin':
+        for scale in (1,2):
+            pixmap=QPixmap(18*scale,18*scale)
+            pixmap.setDevicePixelRatio(scale)
+            pixmap.fill(Qt.GlobalColor.transparent)
+            painter=QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QPen(Qt.GlobalColor.black,2.0))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(QRectF(3,3,12,12))
+            painter.end()
+            icon.addPixmap(pixmap)
+        icon.setIsMask(True)
+    else:
+        pixmap=QPixmap(32,32);pixmap.fill(QColor(0,0,0,0))
+        painter=QPainter(pixmap);painter.setPen(QColor(color));painter.drawEllipse(5,5,22,22);painter.end()
+        icon.addPixmap(pixmap)
+    return icon
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description='M3a 未校准悬浮层；不加载个人档案')
     parser.add_argument('--config',default=None)
@@ -12,9 +37,9 @@ def main(argv=None):
     args=parser.parse_args(argv)
     if args.duration is not None and (not args.diagnostic or not 0<args.duration<float('inf')):
         parser.error('--duration 必须为有限正数且只用于 --diagnostic')
+    print('按 Ctrl+C 退出',flush=True)
     try:
         from PySide6.QtCore import QTimer
-        from PySide6.QtGui import QColor,QIcon,QPainter,QPixmap
         from PySide6.QtWidgets import QApplication,QMenu,QSystemTrayIcon,QMessageBox
         from gaze_core.config import load_settings,print_configuration
         from .mapping import ScreenRect
@@ -29,16 +54,16 @@ def main(argv=None):
         settings=load_settings() if args.config is None else load_settings(args.config)
         print_configuration(settings)
         platforms.prepare_application()
-        if not QSystemTrayIcon.isSystemTrayAvailable():
+        tray_available=QSystemTrayIcon.isSystemTrayAvailable()
+        if not tray_available:
+            print('托盘状态：isSystemTrayAvailable=False；tray.isVisible()=未创建；tray.geometry()=未创建',flush=True)
             raise RuntimeError('系统托盘不可用，无法安全提供退出操作。')
         screen=platforms.builtin_screen(app.screens())
         rect=screen.geometry()  # Full logical screen, including menu/taskbar area.
         logical=ScreenRect(rect.x(),rect.y(),rect.width(),rect.height(),screen.devicePixelRatio())
         print(f'内置屏逻辑范围：{logical}；M3a 未校准，不加载任何档案。',flush=True)
         window=OverlayWindow(logical,settings.overlay,native_configure=platforms.configure_window,diagnostic=args.diagnostic)
-        pixmap=QPixmap(32,32);pixmap.fill(QColor(0,0,0,0))
-        painter=QPainter(pixmap);painter.setPen(QColor(settings.overlay.color));painter.drawEllipse(5,5,22,22);painter.end()
-        tray=QSystemTrayIcon(QIcon(pixmap),app)
+        tray=QSystemTrayIcon(make_tray_icon(settings.overlay.color),app)
         menu=QMenu();mode=menu.addAction('未校准 · Python 管线');mode.setEnabled(False)
         toggle=menu.addAction('隐藏悬浮层')
         pause=menu.addAction('暂停摄像头');pause.setEnabled(False)
@@ -52,6 +77,7 @@ def main(argv=None):
         window.prepare_native()
         tray.show();window.show()
         app.processEvents()
+        print(f'托盘状态：isSystemTrayAvailable={tray_available}；tray.isVisible()={tray.isVisible()}；tray.geometry()={tray.geometry()}',flush=True)
         if window.geometry()!=rect:
             raise RuntimeError(f'窗口未覆盖完整逻辑屏：期望 {rect}，实际 {window.geometry()}。')
         print(f'窗口逻辑范围已核对：{window.geometry()}；仅核对几何，不代表穿透/全屏实机验收。',flush=True)

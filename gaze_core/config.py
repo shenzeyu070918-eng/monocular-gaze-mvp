@@ -29,6 +29,9 @@ class CameraSettings:
     stop_timeout_s: float
     undistort: bool = True
     undistort_alpha: float = 0.0
+    warmup_timeout_s: float = 3.0
+    read_retry_interval_s: float = 0.05
+    read_retry_count: int = 3
 
 
 @dataclass(frozen=True)
@@ -126,9 +129,12 @@ def load_settings(path=DEFAULT_CONFIG):
                         ('distance_max_m', i.distance_max_m),
                         ('normalized_camera_distance_m', i.normalized_camera_distance_m),
                         ('startup_timeout_s', c.startup_timeout_s), ('stop_timeout_s', c.stop_timeout_s),
+                        ('warmup_timeout_s', c.warmup_timeout_s), ('read_retry_interval_s', c.read_retry_interval_s),
                         ('focal_scale', g.focal_scale)]:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ValueError(f'{name} 必须是有限正数')
+    if type(c.read_retry_count) is not int or c.read_retry_count < 0:
+        raise ValueError('camera.read_retry_count 必须是非负整数')
     from .devices import finite, load_device
     for key in ('width_cm', 'height_cm'):
         finite(getattr(g, key), key, positive=True, nullable=True)

@@ -187,6 +187,73 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(camera.release_during_read, [False])
         self.assertEqual(camera.active_reads, 0)
 
+    def make_retry_pipeline(self, frames, **camera_options):
+        settings = load_settings()
+        options = dict(warmup_timeout_s=1., read_retry_interval_s=.002, read_retry_count=2)
+        options.update(camera_options)
+        settings = replace(settings, camera=replace(settings.camera, **options))
+        # Block after the scripted frames, rather than racing a stream of
+        # implicit frames against the assertions on successful-read counts.
+        camera = FakeCamera(stop_requested=lambda:pipeline._stop.is_set())
+        for frame in frames:
+            camera.frames.put(frame)
+        pipeline = CameraPipeline(settings, camera_factory=lambda _:camera, engine_factory=FakeEngine)
+        self.addCleanup(pipeline.close)
+        return pipeline,camera
+
+    def test_warmup_and_intermittent_failures_recover_without_counting_failed_reads(self):
+        image = np.ones((6,8,3), dtype=np.uint8)
+        pipeline,camera = self.make_retry_pipeline([None]*2+[image]+[None]*2+[image])
+        pipeline.start()
+        self.assertIsNotNone(pipeline.wait_for_result(timeout=3))
+        camera.wait_for_reads(7)
+        self.assertIsNone(pipeline.error)
+        self.assertEqual(pipeline.report()['captured_frames'],2)
+        pipeline.close()
+        self.assert_camera_released_safely(camera)
+        self.assert_workers_stopped()
+
+    def test_never_a_frame_reports_first_frame_timeout_and_releases_in_capture_thread(self):
+        pipeline,camera = self.make_retry_pipeline([None]*100,warmup_timeout_s=.08)
+        pipeline.start()
+        with self.assertRaisesRegex(RuntimeError,'从未读到画面.*终端.*权限.*占用'):
+            pipeline.wait_for_result(timeout=3)
+        pipeline.close()
+        self.assertEqual(pipeline.report()['captured_frames'],0)
+        self.assert_camera_released_safely(camera)
+        self.assert_workers_stopped()
+
+    def test_runtime_retry_limit_stops_pipeline_with_distinct_error(self):
+        image = np.ones((6,8,3),dtype=np.uint8)
+        pipeline,camera = self.make_retry_pipeline([image]+[None]*3)
+        pipeline.start()
+        with pipeline._condition:
+            self.assertTrue(pipeline._condition.wait_for(lambda:pipeline._error is not None,3))
+        with self.assertRaisesRegex(RuntimeError,'运行中途读帧失败'):
+            pipeline.raise_if_failed()
+        pipeline.close()
+        self.assertEqual(camera.read_count,4)
+        self.assertEqual(pipeline.report()['captured_frames'],1)
+        self.assert_camera_released_safely(camera)
+        self.assert_workers_stopped()
+
+    def test_pause_interrupts_warmup_retry_wait_without_releasing_during_read(self):
+        pipeline,camera = self.make_retry_pipeline([None],warmup_timeout_s=30.,
+                                                  read_retry_interval_s=10.,stop_timeout_s=.5)
+        waiting = threading.Event()
+        original_wait = pipeline._stop.wait
+        def wait(delay):
+            waiting.set()
+            return original_wait(delay)
+        pipeline._stop.wait = wait
+        pipeline.start()
+        self.assertTrue(waiting.wait(3))
+        pipeline.pause()  # Must interrupt the 10 s retry wait within the stop deadline.
+        self.assertIsNone(pipeline.error)
+        self.assertFalse(pipeline.running)
+        self.assert_camera_released_safely(camera)
+        self.assert_workers_stopped()
+
     def test_latest_pending_frame_replaces_old_frames(self):
         gate = threading.Event()
         self.addCleanup(gate.set)

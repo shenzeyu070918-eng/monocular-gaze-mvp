@@ -15,6 +15,7 @@ import yaml
 from gaze_core.calibration import board_points, calibrate_views, diverse_enough, view_descriptor
 from gaze_core.config import ROOT, load_settings
 from gaze_core.devices import device_name, parse_device
+from gaze_core.camera_io import read_camera_frames
 
 
 def image_directory(path):
@@ -96,10 +97,7 @@ def main(argv=None):
         views, descriptors, size = [], [], None
         limits = replace(settings.calibration, views=args.views, max_error_px=args.max_error_px)
         print('空格：采集角点；Enter：计算并保存；R：重新采集；Esc/Q：退出。请移动棋盘到不同位置、距离并倾斜。')
-        while True:
-            ok, image = camera.read()
-            if not ok or image is None:
-                raise RuntimeError('相机读帧失败')
+        for image, _ in read_camera_frames(camera, settings.camera):
             actual = (image.shape[1], image.shape[0])
             if size is None:
                 size = actual

@@ -1,6 +1,6 @@
 """Chessboard fits and tool lifecycle use synthetic views and a fake camera."""
 from argparse import Namespace
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout, redirect_stderr
 from dataclasses import replace
 import io
 from pathlib import Path
@@ -18,6 +18,59 @@ from tools import calibrate_camera as tool
 
 
 class CalibrationTests(unittest.TestCase):
+    def run_camera_reads(self, reads=None):
+        """Exercise the actual preview loop and shared reader, not a reader stub."""
+        settings = load_settings()
+        settings = replace(settings, camera=replace(settings.camera, warmup_timeout_s=.1,
+                           read_retry_interval_s=.002, read_retry_count=2))
+        camera = Mock()
+        camera.isOpened.return_value = True
+        if reads is None:
+            camera.read.return_value = (False,None)
+        else:
+            camera.read.side_effect = reads
+        output, error = io.StringIO(), io.StringIO()
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(tool,'load_settings',return_value=settings))
+            stack.enter_context(patch.object(tool.cv2,'VideoCapture',return_value=camera))
+            stack.enter_context(patch.object(tool.cv2,'findChessboardCorners',return_value=(False,None)))
+            preview = stack.enter_context(patch.object(tool.cv2,'imshow'))
+            stack.enter_context(patch.object(tool.cv2,'putText'))
+            stack.enter_context(patch.object(tool.cv2,'waitKey',side_effect=[-1,ord('q')]))
+            stack.enter_context(patch.object(tool.cv2,'destroyAllWindows'))
+            stack.enter_context(redirect_stdout(output))
+            stack.enter_context(redirect_stderr(error))
+            code = tool.main(['--device','synthetic','--corners','9','6','--square-mm','20'])
+        camera.release.assert_called_once()
+        return code, camera, preview.call_count, error.getvalue()
+
+    def test_initial_and_intermittent_failed_reads_recover_in_preview(self):
+        frame = np.zeros((480,640,3),np.uint8)
+        code,camera,previews,error = self.run_camera_reads(
+            [(False,None)]*2+[(True,frame)]+[(False,None)]*2+[(True,frame)])
+        self.assertEqual(code,0,error)
+        self.assertEqual(previews,2)
+        self.assertEqual(camera.read.call_count,6)
+
+    def test_never_a_frame_reports_permissions_and_occupancy_after_warmup(self):
+        code,camera,previews,error = self.run_camera_reads()
+        self.assertEqual(code,1)
+        self.assertIn('从未读到画面',error)
+        self.assertIn('终端的权限',error)
+        self.assertIn('占用摄像头',error)
+        self.assertNotIn('运行中途',error)
+        self.assertEqual(previews,0)
+        self.assertGreater(camera.read.call_count,1)
+
+    def test_persistent_runtime_read_failure_has_distinct_error(self):
+        frame = np.zeros((480,640,3),np.uint8)
+        code,camera,previews,error = self.run_camera_reads([(True,frame)]+[(False,None)]*3)
+        self.assertEqual(code,1)
+        self.assertIn('运行中途读帧失败',error)
+        self.assertNotIn('从未读到画面',error)
+        self.assertEqual(previews,1)
+        self.assertEqual(camera.read.call_count,4)
+
     def synthetic_views(self):
         points = board_points((9,6),np.float64(20))
         matrix = np.array([[620.,0,320],[0,625,240],[0,0,1.]])

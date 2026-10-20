@@ -15,6 +15,9 @@ camera:
   grayscale: false
   startup_timeout_s: 120.0
   stop_timeout_s: 5.0
+  warmup_timeout_s: 3.0  # Retry failed reads until the first frame, up to this deadline.
+  read_retry_interval_s: 0.05  # Interruptible wait between failed reads; no delay on success.
+  read_retry_count: 3  # After the first valid frame: extra attempts after a failed read.
   undistort: true
   undistort_alpha: 0.0  # OpenCV new-camera-matrix alpha; no ROI crop is applied.
 geometry:

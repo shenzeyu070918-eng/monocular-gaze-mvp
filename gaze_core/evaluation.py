@@ -6,9 +6,32 @@ the viewer's right; positive pitch error is down. Components are differences
 of ray headings/elevations, not atan(position_error / estimated_distance).
 """
 import math
+import random
 from collections import defaultdict
 import numpy as np
 from .devices import finite
+
+
+def evaluation_targets(settings, margin, *, rng=None):
+    """Same independent full-screen target set as static/evaluation.js.
+
+    Only order is randomized. The eight edge anchors use the configured jump
+    margin, and no evaluation target may coincide with a calibration target.
+    """
+    margin = finite(margin, 'evaluation margin')
+    if not 0 < margin < .5:
+        raise ValueError('屏幕边距必须大于 0% 且小于 50%。')
+    anchors = ((0, 0), (1, 0), (1, 1), (0, 1), (.5, 0), (1, .5), (.5, 1), (0, .5))
+    edge = [[margin if v == 0 else 1-margin if v == 1 else .5 for v in p] for p in anchors]
+    targets = [dict(target_id=f'center-{i+1}', region='center', target=list(point))
+               for i, point in enumerate(settings.center_points)]
+    targets += [dict(target_id=f'edge-{i+1}', region='edge', target=point) for i, point in enumerate(edge)]
+    for item in targets:
+        if any(all(abs(float(v)-float(c)) < 1e-10 for v, c in zip(item['target'], point))
+               for point in settings.calibration_points):
+            raise ValueError('评估点与校准点重合，请检查配置。')
+    (rng or random).shuffle(targets)
+    return targets
 
 
 def screen_to_camera(point, geometry):

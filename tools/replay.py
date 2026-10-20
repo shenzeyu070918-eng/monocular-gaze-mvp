@@ -50,7 +50,8 @@ def _time(record: dict[str, Any], source: str) -> float | int:
     if source == "web":
         field = "browser_capture_ms" if record["type"] == "frame" else "browser_time_ms"
     else:
-        field = "capture_ns" if record["type"] == "frame" else "server_ns"
+        field = "capture_ns" if record["type"] == "frame" else (
+            "event_ns" if "event_ns" in record else "server_ns")
     if source == "python":
         return _integer(record.get(field), field)
     return _number(record.get(field), field)

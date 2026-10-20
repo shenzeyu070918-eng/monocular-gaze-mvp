@@ -55,7 +55,7 @@ distance_check:
   min_samples: 20
   warning_cm: 5.0  # Warning threshold, not a measured result.
 
- # Evaluation labels never enter calibration fitting.
+# Evaluation labels never enter calibration fitting.
 evaluation:
   center_points: [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75], [0.5, 0.34], [0.34, 0.5]]
   calibration_points: [[0.5, 0.5], [0.12, 0.12], [0.5, 0.12], [0.88, 0.12], [0.88, 0.5], [0.88, 0.88], [0.5, 0.88], [0.12, 0.88], [0.12, 0.5]]

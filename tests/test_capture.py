@@ -201,6 +201,17 @@ class PipelineTests(unittest.TestCase):
         self.addCleanup(pipeline.close)
         return pipeline,camera
 
+    def test_black_camera_stops_and_releases_only_from_capture_thread(self):
+        image = np.zeros((6,8,3), dtype=np.uint8)
+        pipeline,camera = self.make_retry_pipeline([image]*4, warmup_timeout_s=.001, black_frame_count=3)
+        pipeline.start()
+        camera.wait_for_reads(3)
+        with self.assertRaisesRegex(RuntimeError,'全黑.*camera.index'):
+            pipeline.wait(1)
+        pipeline.close()
+        self.assert_camera_released_safely(camera)
+        self.assert_workers_stopped()
+
     def test_warmup_and_intermittent_failures_recover_without_counting_failed_reads(self):
         image = np.ones((6,8,3), dtype=np.uint8)
         pipeline,camera = self.make_retry_pipeline([None]*2+[image]+[None]*2+[image])

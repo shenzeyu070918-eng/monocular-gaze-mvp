@@ -178,7 +178,8 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
                         ('focal_scale', g.focal_scale)]:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ValueError(f'{name} 必须是有限正数')
-    if type(c.black_frame_count) is not int or c.black_frame_count <= 0 or not 0 <= c.black_threshold <= 255 or not math.isfinite(c.black_threshold):
+    if (type(c.black_frame_count) is not int or c.black_frame_count <= 0 or isinstance(c.black_threshold,bool)
+            or not isinstance(c.black_threshold,(int,float)) or not math.isfinite(c.black_threshold) or not 0 <= c.black_threshold <= 255):
         raise ValueError('黑屏阈值必须在 [0,255] 且连续帧数必须为正整数')
     if type(c.read_retry_count) is not int or c.read_retry_count < 0:
         raise ValueError('camera.read_retry_count 必须是非负整数')
@@ -266,4 +267,5 @@ def configuration_info(settings):
 
 def print_configuration(settings):
     import json, sys
-    print('实际配置：'+json.dumps(configuration_info(settings), ensure_ascii=False), file=sys.stderr)
+    info = configuration_info(settings)
+    print('实际配置：'+json.dumps(info, ensure_ascii=False), file=sys.stderr)

@@ -71,6 +71,24 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(previews,1)
         self.assertEqual(camera.read.call_count,4)
 
+    def test_black_camera_preview_stops_with_selection_hint(self):
+        settings = load_settings(use_local=False)
+        settings = replace(settings,camera=replace(settings.camera,warmup_timeout_s=.001,black_frame_count=2))
+        camera=Mock();camera.isOpened.return_value=True
+        def read():
+            # Fake elapsed exposure time without a real camera.
+            import time
+            time.sleep(.002)
+            return True,np.zeros((6,8,3),np.uint8)
+        camera.read.side_effect=read
+        with patch.object(tool,'load_settings',return_value=settings),patch.object(tool.cv2,'VideoCapture',return_value=camera), \
+             patch.object(tool.cv2,'findChessboardCorners',return_value=(False,None)),patch.object(tool.cv2,'imshow'), \
+             patch.object(tool.cv2,'putText'),patch.object(tool.cv2,'waitKey',return_value=-1), \
+             patch.object(tool.cv2,'destroyAllWindows'),redirect_stdout(io.StringIO()),redirect_stderr(io.StringIO()) as error:
+            result=tool.main(['--device','synthetic','--corners','9','6','--square-mm','20','--camera-index','1'])
+        self.assertEqual(result,1);self.assertIn('index 1',error.getvalue());self.assertIn('全黑',error.getvalue())
+        camera.release.assert_called_once()
+
     def synthetic_views(self):
         points = board_points((9,6),np.float64(20))
         matrix = np.array([[620.,0,320],[0,625,240],[0,0,1.]])

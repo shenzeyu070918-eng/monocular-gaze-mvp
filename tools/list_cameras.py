@@ -4,6 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 import sys
 import time
+import cv2
 if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from gaze_core.config import load_settings, print_configuration
@@ -20,7 +21,6 @@ def probe_camera(options, *, camera_factory=open_camera, monotonic=time.monotoni
         if not report['opened']:
             report['error'] = '无法打开'
             return report
-        import cv2
         camera.set(cv2.CAP_PROP_FRAME_WIDTH, options.width)
         camera.set(cv2.CAP_PROP_FRAME_HEIGHT, options.height)
         deadline = monotonic()+options.warmup_timeout_s
@@ -33,7 +33,7 @@ def probe_camera(options, *, camera_factory=open_camera, monotonic=time.monotoni
                     break
         if values:
             report['mean_brightness'] = sum(values)/len(values)
-    except (RuntimeError, OSError) as exc:
+    except (RuntimeError, OSError, cv2.error) as exc:
         report['error'] = str(exc)
     finally:
         if camera is not None:

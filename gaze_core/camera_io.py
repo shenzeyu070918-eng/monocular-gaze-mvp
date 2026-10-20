@@ -14,7 +14,8 @@ def read_camera_frames(camera, options, *, stop=None, clock_ns=time.perf_counter
     Warmup starts on iteration, immediately before the first read attempt. A
     valid first frame ends warmup early. Thereafter read_retry_count is the
     number of additional attempts allowed after an initial failed read; any
-    successful frame resets that consecutive-failure budget.
+    successful frame resets that consecutive-failure budget. Brightness checks
+    wait the full exposure warmup deadline, then count consecutive dark frames.
     """
     stop = stop if stop is not None else threading.Event()
     deadline = monotonic() + options.warmup_timeout_s

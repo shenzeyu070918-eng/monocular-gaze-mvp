@@ -151,6 +151,46 @@ class DisplaySettings:
 
 
 @dataclass(frozen=True)
+class OverlaySettings:
+    radius_cm: float = 2.0
+    fallback_radius_px: float = 28.0
+    opacity: float = .65
+    fade_ms: float = 200.0
+    stale_ms: float = 300.0
+    stroke_px: float = 2.0
+    refresh_ms: int = 16
+    idle_after_s: float = 3.0
+    idle_fps: float = 5.0
+    color: str = '#35d6b4'
+    label_font_px: int = 13
+    label_inset_px: int = 40
+    label_position: str = 'bottom_center'
+    label_bottom_inset_px: int = 90
+    label_padding_px: int = 12
+    label_autohide_s: float = 4.0
+    label_debounce_s: float = 1.0
+    diagnostic_size_px: int = 12
+
+    def __post_init__(self):
+        import re
+        from .devices import finite
+        for key in ('radius_cm','fallback_radius_px','opacity','fade_ms','stale_ms','stroke_px','idle_after_s','idle_fps'):
+            finite(getattr(self,key),'overlay.'+key,positive=True)
+        if self.opacity>1:raise ValueError('overlay.opacity 必须在 (0,1]')
+        for key in ('refresh_ms','label_font_px','label_inset_px','diagnostic_size_px'):
+            if type(getattr(self,key)) is not int or getattr(self,key)<=0:raise ValueError('overlay.'+key+' 必须为正整数')
+        for key in ('label_bottom_inset_px','label_padding_px'):
+            if type(getattr(self,key)) is not int or getattr(self,key)<0:raise ValueError('overlay.'+key+' 必须为非负整数')
+        if self.label_position not in ('bottom_center','bottom_right','top_left'):
+            raise ValueError('overlay.label_position 必须为 bottom_center / bottom_right / top_left')
+        for key in ('label_autohide_s','label_debounce_s'):
+            if finite(getattr(self,key),'overlay.'+key)<0:
+                raise ValueError('overlay.'+key+' 必须为非负数')
+        if not isinstance(self.color,str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',self.color):
+            raise ValueError('overlay.color 必须为 #RRGGBB')
+
+
+@dataclass(frozen=True)
 class Settings:
     inference: InferenceSettings
     camera: CameraSettings
@@ -168,6 +208,7 @@ class Settings:
     fixation: FixationSettings = FixationSettings()
     offline_filter: OfflineFilterSettings = OfflineFilterSettings()
     display: DisplaySettings = DisplaySettings()
+    overlay: OverlaySettings = OverlaySettings()
 
 
 def select_device(requested, cuda_available):
@@ -212,7 +253,7 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
         note(override, str(local))
         sources.append(str(local))
     required = {'inference', 'camera', 'geometry', 'recording', 'jump'}
-    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display'}:
+    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay'}:
         raise ValueError('配置必须包含 inference、camera、geometry、recording、jump 五部分')
     settings = Settings(InferenceSettings(**data['inference']), CameraSettings(**data['camera']),
                         ScreenGeometry(**data['geometry']), RecordingSettings(**data['recording']), JumpSettings(**data['jump']),
@@ -222,7 +263,8 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
     settings = replace(settings, filter=FilterSettings(**data.get('filter', {})),
                        fixation=FixationSettings(**data.get('fixation', {})),
                        offline_filter=OfflineFilterSettings(**data.get('offline_filter', {})),
-                       display=DisplaySettings(**data.get('display', {})))
+                       display=DisplaySettings(**data.get('display', {})),
+                       overlay=OverlaySettings(**data.get('overlay', {})))
     i, c, g = settings.inference, settings.camera, settings.geometry
     # Validate the request separately from actual device availability.
     if i.device not in {'auto', 'cpu', 'cuda'}:

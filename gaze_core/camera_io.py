@@ -8,7 +8,7 @@ import time
 
 
 def read_camera_frames(camera, options, *, stop=None, clock_ns=time.perf_counter_ns,
-                       monotonic=time.monotonic, check_brightness=True):
+                       monotonic=time.monotonic, check_brightness=True, before_read=None):
     """Yield (image, read_return_ns), excluding failed reads from frame counts.
 
     Warmup starts on iteration, immediately before the first read attempt. A
@@ -26,6 +26,9 @@ def read_camera_frames(camera, options, *, stop=None, clock_ns=time.perf_counter
                             '中终端的权限，并关闭占用摄像头的网页或其他程序后重试。')
 
     while not stop.is_set():
+        if before_read is not None:
+            before_read()
+            if stop.is_set():return
         if not seen_frame and failures and monotonic() >= deadline:
             raise no_frame()
         ok, image = camera.read()

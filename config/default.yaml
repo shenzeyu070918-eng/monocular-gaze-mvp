@@ -63,3 +63,23 @@ evaluation:
   dwell_ms: 2200.0
   max_dwell_ms: 10000.0
   calibration_min_samples: 8
+
+# M2 显示默认参数：候选 44；来源为 Mac 单用户、B 九点校准后 3 次全屏跳点任务，待多人验证。
+# 优先响应速度；非盲测主观试用结论与限制见 验证记录.md。
+filter:
+  min_cutoff: 2.0  # Hz; x and y have independent filter state.
+  beta: 0.05  # Units depend on full-screen normalized coordinates / second.
+  d_cutoff: 1.0  # Hz
+fixation:
+  window_ms: 80.0
+  angular_threshold_deg_s: 90.0  # 候选 44；Mac 单用户 3 次任务，待多人验证，非专业眼动仪标准。
+  fallback_threshold_norm_s: 1.5  # Separate unit: normalized screen distance / second.
+  min_duration_ms: 100.0
+  max_gap_ms: 250.0
+offline_filter:
+  cutoff_hz: 3.0
+  order: 2
+  max_gap_ms: 250.0
+display:
+  max_pages: 16
+  idle_timeout_s: 300.0

@@ -94,6 +94,63 @@ class EvaluationSettings:
 
 
 @dataclass(frozen=True)
+class FilterSettings:
+    # Match default.yaml candidate 44: three Mac single-user tasks; multi-user validation pending.
+    min_cutoff: float = 2.0
+    beta: float = 0.05
+    d_cutoff: float = 1.0
+
+    def __post_init__(self):
+        from .devices import finite
+        finite(self.min_cutoff, 'filter.min_cutoff', positive=True)
+        finite(self.d_cutoff, 'filter.d_cutoff', positive=True)
+        if finite(self.beta, 'filter.beta') < 0:
+            raise ValueError('filter.beta 必须非负')
+
+
+@dataclass(frozen=True)
+class FixationSettings:
+    window_ms: float = 80.0
+    angular_threshold_deg_s: float = 90.0
+    fallback_threshold_norm_s: float = 1.5
+    min_duration_ms: float = 100.0
+    max_gap_ms: float = 250.0
+
+    def __post_init__(self):
+        from .devices import finite
+        for key, value in vars(self).items():
+            finite(value, 'fixation.'+key, positive=True)
+        if self.max_gap_ms <= self.window_ms:
+            raise ValueError('fixation.max_gap_ms 必须大于 window_ms')
+
+
+@dataclass(frozen=True)
+class OfflineFilterSettings:
+    cutoff_hz: float = 3.0
+    order: int = 2
+    max_gap_ms: float = 250.0
+
+    def __post_init__(self):
+        from .devices import finite
+        finite(self.cutoff_hz, 'offline_filter.cutoff_hz', positive=True)
+        finite(self.max_gap_ms, 'offline_filter.max_gap_ms', positive=True)
+        if type(self.order) is not int or self.order < 1:
+            raise ValueError('offline_filter.order 必须为正整数')
+
+
+@dataclass(frozen=True)
+class DisplaySettings:
+    max_pages: int = 16
+    idle_timeout_s: float = 300.0
+
+    def __post_init__(self):
+        from .devices import finite
+        if type(self.max_pages) is not int or self.max_pages < 1:
+            raise ValueError('display.max_pages 必须为正整数')
+        finite(self.idle_timeout_s, 'display.idle_timeout_s', positive=True)
+
+
+@dataclass(frozen=True)
 class Settings:
     inference: InferenceSettings
     camera: CameraSettings
@@ -107,6 +164,10 @@ class Settings:
     evaluation: EvaluationSettings = EvaluationSettings()
     config_sources: tuple = ()
     key_sources: object = None
+    filter: FilterSettings = FilterSettings()
+    fixation: FixationSettings = FixationSettings()
+    offline_filter: OfflineFilterSettings = OfflineFilterSettings()
+    display: DisplaySettings = DisplaySettings()
 
 
 def select_device(requested, cuda_available):
@@ -151,13 +212,17 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
         note(override, str(local))
         sources.append(str(local))
     required = {'inference', 'camera', 'geometry', 'recording', 'jump'}
-    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation'}:
+    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display'}:
         raise ValueError('配置必须包含 inference、camera、geometry、recording、jump 五部分')
     settings = Settings(InferenceSettings(**data['inference']), CameraSettings(**data['camera']),
                         ScreenGeometry(**data['geometry']), RecordingSettings(**data['recording']), JumpSettings(**data['jump']),
                         CalibrationSettings(**data.get('calibration', {})), DistanceCheckSettings(**data.get('distance_check', {})),
                         data.get('device_file'))
     settings = replace(settings, evaluation=EvaluationSettings(**data.get('evaluation', {})), config_sources=tuple(sources), key_sources=key_sources)
+    settings = replace(settings, filter=FilterSettings(**data.get('filter', {})),
+                       fixation=FixationSettings(**data.get('fixation', {})),
+                       offline_filter=OfflineFilterSettings(**data.get('offline_filter', {})),
+                       display=DisplaySettings(**data.get('display', {})))
     i, c, g = settings.inference, settings.camera, settings.geometry
     # Validate the request separately from actual device availability.
     if i.device not in {'auto', 'cpu', 'cuda'}:
@@ -262,7 +327,8 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
 def configuration_info(settings):
     from dataclasses import asdict
     return {'files': list(settings.config_sources), 'keys': dict(settings.key_sources or {}),
-            'device_file': settings.device_file, 'camera': asdict(settings.camera), 'geometry': asdict(settings.geometry)}
+            'device_file': settings.device_file, 'camera': asdict(settings.camera), 'geometry': asdict(settings.geometry), 'filter': asdict(settings.filter),
+            'fixation': asdict(settings.fixation), 'offline_filter': asdict(settings.offline_filter)}
 
 
 def print_configuration(settings):

@@ -24,10 +24,11 @@ RESULT_FIELDS = {'valid', 'status', 'raw', 'origin_m', 'gaze_vector', 'head_degr
 FRAME_FIELDS = RESULT_FIELDS | {'capture_ns', 'request_received_ns', 'inference_completed_ns', 'frame_id',
                                'browser_capture_ms', 'browser_request_ms', 'browser_response_ms', 'video_frame'}
 EVENT_FIELDS = {
-    'target': {'action', 'task_type', 'task_id', 'index', 'target', 'stage_target', 'browser_time_ms', 'reason'},
-    'calibration': {'action', 'matrix', 'calibration_id', 'group', 'browser_time_ms'},
+    'target': {'action', 'task_type', 'task_id', 'index', 'target', 'stage_target', 'browser_time_ms', 'reason', 'target_id', 'region'},
+    'calibration': {'action', 'matrix', 'calibration_id', 'group', 'browser_time_ms', 'coordinate_system'},
     'distance_check': {'measured_cm', 'estimated_cm', 'bias_cm', 'bias_percent', 'sample_count',
                        'sample_start_ms', 'sample_end_ms', 'browser_time_ms', 'warning', 'camera'},
+    'evaluation_summary': {'task_id', 'run_id', 'calibration_id', 'completed', 'reason', 'summary', 'browser_time_ms'},
     'click': {'x', 'y', 'button', 'browser_time_ms'},  # Reserved schema; no input listener in M0.
 }
 STATUSES = {'tracking', 'no_face', 'blink', 'geometry_invalid', 'prediction_error', 'screen_unconfigured'}
@@ -64,8 +65,8 @@ def _json_numbers(value, field=''):
     if value is None or isinstance(value, (str, bool)):
         return value
     converted = number(value, field or '数值')
-    if isinstance(value, Integral) and (field.endswith('_ns') or field in {
-            'schema_version', 'seq', 'frame_id', 'index', 'sample_count', 'written_lines', 'failed_records'}):
+    if isinstance(value, Integral) and (field.endswith(('_ns','_count','_frames','_targets')) or field in {
+            'schema_version', 'seq', 'frame_id', 'index', 'camera_index', 'configured_camera_index', 'sample_count', 'written_lines', 'failed_records'}):
         return int(value)
     return converted
 
@@ -234,6 +235,8 @@ def validate_payload(kind, fields, source):
         if kind == 'target':
             if fields.get('action') not in {'appear','switch','end'} or fields.get('task_type') not in {'calibrate','evaluate','jump'}:
                 raise ValueError('target 类型或动作无效')
+            if 'target_id' in fields:text_value(fields['target_id'],'target_id')
+            if 'region' in fields and fields['region'] not in {'center','edge'}:raise ValueError('region 无效')
             text_value(fields.get('task_id'), 'task_id')
             number(fields.get('index'), 'index')
             vector(fields.get('target'), 2, 'target')
@@ -242,6 +245,7 @@ def validate_payload(kind, fields, source):
         elif kind == 'calibration':
             if fields.get('action') not in {'applied','reset'} or fields.get('group') not in {'A','B'}:
                 raise ValueError('calibration 动作或分组无效')
+            if fields.get('coordinate_system') not in {None,'full_screen_normalized'}:raise ValueError('校准坐标系无效')
             text_value(fields.get('calibration_id'), 'calibration_id')
             matrix = fields.get('matrix')
             if matrix is not None:
@@ -257,6 +261,11 @@ def validate_payload(kind, fields, source):
             for key in ('sample_start_ms', 'sample_end_ms'):
                 clock_value(fields.get(key), key, nullable=True)
             validate_camera(fields.get('camera'), nullable=True)
+        elif kind == 'evaluation_summary':
+            from .evaluation import validate_summary
+            for key in ('task_id','run_id','calibration_id','reason'):text_value(fields.get(key),key)
+            if type(fields.get('completed')) is not bool:raise ValueError('completed 必须为布尔值')
+            validate_summary(fields.get('summary'))
         else:
             number(fields.get('x'), 'x'); number(fields.get('y'), 'y')
             if fields.get('button') not in {'left','middle','right'}: raise ValueError('按键类型无效')

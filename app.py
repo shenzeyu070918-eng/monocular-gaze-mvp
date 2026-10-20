@@ -12,6 +12,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from gaze_core.engine import Engine
 from gaze_core.geometry import fit_affine
+from gaze_core.evaluation import evaluate
+from gaze_core.profiles import save_profile
 from gaze_core.config import load_settings, configuration_info, print_configuration
 from gaze_core.web_recording import WebRecording, RecordingConflict
 
@@ -114,7 +116,43 @@ class Sample(BaseModel):
 
 
 class Calibration(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
     samples: list[Sample] = Field(min_length=9, max_length=5000)
+    fullscreen: bool
+    screen: dict | None = None
+    profile_name: str | None = Field(default=None,max_length=64)
+    calibration_id: str | None = Field(default=None,max_length=64)
+
+
+class EvaluationTarget(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    target_id: str = Field(min_length=1,max_length=64)
+    region: str
+    target: tuple[float,float]
+
+
+class EvaluationFrame(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    target_id: str = Field(min_length=1,max_length=64)
+    valid: bool
+    raw: tuple[float,float] | None = None
+    origin_m: tuple[float,float,float] | None = None
+
+
+class Evaluation(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    frames: list[EvaluationFrame] = Field(max_length=100000)
+    targets: list[EvaluationTarget] = Field(min_length=1,max_length=100)
+    geometry: Geometry
+    matrix: list[tuple[float,float]] | None = Field(default=None,min_length=3,max_length=3)
+    session_id: str | None = Field(default=None,max_length=64)
+    task_id: str = Field(min_length=1,max_length=64)
+    run_id: str = Field(min_length=1,max_length=64)
+    calibration_id: str = Field(min_length=1,max_length=64)
+    completed: bool
+    reason: str = Field(min_length=1,max_length=512)
+    browser_time_ms: float = Field(ge=0)
+
 
 
 @app.get('/api/status')
@@ -167,6 +205,7 @@ def recording_config():
     return {'configuration': configuration_info(settings), 'evaluation': asdict(settings.evaluation), 'jump': asdict(settings.jump), 'request_timeout_ms': settings.recording.request_timeout_s*1000,
             'geometry': asdict(settings.geometry), 'distance_check': asdict(settings.distance_check),
             'camera': engine.camera_metadata() if engine and hasattr(engine, 'camera_metadata') else None,
+            'profile_name': settings.device_profile.name if settings.device_profile else None,
             'device_file': settings.device_profile.filename if settings.device_profile else None,
             'screen_resolution': settings.device_profile.screen_resolution if settings.device_profile else None}
 
@@ -202,12 +241,39 @@ def recording_stop(req: RecordingStop):
     return recording_call(recording.stop, req.session_id, req.reason, req.browser_time_ms)
 
 
+@app.post('/api/evaluation/summary')
+def evaluation_summary(req: Evaluation):
+    try:
+        summary = evaluate([r.model_dump() for r in req.frames], [t.model_dump() for t in req.targets], req.geometry, req.matrix)
+    except ValueError as exc:
+        raise HTTPException(422,str(exc))
+    if req.session_id:
+        fields = {key:getattr(req,key) for key in ('task_id','run_id','calibration_id','completed','reason','browser_time_ms')}
+        recording_call(recording.event,req.session_id,'evaluation_summary',dict(fields,summary=summary))
+    return summary
+
+
 @app.post('/api/calibrate')
 def calibrate(req: Calibration):
+    if not req.fullscreen:
+        raise HTTPException(422,'九点校准必须全屏进行')
     try:
-        return {'matrix': fit_affine([s.model_dump() for s in req.samples])}
+        matrix = fit_affine([s.model_dump() for s in req.samples])
     except ValueError as exc:
-        raise HTTPException(422, str(exc))
+        raise HTTPException(422,str(exc))
+    result = {'matrix':matrix,'profile_file':None,'profile_error':None}
+    # A fit remains usable in this page if persistence fails, but never claim it saved.
+    try:
+        if req.screen is None or req.calibration_id is None:
+            raise ValueError('缺少全屏坐标元信息，个人档案未保存')
+        name = settings.device_profile.name if settings.device_profile else req.profile_name
+        if not name:raise ValueError('请填写设备名，个人档案未保存')
+        path = save_profile(matrix,name=name,device_file=settings.device_profile.filename if settings.device_profile else None,
+                            screen=req.screen,calibration_id=req.calibration_id)
+        result['profile_file'] = path.name
+    except (ValueError,OSError) as exc:
+        result['profile_error'] = str(exc)
+    return result
 
 
 app.mount('/', StaticFiles(directory=ROOT/'static', html=True), name='ui')

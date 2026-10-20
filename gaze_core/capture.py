@@ -467,9 +467,10 @@ def main(argv=None):
         parser.error('--benchmark 必须是有限正数')
     try:
         settings = load_settings(args.config)
-        print_configuration(settings)
         if args.grayscale is not None:
-            settings = replace(settings, camera=replace(settings.camera, grayscale=args.grayscale))
+            settings = replace(settings, camera=replace(settings.camera, grayscale=args.grayscale),
+                               key_sources=dict(settings.key_sources or {}, **{'camera.grayscale':'命令行'}))
+        print_configuration(settings)
         recording_factory = None
         if args.record:
             from .recorder import SessionRecorder, session_metadata

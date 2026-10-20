@@ -55,7 +55,6 @@ def save_device(name, camera, args, *, directory=None):
 
 def main(argv=None):
     settings = load_settings()
-    print_configuration(settings)
     parser = argparse.ArgumentParser(description='本地 OpenCV 棋盘格标定；默认不保存图像。')
     parser.add_argument('--device', required=True, help='设备名，输出 config/devices/<设备名>.yaml')
     parser.add_argument('--corners', nargs=2, type=int, required=True, metavar=('COLS', 'ROWS'))
@@ -73,6 +72,12 @@ def main(argv=None):
     parser.add_argument('--top-cm', type=float, default=settings.geometry.top_cm)
     parser.add_argument('--save-images', metavar='DATA_DIRECTORY', help='仅允许 data/ 下；默认不保存任何图像')
     args = parser.parse_args(argv)
+    cli = list(argv) if argv is not None else sys.argv[1:]
+    provenance = dict(settings.key_sources or {})
+    for flag, key in [('--camera-index','index'),('--width','width'),('--height','height'),('--backend','backend')]:
+        if any(a==flag or a.startswith(flag+'=') for a in cli): provenance['camera.'+key] = '命令行'
+    settings = replace(settings, camera=replace(settings.camera,index=args.camera_index,width=args.width,height=args.height,backend=args.backend),key_sources=provenance)
+    print_configuration(settings)
     camera = None
     try:
         device_name(args.device)

@@ -63,3 +63,22 @@ evaluation:
   dwell_ms: 2200.0
   max_dwell_ms: 10000.0
   calibration_min_samples: 8
+
+# M2 provisional parameters. Real tuning and subjective validation are pending.
+filter:
+  min_cutoff: 1.0  # Hz; x and y have independent filter state.
+  beta: 0.05  # Units depend on full-screen normalized coordinates / second.
+  d_cutoff: 1.0  # Hz
+fixation:
+  window_ms: 80.0
+  angular_threshold_deg_s: 90.0  # Provisional, not imported as an eye-tracker standard.
+  fallback_threshold_norm_s: 1.5  # Separate unit: normalized screen distance / second.
+  min_duration_ms: 100.0
+  max_gap_ms: 250.0
+offline_filter:
+  cutoff_hz: 3.0
+  order: 2
+  max_gap_ms: 250.0
+display:
+  max_pages: 16
+  idle_timeout_s: 300.0

@@ -19,15 +19,24 @@ def screen_to_camera(point, geometry):
                      (v*geometry.height_cm+geometry.top_cm)/100, 0.], dtype=float)
 
 
-def ray_errors(origin_m, predicted, target, geometry):
+def screen_ray(origin_m, point, geometry):
+    """Unit direction from the actual face origin to an unbounded screen point."""
     if not isinstance(origin_m, (list, tuple, np.ndarray)) or len(origin_m) != 3:
         raise ValueError('origin_m 必须为三维面部中心')
     origin = np.array([finite(v, 'origin_m') for v in origin_m])
     if origin[2] <= 0:
         raise ValueError('origin_m 必须位于屏幕前方')
-    p, t = (screen_to_camera(point, geometry)-origin for point in (predicted, target))
-    p /= np.linalg.norm(p);t /= np.linalg.norm(t)
-    angle = math.degrees(math.atan2(float(np.linalg.norm(np.cross(t,p))), float(np.dot(t,p))))
+    direction = screen_to_camera(point,geometry)-origin
+    return direction/np.linalg.norm(direction)
+
+
+def ray_angle(a,b):
+    return math.degrees(math.atan2(float(np.linalg.norm(np.cross(a,b))),float(np.dot(a,b))))
+
+
+def ray_errors(origin_m, predicted, target, geometry):
+    p,t = (screen_ray(origin_m,point,geometry) for point in (predicted,target))
+    angle = ray_angle(t,p)
     yaw = lambda r: math.degrees(math.atan2(-r[0], -r[2]))
     pitch = lambda r: math.degrees(math.atan2(r[1], math.hypot(r[0],r[2])))
     return dict(angle_deg=angle, yaw_deg=(yaw(p)-yaw(t)+180)%360-180, pitch_deg=pitch(p)-pitch(t))

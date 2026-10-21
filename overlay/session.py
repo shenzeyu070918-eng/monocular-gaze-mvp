@@ -22,7 +22,7 @@ class OverlaySession:
         self.latest=None;self._metadata_snapshot=None;self.task=None;self.task_window=None
         self._saving=None;self._revision=-1;self._record_error=None
         self._pending_calibration=None;self._first_calibration=None
-        self.request_redo=None;self._window_factory=None;self._qscreen=None
+        self.request_redo=None;self.dismiss_redo=None;self._window_factory=None;self._qscreen=None
         self.display_revision=0;self.matrix_since_ns=0
 
     def _matrix(self,matrix):
@@ -154,6 +154,7 @@ class OverlaySession:
     def cancel(self,reason='cancelled'):
         if self._pending_calibration is not None:
             result=self._pending_calibration;self._pending_calibration=None;self._first_calibration=None
+            if self.dismiss_redo is not None:self.dismiss_redo()
             self.recording.end_task(result['task_id'],reason)
         if self.task is not None:
             self.task.cancel(reason);self._events();self.task_window.refresh()
@@ -215,6 +216,7 @@ class OverlaySession:
                      ('不可用' if distance is None else f'{distance:.3f} cm')+'（仅记录）')
 
     def _save_calibration(self,result):
+        if not result.get('redo_round'):self._quality_event(result,'final')
         self._first_calibration=None;self._saving=result
         self.profiles.save_calibration(result)
         self._show_quality(result)
@@ -224,7 +226,7 @@ class OverlaySession:
         if first is None:return  # A pause/condition change/quit invalidates a dialog callback.
         self._pending_calibration=None
         if not accepted:
-            self._quality_event(first,'final');self._save_calibration(first);return
+            self._save_calibration(first);return
         if self.controller.snapshot().status!='running':
             self.recording.end_task(first['task_id'],'camera_not_running');return
         try:

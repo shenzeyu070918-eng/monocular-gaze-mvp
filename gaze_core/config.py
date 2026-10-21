@@ -279,6 +279,7 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
                 note(value, filename, name+'.')
             else:
                 key_sources[name] = filename
+                if name=='inference.cpu_threads':key_sources['inference.num_threads']=filename
     if isinstance(data, dict):
         note(data, str(path))
     local = path.with_name('local.yaml')

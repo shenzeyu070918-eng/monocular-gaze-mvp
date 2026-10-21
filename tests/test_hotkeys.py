@@ -7,9 +7,18 @@ from types import SimpleNamespace
 from overlay.hotkeys import Hotkeys,parse_shortcut
 from overlay.actions import panel_at_start,panel_on_tray_failure
 from overlay.hotkeys_macos import MacHotkeys,HotKeyID,SIGNATURE,KEY_CODES,fourcc
+from gaze_core.config import OverlaySettings
 
 
 class HotkeyTests(unittest.TestCase):
+    def test_new_overlay_options_validate_without_rejecting_one_bad_shortcut_at_load(self):
+        for fields in (dict(panel_on_start='other'),dict(calibration_redo_cm=0),dict(calibration_redo_cm=True),dict(hotkeys={})):
+            with self.assertRaises(ValueError):OverlaySettings(**fields)
+        bindings=dict(OverlaySettings().hotkeys,calibrate='not a shortcut')
+        keys=Hotkeys(OverlaySettings(hotkeys=bindings).hotkeys,Mock(),backend_factory=lambda cb:Mock())
+        self.assertIn('失败',keys.status['calibrate'])
+        self.assertIn('已注册',keys.status['toggle']);keys.close()
+
     def test_panel_policy_ignores_unreliable_mac_geometry(self):
         for platform in ('darwin','win32'):
             self.assertTrue(panel_at_start('always',platform))

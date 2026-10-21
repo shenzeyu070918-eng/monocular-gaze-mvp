@@ -230,6 +230,23 @@ class OverlaySessionTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(),before)
         self.assertFalse(self.session.active)
 
+    def test_conditions_change_dismisses_prompt_and_late_choice_cannot_activate_candidate(self):
+        first,(_,decide)=self.prepare_quality_prompt()
+        calls=[]
+        def dismiss():
+            calls.append(True)
+            decide(False)  # Qt rejection synchronously emits finished.
+        self.session.dismiss_redo=dismiss
+        changed=self.prediction(self.now+1,[.5,.5])
+        changed.data['camera']['camera_index']=2
+        self.session.sink(changed);self.now+=2;self.session.tick(self.view)
+        decide(True);self.finish_io()
+        self.assertEqual(calls,[True])
+        self.assertFalse(self.path.exists())
+        self.assertIsNone(self.session.task)
+        self.assertIsNone(self.session._saving)
+        self.assertEqual(self.session.recording.ends[-1][1],'conditions_changed')
+
     def test_calibration_only_records_applied_after_atomic_save_and_counts_buffer_frames(self):
         runner = self.start('calibrate')
         window = self.session.task_window

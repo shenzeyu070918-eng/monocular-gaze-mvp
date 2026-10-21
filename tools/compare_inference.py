@@ -21,7 +21,7 @@ def measured_call(function,*,synchronize=lambda:None,clock=time.perf_counter_ns)
 
 
 def difference(first,second):
-    if not first:return dict(pairs=0,max_abs=None,mean_abs=None)
+    if not first and not second:return dict(pairs=0,max_abs=None,mean_abs=None)
     a,b=np.asarray(first,dtype=float),np.asarray(second,dtype=float)
     if a.shape!=b.shape or not np.isfinite([a,b]).all():raise ValueError('对比输出形状不同或含无效数值')
     delta=np.abs(a-b)
@@ -50,17 +50,21 @@ def compare(settings,images,*,warmup=3,threads=(2,4),devices=('cpu','mps'),engin
                 original=engine.model._run_face_model
                 gather=reference is None
                 if gather:patches.clear()
-                if gather:
-                    def collect(image):
-                        patches.append(image.copy())
-                        return original(image)
-                    engine.model._run_face_model=collect
                 full_ms=[];values=[];statuses={}
                 for image in images:
                     result,elapsed=measured_call(lambda:engine.predict(image,settings.geometry,settings.camera.grayscale),synchronize=sync)
                     full_ms.append(elapsed);values.append(result)
                     status=result['status'];statuses[status]=statuses.get(status,0)+1
-                engine.model._run_face_model=original
+                if gather:
+                    # A separate untimed CPU pass creates common patches.
+                    # Observing/copying them cannot inflate full-engine times.
+                    def collect(image):
+                        patches.append(image.copy())
+                        return original(image)
+                    engine.model._run_face_model=collect
+                    try:
+                        for image in images:engine.predict(image,settings.geometry,settings.camera.grayscale)
+                    finally:engine.model._run_face_model=original
                 # Preprocessing and transfers are measured separately from
                 # network forward via module hooks, on the exact same patches.
                 for i in range(warmup):
@@ -115,7 +119,7 @@ def main(argv=None):
             # allows existing brightness protection to reject a black device.
             deadline=time.monotonic()+settings.camera.warmup_timeout_s
             for image,_ in read_camera_frames(camera,settings.camera):
-                if time.monotonic()<deadline:continue
+                if time.monotonic()<deadline or float(image.mean())<=settings.camera.black_threshold:continue
                 images.append(image.copy())
                 if len(images)>=args.frames:break
         finally:camera.release()

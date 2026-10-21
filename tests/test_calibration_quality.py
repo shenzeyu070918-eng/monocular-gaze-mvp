@@ -5,8 +5,10 @@ import unittest
 import numpy as np
 
 from gaze_core.config import load_settings
+from gaze_core.config import RecordingSettings
+from gaze_core.python_recording import PythonRecording
 from gaze_core.calibration_quality import calibration_quality,validate_quality,quality_text
-from gaze_core.recorder import SessionRecorder,validate_payload
+from gaze_core.recorder import SessionRecorder,validate_payload,_json_numbers
 from tools.replay import read_session
 from test_recorder import metadata
 from overlay.tasks import TaskRunner
@@ -37,6 +39,8 @@ class QualityTests(unittest.TestCase):
         quality=calibration_quality(self.samples,self.matrix,self.geometry)
         fields=dict(task_id='synthetic-task',calibration_id='synthetic-calibration',phase='initial',quality=quality,event_ns=100,pipeline='python')
         validate_payload('calibration_quality',fields,'python')
+        # PythonRecording normalizes before the writer validates a second time.
+        validate_payload('calibration_quality',_json_numbers(fields),'python')
         with tempfile.TemporaryDirectory() as folder:
             recorder=SessionRecorder(metadata(),directory=folder)
             self.assertTrue(recorder.emit('calibration_quality',**fields))
@@ -44,7 +48,21 @@ class QualityTests(unittest.TestCase):
             session=read_session(recorder.path)
             event=next(r for r in session.records if r['type']=='calibration_quality')
             self.assertEqual(event['quality'],quality)
+            validate_quality(event['quality'])
             self.assertEqual(session.summary()['event_counts']['calibration_quality'],1)
+            written=[]
+            def factory(data):
+                writer=SessionRecorder(data,directory=folder);written.append(writer);return writer
+            pipeline=PythonRecording(RecordingSettings(folder,128,3),metadata_factory=metadata,recorder_factory=factory)
+            try:
+                self.assertTrue(pipeline.begin_task('synthetic-task'))
+                self.assertTrue(pipeline.emit('calibration_quality',**fields))
+                self.assertTrue(pipeline.end_task('synthetic-task'))
+            finally:pipeline.close()
+            self.assertIsNone(pipeline.status()['error'])
+            event=next(r for r in read_session(written[0].path).records if r['type']=='calibration_quality')
+            validate_quality(event['quality'])
+            self.assertIs(type(event['quality']['round']),int)
         for mutate in (lambda q:q.update(image='base64'),lambda q:q['points'][0].update(image=np.zeros((2,2))),
                        lambda q:q.update(round=2),lambda q:q['points'][0].update(residual=float('nan'))):
             bad=deepcopy(quality);mutate(bad)

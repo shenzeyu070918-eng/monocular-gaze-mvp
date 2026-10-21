@@ -228,11 +228,14 @@ def condition_mismatch_reason(saved, current):
 
 def _calibration(value):
     required={'sample_count','estimated_distance_cm_median'}
-    if not isinstance(value,dict) or not required<=set(value) or set(value)-required-{'target_count'}:
+    if not isinstance(value,dict) or not required<=set(value) or set(value)-required-{'target_count','quality'}:
         raise ValueError('calibration 只能包含 sample_count、estimated_distance_cm_median、target_count')
     result=dict(sample_count=_int(value['sample_count'],'sample_count',1),
                 estimated_distance_cm_median=finite(value['estimated_distance_cm_median'],'estimated_distance_cm_median',positive=True,nullable=True))
     if 'target_count' in value:result['target_count']=_int(value['target_count'],'target_count',1)
+    if 'quality' in value:
+        from .calibration_quality import validate_quality
+        result['quality']=validate_quality(value['quality'])
     return result
 
 

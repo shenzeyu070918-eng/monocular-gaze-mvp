@@ -20,8 +20,8 @@ from typing import Any, Callable, Iterator
 import warnings
 
 
-RECORD_TYPES = frozenset({"session", "frame", "target", "calibration", "distance_check", "evaluation_summary", "click", "end"})
-EVENT_TYPES = frozenset({"target", "calibration", "distance_check", "evaluation_summary", "click"})
+EVENT_TYPES = frozenset({"target", "calibration", "calibration_quality", "distance_check", "evaluation_summary", "click"})
+RECORD_TYPES = EVENT_TYPES | {"session", "frame", "end"}
 
 
 class ReplayError(ValueError):

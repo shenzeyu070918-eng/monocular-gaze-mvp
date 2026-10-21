@@ -159,7 +159,8 @@ class OverlaySessionTests(unittest.TestCase):
             start = self.now
             for i in range(8):
                 capture = start+650_000_000+i*100_000_000
-                raw = [np.float64(target['target'][0]+offset[0]),np.float64(target['target'][1]+offset[1])]
+                shift=offset(target) if callable(offset) else offset
+                raw = [np.float64(target['target'][0]+shift[0]),np.float64(target['target'][1]+shift[1])]
                 self.session.sink(self.prediction(capture,raw,distance=distance))
                 frames.append(dict(target_id=target['target_id'],valid=True,raw=raw,origin_m=[0.,.1,.5]))
             # One GUI tick receives all 8 numeric frames. Its latest display
@@ -174,6 +175,60 @@ class OverlaySessionTests(unittest.TestCase):
         self.session.tick(self.view)
         self.assertEqual(runner.state,'completed')
         return frames
+
+    def prepare_quality_prompt(self):
+        choices=[]
+        self.session.request_redo=lambda quality,decide:choices.append((quality,decide))
+        runner=self.start('calibrate')
+        self.fill_task(runner,offset=lambda p:(0.,.5) if p['target_id']=='calibration-1' else (0.,0.))
+        self.assertTrue(choices)
+        self.assertTrue(self.session.active)
+        self.assertFalse(self.path.exists())
+        self.assertIsNone(self.session.task)
+        with self.assertRaises(ValueError):self.start('evaluate')
+        return runner,choices[0]
+
+    def test_declining_redo_saves_first_fit_and_nine_residuals_in_profile_and_recording(self):
+        first,(quality,decide)=self.prepare_quality_prompt()
+        self.assertEqual(quality['unit'],'cm')
+        self.assertEqual(len(quality['points']),9)
+        self.assertTrue(any(p['redo'] for p in quality['points']))
+        decide(False);self.finish_io()
+        profile=json.loads(self.path.read_text())
+        self.assertEqual(profile['matrix'],first.result['matrix'])
+        self.assertEqual(profile['calibration']['quality'],quality)
+        events=[e for e in self.session.recording.events if e['type']=='calibration_quality']
+        self.assertEqual([e['phase'] for e in events],['initial','final'])
+        self.assertIn('不是独立 B 组精度',self.results[-1])
+        self.assertIsNone(self.session.radius)
+
+    def test_redo_only_flagged_points_merges_samples_once_and_retains_one_session(self):
+        first,(quality,decide)=self.prepare_quality_prompt()
+        decide(True);redo=self.session.task
+        self.assertEqual({t['target_id'] for t in redo.targets},{p['target_id'] for p in quality['points'] if p['redo']})
+        self.fill_task(redo,offset=(0.,0.),distance=40.);self.finish_io()
+        result=redo.result
+        self.assertEqual(result['sample_count'],72+8*len(redo.targets))
+        self.assertEqual(result['estimated_distance_sample_count'],result['sample_count'])
+        self.assertEqual(result['quality']['round'],1)
+        self.assertIsNone(self.session._pending_calibration)
+        self.assertEqual(self.session.recording.opens,1)
+        self.assertEqual(len(self.session.recording.ends),1)
+        np.testing.assert_array_less(np.abs(np.asarray(result['matrix'])-np.eye(3,2)),np.abs(np.asarray(first.result['matrix'])-np.eye(3,2))+1e-10)
+
+    def test_esc_in_redo_keeps_first_complete_fit_but_pause_pending_does_not_save(self):
+        first,(_,decide)=self.prepare_quality_prompt()
+        decide(True);self.session.task_window.escape();self.finish_io()
+        self.assertEqual(json.loads(self.path.read_text())['matrix'],first.result['matrix'])
+        self.assertIn('redo_cancelled',[e.get('phase') for e in self.session.recording.events])
+        before=self.path.read_bytes()
+        self.now+=1_000_000
+        self.session.request_redo=lambda quality,choice:setattr(self,'choice',choice)
+        runner=self.start('calibrate')
+        self.fill_task(runner,offset=lambda p:(0.,.5) if p['target_id']=='calibration-1' else (0.,0.))
+        self.session.cancel('camera_paused');self.choice(True);self.finish_io()
+        self.assertEqual(self.path.read_bytes(),before)
+        self.assertFalse(self.session.active)
 
     def test_calibration_only_records_applied_after_atomic_save_and_counts_buffer_frames(self):
         runner = self.start('calibrate')

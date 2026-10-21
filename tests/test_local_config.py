@@ -18,6 +18,7 @@ class LocalConfigurationTests(unittest.TestCase):
                     self.assertEqual((settings.inference.num_threads,settings.inference.cpu_threads),(2,2))
                     self.assertEqual(settings.inference.max_fps,15)
                     self.assertEqual(settings.inference.device,'mps')
+                    self.assertEqual(settings.key_sources['inference.num_threads'],str(local.resolve()))
                 local.write_text('inference:\n  cpu_threads: 2\n  num_threads: 4\n')
                 with self.assertRaisesRegex(ValueError,'冲突'):config.load_settings(path)
                 for key,value in (('num_threads','true'),('max_fps','true'),('max_fps','0'),('max_fps','.nan'),('max_fps','-1')):

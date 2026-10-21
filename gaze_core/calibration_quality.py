@@ -49,7 +49,7 @@ def validate_quality(value):
         if row['residual']<0 or type(row['redo']) is not bool or row['redo'] != bool(threshold is not None and row['residual']>threshold):raise ValueError('残差或补看标记无效')
         result.append(row)
     mean=finite(value['mean'],'mean');maximum=finite(value['maximum'],'maximum')
-    if not np.isclose(mean,np.mean([p['residual'] for p in result])) or not np.isclose(maximum,max(p['residual'] for p in result)):raise ValueError('残差汇总不一致')
+    if mean<0 or maximum<0 or not np.isclose(mean,np.mean([p['residual'] for p in result])) or not np.isclose(maximum,max(p['residual'] for p in result)):raise ValueError('残差汇总不一致')
     return dict(unit=value['unit'],round=value['round'],threshold=threshold,points=result,mean=mean,maximum=maximum)
 
 
@@ -57,7 +57,8 @@ def quality_text(quality):
     if quality is None:return '校准拟合残差不可用：尚无实际逻辑屏幕尺寸。'
     unit='cm' if quality['unit']=='cm' else '逻辑像素'
     lines=['校准点自身拟合残差（不是独立 B 组精度） · '+('首次' if quality['round']==0 else '补看后')]
-    lines.extend(f'{p["target_id"]}：{p["residual"]:.3f} {unit}'+(' · 建议补看' if p['redo'] else '') for p in quality['points'])
+    lines.extend(f'{p["target_id"]}：{p["residual"]:.3f} {unit}'+
+                 ((' · 建议补看' if quality['round']==0 else ' · 仍超阈值') if p['redo'] else '') for p in quality['points'])
     if quality['threshold'] is None:lines.append('屏幕尺寸未实测，只报告逻辑像素，不使用厘米阈值提示补看。')
     elif quality['round']==1:lines.append('已完成唯一一轮补看；残差仍高时可重新开始完整九点。')
     return '\n'.join(lines)

@@ -72,7 +72,7 @@ def _json_numbers(value, field=''):
         return value
     converted = number(value, field or '数值')
     if isinstance(value, Integral) and (field.endswith(('_ns','_count','_frames','_targets')) or field in {
-            'schema_version', 'seq', 'frame_id', 'index', 'camera_index', 'configured_camera_index', 'sample_count', 'written_lines', 'failed_records'}):
+            'schema_version', 'seq', 'frame_id', 'index', 'round', 'camera_index', 'configured_camera_index', 'sample_count', 'written_lines', 'failed_records'}):
         return int(value)
     return converted
 

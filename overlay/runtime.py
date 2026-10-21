@@ -108,6 +108,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
                     window.hide();panel.hide()
             redo_dialog.finished.connect(finished);redo_dialog.open()
         session.request_redo=offer_redo
+        session.dismiss_redo=lambda:redo_dialog.reject() if redo_dialog is not None and redo_dialog.isVisible() else None
         def start_task(kind):
             nonlocal restore_visible
             restore_visible=window.isVisible()
@@ -218,8 +219,8 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             actions['web'].setEnabled(not shutdown_requested and not session.active)
             actions['toggle'].setEnabled(not session.active and not shutdown_requested)
     timer.timeout.connect(tick)
-    controller.request('running')
     try:
+        controller.request('running')
         return app.exec()
     finally:
         if hotkeys is not None:hotkeys.close()

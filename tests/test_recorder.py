@@ -10,9 +10,10 @@ import warnings
 
 import numpy as np
 
-from gaze_core.config import RecordingSettings
+from gaze_core.config import RecordingSettings, load_settings
+from gaze_core.evaluation import evaluate
 from gaze_core.geometry import intersect_screen
-from gaze_core.recorder import SessionRecorder
+from gaze_core.recorder import SessionRecorder, validate_payload
 from tools.replay import ReplayWarning, read_session
 
 
@@ -102,6 +103,135 @@ class RecorderTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
+
+    def native_click(self, **changes):
+        value = dict(x=np.float64(.2), y=np.float32(.5), button='left',
+                     event_ns=np.int64(2**53+9), received_ns=np.int64(2**53+109),
+                     native_timestamp=np.float64(17.5), timestamp_source='native_mapped',
+                     callback_delay_estimate_ns=np.int64(100), clock_uncertainty_ns=np.int64(5),
+                     excluded=False, exclusion_reason=None)
+        value.update(changes)
+        return value
+
+    def test_click_whitelist_roundtrip_native_clocks_and_legacy_records(self):
+        recorder = self.recorder()
+        self.assertTrue(recorder.emit('click', x=.1, y=.2, button='left', event_ns=10))
+        self.assertTrue(recorder.emit('click', **self.native_click()))
+        self.assertTrue(recorder.emit('click', **self.native_click(button='other', excluded=True,
+                                                                 exclusion_reason='own_panel')))
+        recorder.close()
+        session = read_session(recorder.path)
+        rows = [row for row in session.records if row['type'] == 'click']
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[1]['event_ns'], 2**53+9)
+        self.assertIs(type(rows[1]['event_ns']), int)
+        self.assertEqual(rows[2]['exclusion_reason'], 'own_panel')
+        self.assertEqual(recorder.status()['written_clicks'], 2)
+        self.assertEqual(recorder.status()['excluded_clicks'], 1)
+        for field, value in [('image', IMAGE_DATA), ('window_title', 'private'),
+                             ('app', 'private'), ('keyboard', 'a'), ('pixels', [[1, 2]])]:
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                validate_payload('click', self.native_click(**{field:value}), 'python')
+
+    def test_click_timing_and_exclusion_cannot_be_partial_or_invalid(self):
+        for changes in (dict(received_ns=1.5), dict(event_ns=True), dict(native_timestamp=float('nan')),
+                        dict(callback_delay_estimate_ns=-1), dict(clock_uncertainty_ns=float('inf')),
+                        dict(timestamp_source='unknown'), dict(excluded=1), dict(excluded=True),
+                        dict(exclusion_reason='own_panel'), dict(excluded=True, exclusion_reason='window_title'),
+                        dict(button='keyboard'), dict(button={'image':IMAGE_DATA}),
+                        dict(timestamp_source={'image':IMAGE_DATA}), dict(excluded=True, exclusion_reason={'image':IMAGE_DATA})):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                validate_payload('click', self.native_click(**changes), 'python')
+        for field in ('received_ns', 'native_timestamp', 'excluded', 'exclusion_reason'):
+            value = self.native_click(); del value[field]
+            with self.subTest(missing=field), self.assertRaises(ValueError):
+                validate_payload('click', value, 'python')
+        fallback = self.native_click(event_ns=11, received_ns=11, native_timestamp=None,
+                                    timestamp_source='callback_received', callback_delay_estimate_ns=None,
+                                    clock_uncertainty_ns=None)
+        validate_payload('click', fallback, 'python')
+
+    def test_click_count_only_advances_after_flush_and_not_on_write_failure(self):
+        gate, entered = threading.Event(), threading.Event()
+        class DelayedClickOutput:
+            resume = gate
+            def __init__(self, path, mode, *, encoding):
+                self.output = open(path, mode, encoding=encoding)
+                self.is_click = False
+            def __enter__(self): return self
+            def __exit__(self, *args): self.output.close()
+            def write(self, line):
+                self.is_click = json.loads(line)['type'] == 'click'
+                return self.output.write(line)
+            def flush(self):
+                if self.is_click:
+                    entered.set()
+                    if not gate.wait(3): raise RuntimeError('synthetic gate timeout')
+                self.output.flush()
+        recorder = self.recorder(writer=DelayedClickOutput)
+        self.addCleanup(gate.set)
+        self.assertTrue(recorder.emit('click', **self.native_click()))
+        self.assertTrue(entered.wait(3))
+        self.assertEqual(recorder.status()['written_clicks'], 0)
+        gate.set(); recorder.close()
+        self.assertEqual(recorder.status()['written_clicks'], 1)
+
+        class FailingClickOutput(DelayedClickOutput):
+            def flush(self):
+                if self.is_click: raise OSError('synthetic flush failed')
+                self.output.flush()
+        failed = self.recorder(writer=FailingClickOutput)
+        self.assertTrue(failed.emit('click', **self.native_click()))
+        self.assertTrue(failed._closed.wait(3))
+        self.assertEqual(failed.status()['written_clicks'], 0)
+        self.assertIn('synthetic flush failed', failed.status()['error'])
+
+    def test_click_session_events_roundtrip_and_validate_optional_fields(self):
+        recorder = self.recorder()
+        baseline = dict(action='baseline', experiment_id='experiment-test', event_ns=101,
+                        baseline_matrix=[[1., 0.], [0., 1.], [0., 0.]],
+                        baseline_calibration_id='fresh-nine', baseline_created_at='2026-10-21T10:00:00+00:00',
+                        baseline_age_s=np.float64(12), conditions_fingerprint='fingerprint',
+                        check_task_id=None, reason=None, collection_start_ns=None, collection_end_ns=None,
+                        max_fps=None, inference_frame_count=np.int64(0), actual_inference_fps=None)
+        self.assertTrue(recorder.emit('click_session', action='started', experiment_id='experiment-test', event_ns=100))
+        self.assertTrue(recorder.emit('click_session', **baseline))
+        self.assertTrue(recorder.emit('click_session', action='completed', experiment_id='experiment-test', event_ns=200,
+                                      collection_start_ns=110, collection_end_ns=190,
+                                      actual_inference_fps=np.float64(25), inference_frame_count=np.int64(2)))
+        for changes in (dict(action='keyboard'), dict(baseline_created_at='2026-10-21'),
+                        dict(baseline_age_s=-1), dict(max_fps=0), dict(inference_frame_count=True),
+                        dict(baseline_matrix=[[1, 0], [0, 1]]), dict(image=IMAGE_DATA)):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                validate_payload('click_session', dict(baseline, **changes), 'python')
+        recorder.close()
+        session = read_session(recorder.path)
+        self.assertEqual(session.summary()['event_counts']['click_session'], 3)
+        self.assertEqual([r['event_ns'] for r in session.records if r['type']=='click_session'], [100,101,200])
+
+    def test_evaluation_selection_whitelist_roundtrips_exact_integer_frame_ids(self):
+        recorder = self.recorder()
+        target = dict(target_id='edge-1', target=[.05,.05], region='edge')
+        summary = evaluate([dict(target_id='edge-1', valid=False, raw=None)], [target],
+                           load_settings(use_local=False).geometry)
+        fields = dict(task_id='public-check', run_id='one', calibration_id='nine', completed=True,
+                      reason='completed', summary=summary, event_ns=900,
+                      sampling=dict(settle_ms=np.int64(650), dwell_ms=2200, max_dwell_ms=10000),
+                      sample_selection=[dict(frame_id=np.int64(2**53+1), target_id='edge-1')])
+        self.assertTrue(recorder.emit('evaluation_summary', **fields))
+        for selection in ([dict(frame_id=1, target_id='edge-1', image=IMAGE_DATA)],
+                          [dict(frame_id=True, target_id='edge-1')],
+                          [dict(frame_id=1, target_id='edge-1')]*2):
+            with self.subTest(selection=selection), self.assertRaises(ValueError):
+                validate_payload('evaluation_summary', dict(fields, sample_selection=selection), 'python')
+        for sampling in (dict(settle_ms=650, dwell_ms=2200, max_dwell_ms=10000, image=IMAGE_DATA),
+                         dict(settle_ms=650, dwell_ms=100, max_dwell_ms=10000)):
+            with self.subTest(sampling=sampling), self.assertRaises(ValueError):
+                validate_payload('evaluation_summary', dict(fields, sampling=sampling), 'python')
+        recorder.close()
+        event = next(row for row in read_session(recorder.path).records if row['type']=='evaluation_summary')
+        self.assertEqual(event['sample_selection'], [dict(frame_id=2**53+1, target_id='edge-1')])
+        self.assertIs(type(event['sample_selection'][0]['frame_id']), int)
 
     def test_clock_units_are_compatible_with_replay(self):
         recorder = self.recorder()

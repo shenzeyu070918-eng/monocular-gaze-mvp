@@ -55,13 +55,21 @@ class Recording:
         self.metadata_factory, self.clock_ns, self.profile_path = metadata_factory, clock_ns, profile_path
         self.active = self.is_manual = self.closed = False
         self.task_id = None
+        self.holders=set()
         self.opens = 0
         self.events, self.frames, self.ends, self.applied_file_snapshots = [], [], [], []
     def status(self): return dict(active=self.active,error=None,manual=self.is_manual)
     def manual(self, enabled):
         if enabled and not self.active: self.opens += 1
         self.is_manual = enabled
-        self.active = enabled or self.task_id is not None
+        self.active = enabled or self.task_id is not None or bool(self.holders)
+        return True
+    def acquire(self,owner):
+        if not self.active:self.opens+=1
+        self.holders.add(owner);self.active=True;return True
+    def release(self,owner,reason='completed'):
+        self.holders.discard(owner)
+        self.active=self.is_manual or self.task_id is not None or bool(self.holders)
         return True
     def begin_task(self, task_id):
         if self.task_id is not None: return False
@@ -71,7 +79,7 @@ class Recording:
     def end_task(self, task_id, reason='completed'):
         if self.task_id != task_id: return False
         self.ends.append((task_id,reason)); self.task_id = None
-        self.active = self.is_manual
+        self.active = self.is_manual or bool(self.holders)
         return True
     def record_prediction(self, prediction):
         if self.active: self.frames.append(deepcopy(prediction))
@@ -91,11 +99,13 @@ class Controller:
     def __init__(self):
         self.matrices = []; self.clears = 0
         self.task_active=False;self.task_states=[]
+        self.click_rates=[]
     def snapshot(self): return SimpleNamespace(status='running')
     def set_matrix(self,matrix): self.matrices.append(deepcopy(matrix))
     def clear_numeric_error(self): self.clears += 1
     def set_task_active(self,active):
         self.task_active=active;self.task_states.append(active)
+    def set_click_session_rate(self,active,*,max_fps=None):self.click_rates.append((active,max_fps))
 
 
 class OverlaySessionTests(unittest.TestCase):
@@ -189,6 +199,40 @@ class OverlaySessionTests(unittest.TestCase):
                 self.assertEqual(self.controller.task_states,[True,False])
                 self.assertIs(self.settings.inference,original)
                 self.now+=1_000_000
+
+    def test_click_protocol_runs_fresh_calibration_collection_and_same_file_public_check(self):
+        class Listener:
+            def __init__(self,*args,**kwargs):self.active=False
+            def start(self):self.active=True;return True
+            def stop(self):self.active=False
+            def status(self):return dict(active=self.active,error=None)
+        flow=self.session.bind_clicks(start_task=self.start,listener_factory=Listener)
+        flow.begin()
+        self.assertEqual(flow.state,'baseline')
+        self.assertFalse(flow.listener.active)
+        self.fill_task(self.session.task);self.finish_io()
+        self.assertEqual(flow.state,'collecting')
+        self.assertEqual(flow.baseline['calibration_id'],self.session.profiles.calibration_id)
+        self.assertEqual(self.controller.click_rates[-1],(True,None))
+        for i in range(3):
+            self.now+=40_000_000
+            self.session.sink(self.prediction(self.now,[.5,.5] if i%2 else None))
+            self.session.tick(self.view)
+        flow.end_collection()
+        self.assertFalse(flow.listener.active)
+        self.assertEqual(self.controller.click_rates[-1],(False,None))
+        runner=flow.begin_check()
+        self.fill_task(runner);self.finish_io()
+        self.assertEqual(flow.state,'completed')
+        self.assertEqual(self.session.recording.opens,1)
+        self.assertFalse(self.session.recording.active)
+        summary=next(e for e in self.session.recording.events if e['type']=='evaluation_summary')
+        self.assertEqual(len(summary['sample_selection']),14*8)
+        self.assertEqual(summary['sampling']['settle_ms'],self.settings.evaluation.settle_ms)
+        end=next(e for e in self.session.recording.events if e.get('type')=='click_session' and e['action']=='completed')
+        self.assertEqual(end['check_task_id'],runner.task_id)
+        self.assertEqual(end['inference_frame_count'],3)
+        self.assertEqual(end['actual_inference_fps'],25.)  # Analytic fake-clock rate, including invalid frames.
 
     def test_cancel_and_close_restore_limit_before_cleanup(self):
         for reason in ('cancelled','camera_paused','closing','recording_failed','conditions_changed'):

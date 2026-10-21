@@ -11,12 +11,13 @@ class ControlPanel(QWidget):
         self.mode = QLabel('未校准 · 等待相机条件')
         self.radius = QLabel('半径来源：配置示意值')
         self.recording = QLabel('录制：关闭')
+        self.clicks = QLabel('点击采集：关闭 · 已记录 0 · 排除 0')
         self.hotkeys = QLabel('系统热键：等待注册')
         self.notice = QLabel('托盘不可见时请保留此面板。关闭仅隐藏，退出请使用退出按钮或终端 Ctrl+C。')
-        for label in (self.mode, self.radius, self.recording, self.hotkeys, self.notice):
+        for label in (self.mode, self.radius, self.recording, self.clicks, self.hotkeys, self.notice):
             label.setWordWrap(True); layout.addWidget(label)
         self.buttons = {}
-        for name in ('calibrate','check','load_web','reset','record','toggle','pause','web','quit'):
+        for name in ('calibrate','check','load_web','reset','record','clicks','click_session','abort_click_session','toggle','pause','web','quit'):
             button = QToolButton(self); button.setDefaultAction(actions[name])
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             self.buttons[name] = button; layout.addWidget(button)

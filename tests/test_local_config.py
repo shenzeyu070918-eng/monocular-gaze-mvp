@@ -13,12 +13,14 @@ class LocalConfigurationTests(unittest.TestCase):
             local=path.with_name('local.yaml')
             with patch.object(config,'DEFAULT_CONFIG',path):
                 for key in ('cpu_threads','num_threads'):
-                    local.write_text('inference:\n  '+key+': 2\n  max_fps: 15\n  device: mps\n')
+                    local.write_text('inference:\n  '+key+': 4\n  max_fps: 7\n  device: mps\n')
                     settings=config.load_settings(path)
-                    self.assertEqual((settings.inference.num_threads,settings.inference.cpu_threads),(2,2))
-                    self.assertEqual(settings.inference.max_fps,15)
+                    self.assertEqual((settings.inference.num_threads,settings.inference.cpu_threads),(4,4))
+                    self.assertEqual(settings.inference.max_fps,7)
                     self.assertEqual(settings.inference.device,'mps')
                     self.assertEqual(settings.key_sources['inference.num_threads'],str(local.resolve()))
+                local.write_text('inference:\n  max_fps: null\n')
+                self.assertIsNone(config.load_settings(path).inference.max_fps)
                 local.write_text('inference:\n  cpu_threads: 2\n  num_threads: 4\n')
                 with self.assertRaisesRegex(ValueError,'冲突'):config.load_settings(path)
                 for key,value in (('num_threads','true'),('max_fps','true'),('max_fps','0'),('max_fps','.nan'),('max_fps','-1')):

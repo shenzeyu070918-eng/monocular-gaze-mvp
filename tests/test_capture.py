@@ -160,6 +160,26 @@ class FakeRecorder:
 
 
 class PipelineTests(unittest.TestCase):
+    def test_click_collection_override_wakes_wait_and_tasks_take_precedence(self):
+        settings=load_settings(use_local=False)
+        settings=replace(settings,inference=replace(settings.inference,max_fps=.01))
+        pipeline,cameras,_=self.make_pipeline(settings=settings,controlled=True)
+        pipeline.start();camera=cameras[0]
+        camera.send(1);first=pipeline.wait_for_result(timeout=3)
+        camera.send(2)
+        self.assertIsNone(pipeline.wait_for_result(after_sequence=first.sequence,timeout=.08))
+        pipeline.set_click_session_rate(True,max_fps=None)
+        second=pipeline.wait_for_result(after_sequence=first.sequence,timeout=1)
+        self.assertIsNotNone(second)
+        pipeline.set_click_session_rate(True,max_fps=.01)
+        pipeline.set_task_active(True);camera.send(3)
+        third=pipeline.wait_for_result(after_sequence=second.sequence,timeout=1)
+        self.assertIsNotNone(third,'calibration must remain uncapped even with a collection limit')
+        pipeline.set_task_active(False);pipeline.set_click_session_rate(False);camera.send(4)
+        self.assertIsNone(pipeline.wait_for_result(after_sequence=third.sequence,timeout=.08))
+        self.assertEqual(pipeline.report()['inference_max_fps'],.01)
+        self.assertIs(pipeline.settings,settings)
+
     def test_task_bypass_wakes_long_cap_wait_then_restores_original_cap(self):
         settings=load_settings(use_local=False)
         settings=replace(settings,inference=replace(settings.inference,max_fps=.01))

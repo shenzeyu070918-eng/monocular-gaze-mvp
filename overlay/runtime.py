@@ -19,6 +19,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
     closing=False;shutdown_requested=False;screen_changed=False;last_error=None;error_box=None
     paused_requested=False;session=None;display_revision=0;restore_visible=True;hotkeys=None
     painted=None;radius_key=object();radii=None;ui_values={}
+    clicks=None;own_windows=None
 
     def update(widget,method,value):
         key=(widget,method)
@@ -120,9 +121,45 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             restore_visible=window.isVisible()
             try:
                 window.hide();panel.hide()
-                session.start(kind,controls.screen)
+                return session.start(kind,controls.screen)
             except Exception as exc:
                 restore();notice('无法开始任务：'+str(exc),True)
+                raise
+        if hasattr(session,'bind_clicks'):
+            from .own_windows import OwnWindows
+            own_windows=OwnWindows(app,ignore=(window,))
+            clicks=session.bind_clicks(start_task=start_task,exclude=own_windows.reason,own_handles=lambda:own_windows.handles)
+
+        def capture_clicks(enabled):
+            if clicks is None:return
+            try:clicks.set_capture(bool(enabled))
+            except Exception as exc:
+                if actions['clicks'].isChecked():actions['clicks'].setChecked(False)
+                notice('点击采集未开启：'+str(exc),True)
+
+        def click_workflow():
+            if clicks is None:return
+            try:
+                if not clicks.active:
+                    reuse=False
+                    if clicks.recent_baseline():
+                        reuse=QMessageBox.question(panel,'点击会话 B 基线',
+                            '当前 Python 九点档案不到 5 分钟。是否复用？选择否将先重新做九点。',
+                            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+                            QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes
+                    clicks.begin(reuse_recent=reuse)
+                else:
+                    if clicks.state=='collecting':clicks.end_collection()
+                    if clicks.state=='awaiting_check':
+                        answer=QMessageBox.question(panel,'末尾公共精度核对',
+                            '点击采集已停止。现在做一次精度核对，作为所有离线方法的公共测试集？选择稍后可保留会话并重试。',
+                            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.Cancel,QMessageBox.StandardButton.Yes)
+                        if answer==QMessageBox.StandardButton.Yes:clicks.begin_check()
+            except Exception as exc:notice('点击会话：'+str(exc),True)
+
+        def normal_task(kind):
+            try:start_task(kind)
+            except Exception:pass  # start_task already restores UI and reports.
         def manual_record(enabled):
             if session.recording.manual(bool(enabled)):
                 if enabled:
@@ -141,8 +178,11 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             if not QDesktopServices.openUrl(QUrl(settings.overlay.web_url)):
                 notice('无法打开本地网页，请检查网页服务是否已启动：'+settings.overlay.web_url,True)
             else:notice('已暂停悬浮层摄像头并打开本地网页；网页服务需已启动。',False)
-        actions.connect('calibrate',lambda:start_task('calibrate'))
-        actions.connect('check',lambda:start_task('evaluate'))
+        actions.connect('calibrate',lambda:normal_task('calibrate'))
+        actions.connect('check',lambda:normal_task('evaluate'))
+        actions.connect('clicks',capture_clicks)
+        actions.connect('click_session',click_workflow)
+        actions.connect('abort_click_session',lambda:session.cancel('user_aborted'))
         actions.connect('load_web',manual_web)
         actions.connect('reset',session.profiles.disable)
         actions.connect('record',manual_record)
@@ -178,6 +218,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             quit_action.setText('重试退出')
         active=view.status=='running' and not paused_requested and not shutdown_requested and not screen_changed
         if session is not None:
+            if own_windows is not None:own_windows.refresh()
             session.tick(view)
             if session.display_revision!=display_revision:
                 display_revision=session.display_revision;ring.clear()
@@ -219,10 +260,11 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             update(panel.mode,'setText',mode)
             update(controls.mode,'setText',mode)
             update(panel.radius,'setText',radius_text)
-            ready=active and session.latest is not None and not session.active and not session.profiles.busy
+            click_active=clicks is not None and clicks.active
+            ready=active and session.latest is not None and not session.active and not session.profiles.busy and not click_active
             for name in ('calibrate','check'):update(actions[name],'setEnabled',ready)
             update(actions['load_web'],'setEnabled',ready)
-            update(actions['reset'],'setEnabled',not session.active and not session.profiles.busy and session.profiles.profile is not None)
+            update(actions['reset'],'setEnabled',not session.active and not click_active and not session.profiles.busy and session.profiles.profile is not None)
             record=session.recording.status()
             record_text=('失败（已停止）：'+record['error'] if record['error'] else
                          '正在准备' if record.get('preparing') else
@@ -235,6 +277,20 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             if actions['record'].isChecked()!=record['manual']:actions['record'].setChecked(record['manual'])
             update(actions['record'],'setEnabled',active and session.latest is not None and not shutdown_requested)
             update(actions['record'],'setText','手动录制'+('（任务自动录制中）' if record['task_id'] and not record['manual'] else ''))
+            if clicks is not None:
+                click_status=clicks.listener.status();enabled=bool(click_status.get('active'))
+                update(panel.clicks,'setText',f'点击采集：'+('开启' if enabled else '关闭')+
+                       f' · 已记录 {record.get("written_clicks",0)} · 排除 {record.get("excluded_clicks",0)} · 会话 {clicks.state}')
+                if actions['clicks'].isChecked()!=enabled:actions['clicks'].setChecked(enabled)
+                update(actions['clicks'],'setEnabled',active and session.latest is not None and not shutdown_requested and
+                       (not click_active or clicks.state=='collecting'))
+                update(actions['click_session'],'setEnabled',active and session.latest is not None and not session.active and
+                       not session.profiles.busy and (not click_active or clicks.state in {'collecting','awaiting_check'}))
+                update(actions['click_session'],'setText','结束采集并核对' if clicks.state=='collecting' else
+                       '重试末尾精度核对' if clicks.state=='awaiting_check' else '开始点击采集会话（先九点）')
+                update(actions['abort_click_session'],'setEnabled',click_active)
+            else:
+                for name in ('clicks','click_session','abort_click_session'):update(actions[name],'setEnabled',False)
             update(actions['web'],'setEnabled',not shutdown_requested and not session.active)
             update(actions['toggle'],'setEnabled',not session.active and not shutdown_requested)
     profiler=None;timer_tick=tick;profiled_label=None
@@ -270,6 +326,8 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             window._label_timer.timeout.disconnect(profiled_label)
             window._label_timer.timeout.connect(window._refresh_label)
         if hotkeys is not None:hotkeys.close()
+        if clicks is not None:clicks.close()
+        if own_windows is not None:own_windows.close()
         # Normal quits pass QuitGate and arrive here only after worker cleanup.
         # Exceptional Qt exits still request cleanup and keep it off the UI loop.
         if not controller.closed.is_set():

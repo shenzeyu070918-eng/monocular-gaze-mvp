@@ -220,6 +220,7 @@ class ControlsRuntimeTests(unittest.TestCase):
         app.scenario = run
         try:
             with patch('overlay.session.OverlaySession', side_effect=make_session), \
+                 patch('overlay.hotkeys.Hotkeys') as hotkeys, \
                  patch('overlay.runtime.OverlayController', side_effect=make_controller), \
                  patch('overlay.runtime.time.perf_counter_ns', side_effect=clock.ns), \
                  patch('PySide6.QtGui.QDesktopServices.openUrl', return_value=True) as open_web, \
@@ -228,6 +229,8 @@ class ControlsRuntimeTests(unittest.TestCase):
                  patch('sys.excepthook', side_effect=lambda *error: qt_errors.append(error)), \
                  redirect_stderr(io.StringIO()):
                 context.open_web, context.message_box, context.select_web = open_web, message_box, select_web
+                hotkeys.return_value.text.return_value='fake registered hotkeys'
+                hotkeys.return_value.status={}
                 message_box.StandardButton = QtMessageBox.StandardButton
                 self.assertEqual(run_camera_overlay(app, window, tray, actions['pause'], actions['quit'],
                                                     timer, settings, lambda: None, controls=controls), 0)

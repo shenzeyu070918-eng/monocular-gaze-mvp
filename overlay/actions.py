@@ -35,3 +35,11 @@ class TrayFallback:
         missing = not available or not visible or height <= 0
         if missing: self.notified = True
         return missing
+
+
+def panel_at_start(policy, platform, *, forced=False):
+    return forced or policy == 'always' or (policy == 'auto' and platform == 'darwin')
+
+
+def panel_on_tray_failure(policy):
+    return policy != 'never'

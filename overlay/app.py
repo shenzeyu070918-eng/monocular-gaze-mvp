@@ -45,7 +45,7 @@ def main(argv=None):
         from gaze_core.config import load_settings,print_configuration
         from .mapping import ScreenRect
         from .window import OverlayWindow
-        from .actions import OverlayActions,TrayFallback
+        from .actions import OverlayActions,TrayFallback,panel_at_start,panel_on_tray_failure
         from .panel import ControlPanel
         from . import platforms
     except ImportError as exc:
@@ -68,7 +68,7 @@ def main(argv=None):
         tray=QSystemTrayIcon(make_tray_icon(settings.overlay.color),app)
         actions=OverlayActions(app);panel=ControlPanel(actions);finished=False
         menu=QMenu();mode=menu.addAction('未校准 · Python 管线');mode.setEnabled(False)
-        for name in ('panel','toggle','pause','quit'):menu.addAction(actions[name])
+        actions.add_to_menu(menu)
         toggle,pause,quit_action=(actions[name] for name in ('toggle','pause','quit'))
         for name in ('calibrate','check','load_web','reset','record','pause','web'):actions[name].setEnabled(False)
         tray.setContextMenu(menu);tray.setToolTip('视线悬浮层 · 未校准')
@@ -93,12 +93,14 @@ def main(argv=None):
             if finished:return
             if final:
                 print(f'托盘复查：tray.isVisible()={tray.isVisible()}；tray.geometry()={tray.geometry()}',flush=True)
-            if fallback.check(tray_available,tray.isVisible(),tray.geometry().height(),final=final):
+            if fallback.check(tray_available,tray.isVisible(),tray.geometry().height(),final=final) and panel_on_tray_failure(settings.overlay.panel_on_start):
                 print('托盘不可见或几何高度为 0，已打开控制面板；请保留面板，或使用 --control-panel 启动。',flush=True)
                 panel.present()
         QTimer.singleShot(0,check_tray)
         QTimer.singleShot(settings.overlay.tray_check_delay_ms,lambda:check_tray(True))
-        if args.control_panel:panel.present()
+        if panel_at_start(settings.overlay.panel_on_start,sys.platform,forced=args.control_panel):
+            print('启动控制面板（panel_on_start='+settings.overlay.panel_on_start+'）；不依据托盘几何判断 macOS 菜单栏可见性。',flush=True)
+            panel.present()
         if window.geometry()!=rect:
             raise RuntimeError(f'窗口未覆盖完整逻辑屏：期望 {rect}，实际 {window.geometry()}。')
         print(f'窗口逻辑范围已核对：{window.geometry()}；仅核对几何，不代表穿透/全屏实机验收。',flush=True)

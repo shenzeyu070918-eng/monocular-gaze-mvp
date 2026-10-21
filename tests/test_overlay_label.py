@@ -66,7 +66,7 @@ class LabelVisibilityTests(unittest.TestCase):
         self.clock.now = 34.2
         self.assertAlmostEqual(self.label.opacity(), 0.0)
 
-    def test_blink_every_three_seconds_for_thirty_seconds_does_not_extend_startup(self):
+    def test_blink_every_three_seconds_for_thirty_seconds_recovery_fades_once(self):
         clock = Clock(0.)
         label = LabelVisibility('启动', 4, 200, debounce_s=1., clock=clock)
         for tenth in range(301):
@@ -75,15 +75,15 @@ class LabelVisibilityTests(unittest.TestCase):
             label.set_text('眨眼' if blink else 'Python 摄像头',
                            kind='transient' if blink else 'tracking')
             opacity = label.opacity()
-            if tenth <= 40:
+            if tenth <= 32:
                 self.assertEqual(opacity, 1.)
-            elif tenth == 41:
+            elif tenth == 33:
                 self.assertAlmostEqual(opacity, .5)
-            elif tenth >= 43:
+            elif tenth >= 35:
                 self.assertEqual(opacity, 0., clock.now)
             self.assertEqual(label.text, 'Python 摄像头')
 
-    def test_sustained_no_face_appears_once_and_recovery_preserves_deadline(self):
+    def test_sustained_no_face_appears_once_and_recovery_skips_remaining_hold(self):
         clock = Clock(0.)
         label = LabelVisibility('启动', 4, 200, clock=clock)
         label.set_text('跟踪', kind='tracking')
@@ -103,9 +103,10 @@ class LabelVisibilityTests(unittest.TestCase):
         clock.now = 8.5
         label.set_text('跟踪', kind='tracking')
         self.assertEqual(label.text, '跟踪')
-        clock.now = 11.11
+        self.assertEqual(label.opacity(), 1.)
+        clock.now = 8.6
         self.assertAlmostEqual(label.opacity(), .5)
-        clock.now = 11.3
+        clock.now = 8.8
         self.assertEqual(label.opacity(), 0.)
         clock.now = 20.
         label.set_text('跟踪', kind='tracking')
@@ -122,6 +123,10 @@ class LabelVisibilityTests(unittest.TestCase):
         label.set_text('跟踪', kind='tracking')
         self.assertFalse(label.pending)
         self.assertAlmostEqual(label.opacity(), .25)
+        clock.now = 4.25
+        self.assertAlmostEqual(label.opacity(), .125)
+        clock.now = 4.4
+        self.assertEqual(label.opacity(), 0.)
         clock.now = 20.
         self.assertEqual(label.opacity(), 0.)
         label.set_text('无人脸', kind='transient')
@@ -130,6 +135,87 @@ class LabelVisibilityTests(unittest.TestCase):
         clock.now = 22.
         self.assertEqual(label.opacity(), 0.)
         self.assertEqual(label.text, '跟踪')
+
+    def test_short_uncommitted_anomaly_also_fades_from_hold(self):
+        clock = Clock(0.)
+        label = LabelVisibility('启动', 4, 200, clock=clock)
+        label.set_text('跟踪', kind='tracking')
+        clock.now = 1.
+        label.set_text('眨眼', kind='transient')
+        clock.now = 1.1
+        self.assertTrue(label.set_text('跟踪', kind='tracking'))
+        self.assertEqual(label.text, '跟踪')
+        self.assertFalse(label.pending)
+        self.assertEqual(label.opacity(), 1.)
+        clock.now = 1.2
+        self.assertAlmostEqual(label.opacity(), .5)
+        clock.now = 1.4
+        self.assertEqual(label.opacity(), 0.)
+
+    def test_force_cancels_candidate_and_tracking_keeps_explicit_operation_hold(self):
+        clock = Clock(0.)
+        label = LabelVisibility('启动', 4, 200, clock=clock)
+        label.set_text('跟踪', kind='tracking')
+        clock.now = 6.
+        label.set_text('无人脸', kind='transient')
+        clock.now = 6.3
+        label.set_text('正在恢复摄像头', force=True)
+        self.assertFalse(label.pending)
+        label.set_text('跟踪', kind='tracking')
+        clock.now = 7.
+        self.assertEqual(label.opacity(), 1.)
+        self.assertEqual(label.text, '跟踪')
+        clock.now = 10.4
+        self.assertAlmostEqual(label.opacity(), .5)
+        clock.now = 11.
+        self.assertEqual(label.opacity(), 0.)
+
+    def test_force_during_recovery_fade_restarts_full_operation_hold(self):
+        clock = Clock(0.)
+        label = LabelVisibility('启动', 4, 200, clock=clock)
+        label.set_text('跟踪', kind='tracking')
+        clock.now = 1.
+        label.set_text('眨眼', kind='transient')
+        clock.now = 1.1
+        label.set_text('跟踪', kind='tracking')
+        clock.now = 1.2
+        self.assertAlmostEqual(label.opacity(), .5)
+        label.set_text('正在暂停', force=True)
+        self.assertEqual(label.opacity(), 1.)
+        clock.now = 4.
+        self.assertEqual(label.opacity(), 1.)
+        clock.now = 5.3
+        self.assertAlmostEqual(label.opacity(), .5)
+
+    def test_recovery_after_committed_anomaly_already_hidden_does_not_reappear(self):
+        clock = Clock(0.)
+        label = LabelVisibility('启动', 4, 200, clock=clock)
+        label.set_text('跟踪', kind='tracking')
+        clock.now = 6.
+        label.set_text('无人脸', kind='transient')
+        clock.now = 7.1
+        self.assertEqual(label.opacity(), 1.)
+        self.assertEqual(label.text, '无人脸')
+        clock.now = 12.
+        self.assertEqual(label.opacity(), 0.)
+        label.set_text('跟踪', kind='tracking')
+        self.assertEqual(label.opacity(), 0.)
+        clock.now = 12.1
+        self.assertEqual(label.opacity(), 0.)
+        clock.now = 20.
+        self.assertEqual(label.opacity(), 0.)
+
+    def test_persistent_modes_ignore_recovery_fade(self):
+        for autohide_s, diagnostic in ((0, False), (4, True)):
+            clock = Clock(0.)
+            label = LabelVisibility('启动', autohide_s, 200, diagnostic=diagnostic, clock=clock)
+            label.set_text('跟踪', kind='tracking')
+            clock.now = 10.
+            label.set_text('眨眼', kind='transient')
+            clock.now = 10.1
+            label.set_text('跟踪', kind='tracking')
+            clock.now = 20.
+            self.assertEqual(label.opacity(), 1.)
 
     def test_immediate_states_and_same_text_user_actions_bypass_debounce(self):
         for text in ('启动', '暂停', '恢复', '出错', '屏幕变化', '退出'):

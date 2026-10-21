@@ -128,6 +128,25 @@ class OverlaySessionTests(unittest.TestCase):
                                camera=deepcopy(self.camera),origin_m=[0.,.1,.5],distance_cm=distance,
                                inference_ms=np.float64(1)))
 
+    def test_repeated_metadata_uses_snapshot_without_copying_volatile_report_counts(self):
+        from overlay.session import deepcopy as real_copy
+        original=self.session._metadata_snapshot
+        with patch('overlay.session.deepcopy',wraps=real_copy) as copy:
+            for _ in range(20):
+                self.now+=100_000_000
+                self.view.report['predicted_frames']=self.sequence
+                self.session.sink(self.prediction(self.now,[.4,.6]))
+                self.session.tick(self.view)
+            copy.assert_not_called()
+        self.assertIs(self.session._metadata_snapshot,original)
+        # A genuine device-identity change updates metadata even with the same
+        # optical conditions; live volatile counts still stay out of the cache.
+        self.view.report['device']='mps'
+        self.now+=1;self.session.sink(self.prediction(self.now,[.4,.6]));self.session.tick(self.view)
+        self.assertIsNot(self.session._metadata_snapshot,original)
+        self.assertEqual(self.session.metadata()['inference_device'],'mps')
+
+
     def finish_io(self):
         for _ in range(30):
             pending = self.session.profiles._pending

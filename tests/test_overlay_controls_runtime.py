@@ -270,6 +270,22 @@ class ControlsRuntimeTests(unittest.TestCase):
                 self.assertTrue(c.panel.isVisible())
         self.exercise(scenario)
 
+    def test_unchanged_ticks_skip_render_and_qt_setters_but_stale_results_still_fade(self):
+        def scenario(c):
+            self.tick(c,1.)
+            with patch.object(c.window,'set_display',wraps=c.window.set_display) as render, \
+                 patch.object(c.tray,'setToolTip',wraps=c.tray.setToolTip) as tooltip, \
+                 patch.object(c.panel.mode,'setText',wraps=c.panel.mode.setText) as text, \
+                 patch.object(c.actions['pause'],'setEnabled',wraps=c.actions['pause'].setEnabled) as enabled:
+                for _ in range(100):self.tick(c,publish=False)
+                render.assert_not_called();tooltip.assert_not_called();text.assert_not_called();enabled.assert_not_called()
+                self.tick(c,1.31,publish=False)
+                self.assertTrue(render.called)
+                self.assertGreater(c.window.opacity,0.)
+                self.tick(c,1.51,publish=False)
+                self.assertEqual(c.window.opacity,0.)
+        self.exercise(scenario)
+
     def test_shared_panel_actions_start_each_task_once_and_controller_owns_shutdown(self):
         def scenario(c):
             self.tick(c)

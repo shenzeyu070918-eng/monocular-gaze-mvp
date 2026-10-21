@@ -100,15 +100,44 @@ class CaptureNumericTests(unittest.TestCase):
         display = Display()
         pipeline, _ = self.pipeline(lambda _:None, display=display)
         matrix = [[1.,0.],[0.,1.],[.2,.3]]
-        pipeline.set_display_matrix(matrix)
+        pipeline.set_display_matrix(matrix,revision=17)
         matrix[2][0] = 99
         pipeline.start(); self.wait_count(pipeline, 3); pipeline.pause()
         first = list(display.calls)
+        self.assertEqual(pipeline._latest.data['display']['matrix_revision'],17)
         self.assertTrue(first)
         self.assertTrue(all(name=='gaze-inference' and args['matrix'][2][0]==.2 for name,args in first))
-        pipeline.set_display_matrix(None)
+        pipeline.set_display_matrix(None,revision=23)
         pipeline.resume(); self.wait_count(pipeline, 3); pipeline.close()
         self.assertTrue(all(args['matrix'] is None for _,args in display.calls[len(first):]))
+        self.assertEqual(pipeline._latest.data['display']['matrix_revision'],23)
+
+    def test_inflight_display_keeps_matrix_and_revision_from_the_same_snapshot(self):
+        entered=threading.Event();release=threading.Event()
+        class Display:
+            def reset(self): pass
+            def process(self,data,**kwargs):
+                if not entered.is_set():
+                    entered.set()
+                    if not release.wait(3):raise RuntimeError('display test gate timed out')
+                return dict(position=list(kwargs['matrix'][2]))
+        pipeline,_=self.pipeline(lambda _:None,display=Display())
+        pipeline.set_display_matrix([[1,0],[0,1],[.2,.3]],revision=4)
+        pipeline.start()
+        try:
+            self.assertTrue(entered.wait(3))
+            pipeline.set_display_matrix([[1,0],[0,1],[.8,.9]],revision=5)
+            release.set()
+            first=pipeline.wait_for_result(timeout=3)
+            if first.data['display']['matrix_revision']==4:
+                self.assertEqual(first.data['display']['position'],[.2,.3])
+            self.wait_count(pipeline,3)
+            pipeline.pause()
+            self.assertEqual(pipeline._latest.data['display']['matrix_revision'],5)
+            self.assertEqual(pipeline._latest.data['display']['position'],[.8,.9])
+            for value in (-1,True,1.5):
+                with self.assertRaises(ValueError):pipeline.set_display_matrix(None,revision=value)
+        finally:release.set()
 
     def test_numeric_buffer_reports_overflow_and_retains_copied_frames(self):
         buffer = NumericResultBuffer(2)

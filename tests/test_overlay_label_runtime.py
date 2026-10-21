@@ -121,6 +121,9 @@ class RuntimeLabelTests(unittest.TestCase):
         app = SynchronousApplication()
         quit_action.triggered.connect(app.quit)
         timer = QTimer()
+        # Model the separate label timer as well as the main tick; unchanged
+        # render state no longer refreshes the label as an incidental side effect.
+        timer.timeout.connect(lambda:window._label_timer.timeout.emit() if window._label_timer.isActive() else None)
         qt_errors = []
         old_signal = signal.getsignal(signal.SIGINT)
         context = SimpleNamespace(clock=clock, controller=controller, window=window,

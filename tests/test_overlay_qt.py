@@ -7,7 +7,7 @@ import signal
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock,patch
 from PySide6.QtCore import Qt,QTimer,QSize,QRectF
 from PySide6.QtGui import QImage,QAction,QIcon,QRegion
 from PySide6.QtWidgets import QApplication,QSystemTrayIcon
@@ -16,6 +16,7 @@ from gaze_core.config import OverlaySettings,load_settings
 from gaze_core.capture import Prediction
 from overlay.controller import ControllerView
 from overlay.mapping import ScreenRect
+from overlay.state import RingState
 from overlay.window import OverlayWindow
 
 
@@ -50,6 +51,93 @@ class QtAdapterTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'native'):w.prepare_native()
             w.set_display((-.2,700),(28,28),.5,'未校准')
             self.assertEqual(w.position,(-.2,700))
+        finally:w.close();w.deleteLater()
+
+    def test_unchanged_ring_and_hidden_status_do_not_repaint_or_measure_again(self):
+        now=[0.]
+        w=OverlayWindow(ScreenRect(0,0,800,600),OverlaySettings(),clock=lambda:now[0])
+        try:
+            args=((400,300),(28,28),.65,'未校准 · 正常跟踪')
+            w.set_display(*args,label_kind='tracking')
+            w._label_rect()
+            now[0]=5.;w._refresh_label()
+            self.assertEqual(w._label_opacity,0.)
+            self.assertFalse(w._label_timer.isActive())
+            metrics=Mock(wraps=w._label_metrics);w._label_metrics=metrics
+            with patch.object(w,'update') as update,patch.object(w,'_ring_bounds') as bounds, \
+                 patch.object(w._label_visibility,'set_text',wraps=w._label_visibility.set_text) as observe:
+                for _ in range(100):w.set_display(*args,label_kind='tracking')
+                update.assert_not_called();bounds.assert_not_called();observe.assert_not_called()
+                metrics.horizontalAdvance.assert_not_called()
+                # An explicit same-text action must still make the label visible.
+                w.set_status(args[-1],force=True)
+                observe.assert_called_once_with(args[-1],kind='immediate',force=True)
+                self.assertEqual(w._label_opacity,1.)
+                self.assertTrue(w._label_timer.isActive())
+        finally:w.close();w.deleteLater()
+
+    def test_label_layout_cache_cannot_be_mutated_and_tracks_size_and_font(self):
+        w=OverlayWindow(ScreenRect(0,0,800,600),OverlaySettings())
+        try:
+            metrics=Mock(wraps=w._label_metrics);w._label_metrics=metrics
+            first=w._label_rect()
+            first.adjust(12,0,-12,0)
+            for _ in range(20):self.assertNotEqual(w._label_rect(),first)
+            metrics.horizontalAdvance.assert_called_once_with(w.label)
+            w.resize(500,400)
+            resized=w._label_rect()
+            self.assertTrue(QRectF(w.rect()).contains(resized))
+            self.assertEqual(metrics.horizontalAdvance.call_count,2)
+            font=w.font();font.setPixelSize(font.pixelSize()+6);w.setFont(font)
+            changed=w._label_rect()
+            self.assertGreater(changed.height(),resized.height())
+            self.assertTrue(QRectF(w.rect()).contains(changed))
+        finally:w.close();w.deleteLater()
+
+    def test_label_timer_advances_single_observed_loss_and_recovery(self):
+        now=[0.]
+        w=OverlayWindow(ScreenRect(0,0,800,600),OverlaySettings(),clock=lambda:now[0])
+        try:
+            w.set_status('未校准 · 正常跟踪',kind='tracking')
+            now[0]=5.;w._label_timer.timeout.emit()
+            self.assertEqual(w._label_opacity,0.)
+            w.set_status('未校准 · 无人脸',kind='transient')
+            self.assertTrue(w._label_timer.isActive())
+            # No more set_status/set_display calls: the label timer still owns
+            # the pending debounce deadline and fade after tracking recovers.
+            now[0]=5.9;w._label_timer.timeout.emit()
+            self.assertEqual(w._label_opacity,0.)
+            now[0]=6.01;w._label_timer.timeout.emit()
+            self.assertEqual(w.label,'未校准 · 无人脸')
+            self.assertEqual(w._label_opacity,1.)
+            now[0]=6.1;w.set_status('未校准 · 正常跟踪',kind='tracking')
+            now[0]=6.2;w._label_timer.timeout.emit()
+            self.assertAlmostEqual(w._label_opacity,.5)
+            now[0]=6.31;w._label_timer.timeout.emit()
+            self.assertEqual(w._label_opacity,0.)
+            self.assertFalse(w._label_timer.isActive())
+        finally:w.close();w.deleteLater()
+
+    def test_unchanged_prediction_still_expires_and_fades_without_new_frames(self):
+        now=[0.];options=OverlaySettings()
+        w=OverlayWindow(ScreenRect(0,0,800,600),options,clock=lambda:now[0])
+        ring=RingState(options)
+        ring.accept(Prediction(1,0,0,dict(valid=True,status='tracking',
+                    display=dict(position=[.5,.5],timestamp_source='capture_ns'))),0)
+        def display(seconds):
+            now[0]=seconds;view=ring.view(round(seconds*1e9))
+            point=None if view.position is None else w.rect_info.local(view.position)
+            w.set_display(point,(28,28),view.opacity,view.label,
+                          label_kind='tracking' if view.tracking else 'transient')
+        try:
+            display(0.)
+            with patch.object(w,'update') as update:
+                display(.2);update.assert_not_called()
+                display(.4)
+                self.assertAlmostEqual(w.opacity,options.opacity/2)
+                self.assertTrue(update.called)
+                display(.51)
+                self.assertIsNone(w.position);self.assertEqual(w.opacity,0.)
         finally:w.close();w.deleteLater()
 
     def test_label_positions_fit_screen_and_use_measured_width(self):

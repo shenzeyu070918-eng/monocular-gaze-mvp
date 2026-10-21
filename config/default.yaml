@@ -1,7 +1,9 @@
 device_file: null  # Relative to this config: devices/<设备名>.yaml; null uses estimated intrinsics.
 inference:
-  device: auto  # auto / cpu / cuda; auto uses CUDA when available, otherwise CPU
-  cpu_threads: 4
+  # Mac 实测选择；Windows 待测，可在 config/local.yaml 中覆盖以下设置。
+  device: auto  # auto / cpu / cuda / mps; auto selects CUDA if available, otherwise CPU (Mac uses CPU).
+  num_threads: 2  # PyTorch intraop only; legacy cpu_threads still accepted.
+  max_fps: 15  # Python inference start-rate cap; null=unlimited. Overlay calibration/redo/check temporarily run uncapped.
   max_faces: 1
   blink_threshold: 0.14
   distance_min_m: 0.15
@@ -109,3 +111,10 @@ overlay:
   profile_poll_s: 1.0  # Detect replacement/deletion without blocking the Qt loop.
   tray_check_delay_ms: 500  # One final startup visibility check after Qt layout.
   web_url: http://127.0.0.1:8765
+  panel_on_start: auto  # auto=always on macOS; elsewhere falls back if tray unavailable. always / never.
+  calibration_redo_cm: 2.0  # Self-fit residual threshold, NOT independent B accuracy. Only measured screens.
+  hotkeys:  # Native system registration only; Ctrl+Alt is Control+Option on Mac. Empty disables one.
+    toggle: Ctrl+Alt+G
+    pause: Ctrl+Alt+P
+    calibrate: Ctrl+Alt+C
+    panel: Ctrl+Alt+O

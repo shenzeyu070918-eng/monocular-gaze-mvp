@@ -1,4 +1,5 @@
 """Deterministic background profile I/O; no sleeps, cameras or Qt event loop."""
+from copy import deepcopy
 from dataclasses import replace
 import json
 from pathlib import Path
@@ -13,7 +14,8 @@ from gaze_core.camera import CameraAdapter
 from gaze_core.config import load_settings
 from gaze_core.devices import load_device
 from gaze_core.evaluation import evaluate
-from gaze_core.profiles import build_conditions, load_python_profile, save_profile, save_python_profile
+from gaze_core.profiles import (build_conditions, load_python_profile, profile_age_text,
+                                radius_from_profile, save_profile, save_python_profile)
 from overlay.mapping import ScreenRect
 from overlay.profiles import ProfileManager
 
@@ -70,6 +72,97 @@ class OverlayProfilesTests(unittest.TestCase):
         self.assertEqual(self.manager.calibration_id,'calibration-1')
         self.assertEqual(self.applied,[IDENTITY]);self.assertIn('九点',self.manager.mode)
         self.assertEqual(self.manager.last_operation,'load')
+
+    def test_equal_camera_metadata_skips_condition_rebuild_and_copy(self):
+        camera=deepcopy(self.camera)
+        with patch('overlay.profiles.build_conditions',wraps=build_conditions) as build, \
+             patch('overlay.profiles.deepcopy',wraps=deepcopy) as copy:
+            self.assertTrue(self.manager.observe(camera))
+            for _ in range(100):
+                self.assertFalse(self.manager.observe(camera))
+                self.assertFalse(self.manager.observe(deepcopy(camera)))
+            self.assertEqual(build.call_count,1)
+            self.assertEqual(copy.call_count,1)
+
+    def test_camera_snapshot_detects_in_place_index_matrix_and_undistort_changes(self):
+        camera=deepcopy(self.camera)
+        self.manager.observe(camera)
+        camera['camera_index']=2
+        self.assertEqual(self.manager.conditions['camera']['index'],1)
+        self.assertTrue(self.manager.observe(camera))
+        self.assertEqual(self.manager.conditions['camera']['index'],2)
+        before=self.manager.conditions['camera']['matrix'][0][0]
+        camera['matrix'][0][0]+=1.
+        self.assertEqual(self.manager.conditions['camera']['matrix'][0][0],before)
+        self.assertTrue(self.manager.observe(camera))
+        self.assertEqual(self.manager.conditions['camera']['matrix'][0][0],before+1.)
+        camera['undistort_enabled']=not camera['undistort_enabled']
+        self.assertTrue(self.manager.observe(camera))
+        self.assertEqual(self.manager.conditions['camera']['undistort_enabled'],camera['undistort_enabled'])
+
+    def test_non_condition_metadata_change_is_remembered_without_invalidating_profile(self):
+        self.write();self.load()
+        camera=deepcopy(self.camera);camera['reprojection_error_px']=.25
+        revision=self.manager.revision
+        with patch('overlay.profiles.build_conditions',wraps=build_conditions) as build:
+            self.assertFalse(self.manager.observe(camera))
+            for _ in range(100):self.assertFalse(self.manager.observe(deepcopy(camera)))
+            self.assertEqual(build.call_count,1)
+        self.assertEqual(self.manager.revision,revision)
+        self.assertEqual(self.manager.matrix,IDENTITY)
+
+    def test_failed_camera_validation_does_not_cache_invalid_metadata(self):
+        camera=deepcopy(self.camera);camera['camera_index']=-1
+        with patch('overlay.profiles.build_conditions',wraps=build_conditions) as build:
+            for _ in range(2):
+                with self.assertRaises(ValueError):self.manager.observe(camera)
+            self.assertEqual(build.call_count,2)
+        self.assertIsNone(self.manager.conditions)
+
+    def test_radius_validation_is_cached_until_profile_activation_or_condition_change(self):
+        self.write()
+        with patch('overlay.profiles.radius_from_profile',wraps=radius_from_profile) as radius:
+            self.load()
+            self.assertEqual(radius.call_count,1)
+            targets=[dict(target_id='c',region='center',target=[.5,.5]),dict(target_id='e',region='edge',target=[.05,.05])]
+            frames=[dict(target_id=t['target_id'],valid=True,raw=[t['target'][0]+.02,t['target'][1]+.03],origin_m=[0,.1,.5]) for t in targets]
+            summary=evaluate(frames,targets,self.settings.geometry,IDENTITY)
+            self.manager.save_check(dict(summary=summary,calibration_id='calibration-1',estimated_distance_cm_median=48.,
+                                         estimated_distance_sample_count=2,task_id='check-1'))
+            self.finish()
+            self.assertEqual(radius.call_count,2)
+            expected=summary['groups']['B']['all']['mean_cm']
+            for _ in range(100):self.assertEqual(self.manager.radius,expected)
+            self.assertEqual(radius.call_count,2)
+            self.manager.observe(dict(self.camera,camera_index=2))
+            self.assertIsNone(self.manager.radius)
+            self.assertEqual(radius.call_count,2)
+
+    def test_cached_radius_clears_after_check_file_deleted(self):
+        self.write();self.load()
+        targets=[dict(target_id='c',region='center',target=[.5,.5]),dict(target_id='e',region='edge',target=[.05,.05])]
+        frames=[dict(target_id=t['target_id'],valid=True,raw=[t['target'][0]+.02,t['target'][1]+.03],origin_m=[0,.1,.5]) for t in targets]
+        summary=evaluate(frames,targets,self.settings.geometry,IDENTITY)
+        self.manager.save_check(dict(summary=summary,calibration_id='calibration-1',estimated_distance_cm_median=48.,
+                                     estimated_distance_sample_count=2,task_id='check-1'))
+        self.finish();self.assertIsNotNone(self.manager.radius)
+        self.manager.path.unlink();self.now=2.;self.manager.poll();self.finish()
+        self.assertIsNone(self.manager.radius)
+
+    def test_mode_age_updates_at_most_once_a_second_and_invalidates_on_activation(self):
+        self.write();self.load()
+        with patch('overlay.profiles.profile_age_text',wraps=profile_age_text) as age:
+            for _ in range(100):self.assertIn('九点',self.manager.mode)
+            self.assertEqual(age.call_count,1)
+            self.now=.999;self.assertIn('九点',self.manager.mode)
+            self.assertEqual(age.call_count,1)
+            self.now=1.;self.assertIn('九点',self.manager.mode)
+            self.assertEqual(age.call_count,2)
+            self.write(SHIFTED,'calibration-2');self.manager.reload();self.finish()
+            self.assertIn('九点',self.manager.mode)
+            self.assertEqual(age.call_count,3)
+            self.manager.disable();self.assertEqual(self.manager.mode,'未校准')
+            self.assertEqual(age.call_count,3)
 
     def test_file_poll_atomic_replacement_updates_matrix_once(self):
         self.write();self.load()

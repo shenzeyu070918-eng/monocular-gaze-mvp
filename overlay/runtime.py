@@ -18,6 +18,12 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
     ring=RingState(settings.overlay)
     closing=False;shutdown_requested=False;screen_changed=False;last_error=None;error_box=None
     paused_requested=False;session=None;display_revision=0;restore_visible=True;hotkeys=None
+    painted=None;radius_key=object();radii=None;ui_values={}
+
+    def update(widget,method,value):
+        key=(widget,method)
+        if key not in ui_values or ui_values[key]!=value:
+            getattr(widget,method)(value);ui_values[key]=value
 
     def notice(text,error=False):
         print('悬浮层：'+text,file=sys.stderr)
@@ -154,7 +160,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         if failures:notice('系统热键部分注册失败：'+'；'.join(failures),True)
 
     def tick():
-        nonlocal last_error,error_box,closing,display_revision
+        nonlocal last_error,error_box,closing,display_revision,painted,radius_key,radii
         view=controller.snapshot();now=time.perf_counter_ns()
         if controller.closed.is_set():
             if controls is not None:controls.panel.hide()
@@ -180,44 +186,57 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         if active and view.result is not None and eligible:ring.accept(view.result,now)
         elif not active:ring.clear()
         display=ring.view(now)
-        label=display.label
-        label_kind='tracking' if display.tracking else 'transient'
-        if not active:
-            label='未校准 · '+({'starting':'正在启动摄像头/模型','paused':'已暂停','pausing':'正在暂停',
-                                  'closing':'正在退出','error':'采集失败，请查看提示'}.get(view.status,'等待画面'))
-            label_kind='immediate'
-        if screen_changed:label='未校准 · 屏幕变化，请重新启动';label_kind='immediate'
-        if active and view.idle:label='未校准 · 无人脸，降低读取频率';label_kind='transient'
-        if session is not None:
-            label=label.replace('未校准',session.short_mode,1)
-            if display.tracking:label=session.short_mode+' · Python 摄像头 · '+session.radius_text
-        position=None if display.position is None else window.rect_info.local(display.position)
-        radius=settings.overlay.radius_cm if session is None or session.radius is None else session.radius
-        radii=window.rect_info.radii(radius,settings.geometry,settings.overlay.fallback_radius_px)
-        window.set_display(position,radii,display.opacity,label,label_kind=label_kind)
-        tray.setToolTip(label)
-        pause_action.setEnabled(not shutdown_requested and not screen_changed and view.status not in {'starting','pausing','closing'})
-        pause_action.setText('恢复摄像头' if view.status in {'paused','error'} else '暂停摄像头')
+        radius=None if session is None else session.radius
+        radius=settings.overlay.radius_cm if radius is None else radius
+        radius_text=None if session is None else session.radius_text
+        short_mode=None if session is None else session.short_mode
+        # Keep the cheap stale/fade state machine ticking even without frames.
+        # Position conversion, text construction and Qt setters only run when
+        # the corresponding rendered state changes.
+        render=(display,active,view.status,view.idle,screen_changed,radius,short_mode,radius_text,display_revision)
+        if render!=painted:
+            painted=render
+            label=display.label
+            label_kind='tracking' if display.tracking else 'transient'
+            if not active:
+                label='未校准 · '+({'starting':'正在启动摄像头/模型','paused':'已暂停','pausing':'正在暂停',
+                                      'closing':'正在退出','error':'采集失败，请查看提示'}.get(view.status,'等待画面'))
+                label_kind='immediate'
+            if screen_changed:label='未校准 · 屏幕变化，请重新启动';label_kind='immediate'
+            if active and view.idle:label='未校准 · 无人脸，降低读取频率';label_kind='transient'
+            if session is not None:
+                label=label.replace('未校准',short_mode,1)
+                if display.tracking:label=short_mode+' · Python 摄像头 · '+radius_text
+            position=None if display.position is None else window.rect_info.local(display.position)
+            if radius_key!=radius:
+                radius_key=radius;radii=window.rect_info.radii(radius,settings.geometry,settings.overlay.fallback_radius_px)
+            window.set_display(position,radii,display.opacity,label,label_kind=label_kind)
+            update(tray,'setToolTip',label)
+        update(pause_action,'setEnabled',not shutdown_requested and not screen_changed and view.status not in {'starting','pausing','closing'})
+        update(pause_action,'setText','恢复摄像头' if view.status in {'paused','error'} else '暂停摄像头')
         if controls is not None:
-            panel.mode.setText(session.profiles.mode)
-            controls.mode.setText(session.profiles.mode)
-            panel.radius.setText(session.radius_text)
+            mode=session.profiles.mode
+            update(panel.mode,'setText',mode)
+            update(controls.mode,'setText',mode)
+            update(panel.radius,'setText',radius_text)
             ready=active and session.latest is not None and not session.active and not session.profiles.busy
-            for name in ('calibrate','check'):actions[name].setEnabled(ready)
-            actions['load_web'].setEnabled(ready)
-            actions['reset'].setEnabled(not session.active and not session.profiles.busy and session.profiles.profile is not None)
+            for name in ('calibrate','check'):update(actions[name],'setEnabled',ready)
+            update(actions['load_web'],'setEnabled',ready)
+            update(actions['reset'],'setEnabled',not session.active and not session.profiles.busy and session.profiles.profile is not None)
             record=session.recording.status()
             record_text=('失败（已停止）：'+record['error'] if record['error'] else
                          '正在准备' if record.get('preparing') else
                          ('手动录制中' if record['manual'] else '任务自动录制中') if record.get('active') else
                          '正在收尾' if record.get('closing') else '关闭')
-            panel.recording.setText('录制：'+record_text+(' · '+record['file'] if record.get('active') and record.get('file') else ''))
-            panel.recording.setStyleSheet('color: #b42318' if record['error'] else '')
-            actions['record'].setChecked(record['manual'])
-            actions['record'].setEnabled(active and session.latest is not None and not shutdown_requested)
-            actions['record'].setText('手动录制'+('（任务自动录制中）' if record['task_id'] and not record['manual'] else ''))
-            actions['web'].setEnabled(not shutdown_requested and not session.active)
-            actions['toggle'].setEnabled(not session.active and not shutdown_requested)
+            update(panel.recording,'setText','录制：'+record_text+(' · '+record['file'] if record.get('active') and record.get('file') else ''))
+            update(panel.recording,'setStyleSheet','color: #b42318' if record['error'] else '')
+            # This property also changes through user interaction, so compare
+            # the actual QAction rather than relying on our setter cache.
+            if actions['record'].isChecked()!=record['manual']:actions['record'].setChecked(record['manual'])
+            update(actions['record'],'setEnabled',active and session.latest is not None and not shutdown_requested)
+            update(actions['record'],'setText','手动录制'+('（任务自动录制中）' if record['task_id'] and not record['manual'] else ''))
+            update(actions['web'],'setEnabled',not shutdown_requested and not session.active)
+            update(actions['toggle'],'setEnabled',not session.active and not shutdown_requested)
     profiler=None;timer_tick=tick;profiled_label=None
     if profile_seconds is not None:
         from .profiling import CallbackProfiler

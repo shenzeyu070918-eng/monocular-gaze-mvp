@@ -20,6 +20,7 @@ class OverlaySession:
         self.profiles=ProfileManager(settings,screen,on_matrix=self._matrix,directory=profile_directory)
         self.recording=recording_factory(settings,metadata_factory=self.metadata)
         self.latest=None;self._metadata_snapshot=None;self.task=None;self.task_window=None
+        self._radius_text_revision=None;self._radius_text=None
         self._saving=None;self._revision=-1;self._record_error=None
         self._pending_calibration=None;self._first_calibration=None
         self.request_redo=None;self.dismiss_redo=None;self._window_factory=None;self._qscreen=None
@@ -70,11 +71,14 @@ class OverlaySession:
 
     @property
     def radius_text(self):
+        if self._radius_text_revision==self.profiles.revision:return self._radius_text
         radius=self.radius
-        if radius is not None:return f'半径来源：最近匹配 B 核对平均误差 {radius:.3f} cm'
-        if self.settings.geometry.measured:
-            return f'半径来源：配置示意值 {self.settings.overlay.radius_cm:g} cm（非实测精度）'
-        return f'半径来源：配置示意值 {self.settings.overlay.fallback_radius_px:g} 逻辑像素（尺寸未实测）'
+        if radius is not None:text=f'半径来源：最近匹配 B 核对平均误差 {radius:.3f} cm'
+        elif self.settings.geometry.measured:
+            text=f'半径来源：配置示意值 {self.settings.overlay.radius_cm:g} cm（非实测精度）'
+        else:text=f'半径来源：配置示意值 {self.settings.overlay.fallback_radius_px:g} 逻辑像素（尺寸未实测）'
+        self._radius_text_revision=self.profiles.revision;self._radius_text=text
+        return text
 
     def _events(self):
         if self.task is None:return
@@ -89,7 +93,15 @@ class OverlaySession:
                 changed=self.profiles.observe(camera)
                 if changed and self.active:self.cancel('conditions_changed')
                 self.latest=prediction
-                self._metadata_snapshot=(deepcopy(camera),deepcopy(report),deepcopy(self.profiles.conditions))
+                # Session metadata needs camera conditions and device identity,
+                # not per-tick counters. Preserve an owned snapshot only when
+                # those values change; readers on the writer thread get a
+                # complete tuple through one atomic reference assignment.
+                identity=dict(device=report.get('device'),device_name=report.get('device_name'))
+                previous=self._metadata_snapshot
+                if previous is None or changed or camera!=previous[0] or identity!=previous[1]:
+                    conditions=deepcopy(self.profiles.conditions) if previous is None or changed else previous[2]
+                    self._metadata_snapshot=(deepcopy(camera),identity,conditions)
             if self.task is not None:
                 try:self.task.ingest(prediction)
                 except (ValueError,TypeError) as exc:

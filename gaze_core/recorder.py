@@ -31,6 +31,11 @@ EVENT_FIELDS = {
     'evaluation_summary': {'task_id', 'run_id', 'calibration_id', 'completed', 'reason', 'summary', 'browser_time_ms'},
     'click': {'x', 'y', 'button', 'browser_time_ms'},  # Reserved schema; no input listener in M0.
 }
+for _event_fields in EVENT_FIELDS.values():
+    _event_fields.add('event_ns')
+for _kind in ('calibration', 'evaluation_summary'):
+    EVENT_FIELDS[_kind].update({'estimated_distance_cm_median', 'estimated_distance_sample_count',
+                                'conditions_fingerprint', 'pipeline', 'profile_file'})
 STATUSES = {'tracking', 'no_face', 'blink', 'geometry_invalid', 'prediction_error', 'screen_unconfigured'}
 
 
@@ -142,12 +147,18 @@ def session_metadata(*, source, engine, geometry, camera_size, grayscale, screen
 
 
 def validate_metadata(metadata):
-    allowed = {'source', 'version', 'commit', 'system', 'device_name', 'inference_device',
+    required = {'source', 'version', 'commit', 'system', 'device_name', 'inference_device',
                'inference_device_name', 'screen', 'camera', 'grayscale', 'page_clock_id'}
-    if set(metadata) != allowed or metadata['source'] not in {'web', 'python'}:
+    allowed = required | {'pipeline', 'conditions_fingerprint', 'profile_file'}
+    if not required <= set(metadata) or set(metadata)-allowed or metadata['source'] not in {'web', 'python'}:
         raise ValueError('会话元信息字段不完整或包含未允许的数据')
-    for key in allowed-{'source', 'screen', 'camera', 'grayscale', 'page_clock_id'}:
+    for key in required-{'source', 'screen', 'camera', 'grayscale', 'page_clock_id'}:
         text_value(metadata[key], key)
+    if 'pipeline' in metadata and metadata['pipeline'] not in ('web', 'python'):
+        raise ValueError('pipeline 必须为 web 或 python')
+    for key in ('conditions_fingerprint', 'profile_file'):
+        if key in metadata:
+            text_value(metadata[key], key, nullable=True)
     if type(metadata['grayscale']) is not bool:
         raise ValueError('grayscale 必须是布尔值')
     text_value(metadata['page_clock_id'], 'page_clock_id', nullable=metadata['source']=='python')
@@ -232,6 +243,21 @@ def validate_payload(kind, fields, source):
             for key in set(video)-{'source'}: number(video[key], key, nullable=True)
     else:
         clock_value(fields.get('browser_time_ms'), 'browser_time_ms', nullable=source=='python')
+        if 'event_ns' in fields:
+            clock_value(fields['event_ns'], 'event_ns')
+        if 'pipeline' in fields and fields['pipeline'] not in ('python', 'web'):
+            raise ValueError('pipeline 必须为 python 或 web')
+        for key in ('conditions_fingerprint', 'profile_file'):
+            if key in fields:
+                text_value(fields[key], key, nullable=True)
+        if 'estimated_distance_cm_median' in fields:
+            value = number(fields['estimated_distance_cm_median'], 'estimated_distance_cm_median', nullable=True)
+            if value is not None and value <= 0:
+                raise ValueError('estimated_distance_cm_median 必须为正数或 null')
+        if 'estimated_distance_sample_count' in fields:
+            value = fields['estimated_distance_sample_count']
+            if isinstance(value, bool) or not isinstance(value, Integral) or value < 0:
+                raise ValueError('estimated_distance_sample_count 必须为非负整数')
         if kind == 'target':
             if fields.get('action') not in {'appear','switch','end'} or fields.get('task_type') not in {'calibrate','evaluate','jump'}:
                 raise ValueError('target 类型或动作无效')

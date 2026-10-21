@@ -3,6 +3,7 @@ import argparse
 from dataclasses import dataclass, replace
 import json
 import math
+from numbers import Integral
 import queue
 import sys
 import threading
@@ -25,6 +26,76 @@ class Prediction:
     captured_ns: int
     completed_ns: int
     data: dict
+
+
+def numeric_prediction(prediction):
+    """Copy the recorder whitelist before crossing a worker/UI boundary."""
+    from .recorder import RESULT_FIELDS, validate_payload, number
+    data = prediction.data
+    if set(data)-RESULT_FIELDS-{'landmarks', 'display'}:
+        raise ValueError('推理结果含非数值字段，拒绝转交。')
+    numeric = {key: value for key, value in data.items() if key in RESULT_FIELDS}
+    validate_payload('frame', dict(numeric, capture_ns=prediction.captured_ns,
+                                  inference_completed_ns=prediction.completed_ns,
+                                  frame_id=prediction.sequence), 'python')
+    def copy_value(value):
+        if isinstance(value, dict):
+            return {key: copy_value(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [copy_value(item) for item in value]
+        if value is None or isinstance(value, (str, bool)):
+            return value
+        # Runtime matching needs exact integer resolutions/indices even though
+        # the JSONL writer may serialize non-clock numerical fields as floats.
+        if isinstance(value, Integral):
+            return int(value)
+        return number(value, '数值结果')
+    return Prediction(int(prediction.sequence), int(prediction.captured_ns),
+                      int(prediction.completed_ns), copy_value(numeric))
+
+
+class NumericResultBuffer:
+    """Bounded, non-blocking delivery of every inference result, never pixels.
+
+    Overflow is sticky until clear(); a consumer must cancel incomplete tasks
+    rather than silently calculate a result from a dropped subset.
+    """
+    def __init__(self, capacity):
+        if type(capacity) is not int or capacity < 1:
+            raise ValueError('数值结果队列容量必须为正整数。')
+        self._queue = queue.Queue(capacity)
+        self._lock = threading.Lock()
+        self._error = None
+
+    @property
+    def error(self):
+        with self._lock:
+            return self._error
+
+    def push(self, prediction):
+        try:
+            numeric = numeric_prediction(prediction)
+            self._queue.put_nowait(numeric)
+            return True
+        except Exception as exc:
+            message = '数值结果队列已满；本次取样不完整。' if isinstance(exc, queue.Full) else str(exc)
+            with self._lock:
+                if self._error is None:
+                    self._error = message
+            return False
+
+    def drain(self):
+        results = []
+        while True:
+            try:
+                results.append(self._queue.get_nowait())
+            except queue.Empty:
+                return results
+
+    def clear(self):
+        self.drain()
+        with self._lock:
+            self._error = None
 
 
 def timing_summary(values):
@@ -61,7 +132,8 @@ class CameraPipeline:
     """
     def __init__(self, settings=None, *, camera_factory=None, engine_factory=None,
                  collect_timings=False, clock_ns=time.perf_counter_ns,
-                 recorder=None, recording_factory=None, display_pipeline=None, idle_after_s=None, idle_fps=None):
+                 recorder=None, recording_factory=None, display_pipeline=None, idle_after_s=None, idle_fps=None,
+                 result_sink=None):
         if recorder is not None and recording_factory is not None:
             raise ValueError('recorder 和 recording_factory 只能指定一个。')
         self.settings = settings or load_settings()
@@ -86,6 +158,14 @@ class CameraPipeline:
         self._recording_queue = queue.Queue(self.settings.recording.queue_size)
         self._recording_close_failure = None
         self._display_pipeline = display_pipeline
+        self._display_matrix = None
+        self._display_matrix_set = False
+        self._display_matrix_revision = 0
+        self._result_sink = result_sink
+        self._result_queue = queue.Queue(self.settings.recording.queue_size)
+        self._result_sink_error = None
+        self._result_thread = None
+        self._result_stop = threading.Event()
         if (idle_after_s is None)!=(idle_fps is None):raise ValueError('省电等待时间与帧率必须同时指定。')
         from .power import NoFacePacing
         self._pacing=None if idle_after_s is None else NoFacePacing(idle_after_s,idle_fps)
@@ -143,6 +223,7 @@ class CameraPipeline:
                 self._reset_session()
             self._stop.clear()
             self._run.clear()
+            self._start_result_delivery()
             self._threads = (
                 threading.Thread(target=self._capture_loop, name='gaze-capture', daemon=True),
                 threading.Thread(target=self._inference_loop, name='gaze-inference', daemon=True),
@@ -167,6 +248,7 @@ class CameraPipeline:
 
     def _stop_workers(self):
         if not self._threads:
+            self._stop_result_delivery()
             return
         with self._condition:
             if self._stopped_ns is None:
@@ -185,6 +267,7 @@ class CameraPipeline:
                 self._discarded_on_stop += 1
             self._pending = None
             self._threads = ()
+        self._stop_result_delivery()
 
     def pause(self):
         with self._control:
@@ -203,6 +286,75 @@ class CameraPipeline:
                 self._engine.close()
                 self._engine = None
             self._closed = True
+
+    def set_display_matrix(self, matrix, *, revision=None):
+        """Only swap immutable input; filtering stays on the inference worker."""
+        from .display import calibration_matrix
+        if revision is not None and (isinstance(revision, bool) or not isinstance(revision, Integral) or revision < 0):
+            raise ValueError('显示矩阵版本必须为非负整数。')
+        validated = calibration_matrix(matrix)
+        snapshot = None if validated is None else tuple(tuple(float(v) for v in row) for row in validated)
+        with self._condition:
+            self._display_matrix = snapshot
+            self._display_matrix_set = True
+            self._display_matrix_revision = self._display_matrix_revision+1 if revision is None else int(revision)
+
+    @property
+    def result_sink_error(self):
+        with self._condition:
+            return self._result_sink_error
+
+    def clear_result_sink_error(self):
+        """Explicit recovery after the consumer discarded an incomplete task."""
+        with self._condition:
+            self._result_sink_error = None
+
+    def _result_failure(self, error):
+        with self._condition:
+            if self._result_sink_error is None:
+                self._result_sink_error = str(error)
+            self._condition.notify_all()
+
+    def _start_result_delivery(self):
+        if self._result_sink is None or self._result_thread is not None:
+            return
+        self._result_stop.clear()
+        self._result_thread = threading.Thread(target=self._deliver_results, name='gaze-numeric-results', daemon=True)
+        self._result_thread.start()
+
+    def _deliver_results(self):
+        while not self._result_stop.is_set() or not self._result_queue.empty():
+            try:
+                prediction = self._result_queue.get(timeout=.05)
+            except queue.Empty:
+                continue
+            try:
+                if self.result_sink_error is None and self._result_sink(prediction) is False:
+                    self._result_failure('数值结果接收端拒绝取样；本次取样不完整。')
+            except Exception as exc:
+                self._result_failure(f'数值结果转交失败：{exc}')
+            finally:
+                self._result_queue.task_done()
+
+    def _queue_result(self, prediction):
+        if self._result_sink is None or self.result_sink_error is not None:
+            return
+        try:
+            self._result_queue.put_nowait(numeric_prediction(prediction))
+        except queue.Full:
+            self._result_failure('数值结果转交队列已满；本次取样不完整，推理继续运行。')
+        except Exception as exc:
+            self._result_failure(exc)
+
+    def _stop_result_delivery(self):
+        if self._result_thread is None:
+            return
+        self._result_stop.set()
+        self._result_thread.join(self.settings.camera.stop_timeout_s)
+        if self._result_thread.is_alive():
+            self._result_failure('数值结果接收端未能及时退出。')
+            raise RuntimeError(self.result_sink_error)
+        self._result_thread = None
 
     def _set_recording_error(self, error):
         with self._condition:
@@ -399,10 +551,14 @@ class CameraPipeline:
                 data = engine.predict(frame.image, self.settings.geometry, self.settings.camera.grayscale)
                 completed_ns = self._clock_ns()
                 self._record_prediction(frame, completed_ns, data)
+                self._queue_result(Prediction(frame.sequence, frame.captured_ns, completed_ns, data))
                 if self._display_pipeline is not None:
+                    with self._condition:
+                        matrix_kwargs = {'matrix': self._display_matrix} if self._display_matrix_set else {}
+                        matrix_revision = self._display_matrix_revision
                     display=self._display_pipeline.process(data,source='python',capture_ns=frame.captured_ns,
-                                                           geometry=self.settings.geometry)
-                    data=dict(data,display=display)
+                                                           geometry=self.settings.geometry, **matrix_kwargs)
+                    data=dict(data,display=dict(display,matrix_revision=matrix_revision))
                 with self._condition:
                     if self._pacing is not None:self._pacing.observe(data.get('status'),frame.captured_ns)
                     self._predicted += 1
@@ -458,6 +614,7 @@ class CameraPipeline:
                 'pending_frames': int(self._pending is not None), 'in_flight_frames': int(self._in_flight),
                 'discarded_on_stop': self._discarded_on_stop,
                 'recording': self.recording_status(),
+                'result_sink_error': self._result_sink_error,
                 'latency_definition': '从 OpenCV read() 返回到推理结果就绪；不含摄像头曝光与驱动缓冲，不是端到端延迟。',
                 'drop_definition': '仅统计新帧覆盖尚未推理的旧帧；统计截止时待处理和推理中的帧单列。',
             }

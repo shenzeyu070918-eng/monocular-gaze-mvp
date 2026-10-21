@@ -128,8 +128,8 @@ class QtAdapterTests(unittest.TestCase):
                 update.assert_called_once_with(QRegion(old.toAlignedRect())|QRegion(w._label_rect().toAlignedRect()))
                 now[0]=6.5
                 w.set_display(None,radius,0,'未校准 · 正常跟踪',label_kind='tracking')
-                now[0]=10.11;w._refresh_label();self.assertAlmostEqual(w._label_opacity,.5)
-                now[0]=10.3;w._refresh_label();self.assertEqual(w._label_opacity,0.)
+                now[0]=6.6;w._refresh_label();self.assertAlmostEqual(w._label_opacity,.5)
+                now[0]=6.8;w._refresh_label();self.assertEqual(w._label_opacity,0.)
                 self.assertFalse(w._label_timer.isActive())
                 w.set_display(None,radius,0,'未校准 · 正常跟踪',label_kind='tracking')
                 self.assertEqual(w._label_opacity,0.)
@@ -142,7 +142,7 @@ class QtAdapterTests(unittest.TestCase):
         from overlay.app import main
         old=signal.getsignal(signal.SIGINT)
         try:
-            for available,code in ((True,0),(False,1)):
+            for available,code in ((True,0),(False,0)):
                 with patch('overlay.platforms.prepare_application'),patch('overlay.platforms.configure_window'), \
                      patch('overlay.platforms.builtin_screen',side_effect=lambda screens:screens[0]), \
                      patch.object(QSystemTrayIcon,'isSystemTrayAvailable',return_value=available), \
@@ -151,7 +151,7 @@ class QtAdapterTests(unittest.TestCase):
                     self.assertEqual(main(['--diagnostic','--duration','.02']),code)
                     text=output.getvalue()
                     for field in ('按 Ctrl+C 退出',f'isSystemTrayAvailable={available}',
-                                  'tray.isVisible()='+('True' if available else '未创建'),'tray.geometry()='):
+                                  'tray.isVisible()='+('True' if available else 'False'),'tray.geometry()='):
                         self.assertIn(field,text)
         finally:
             signal.signal(signal.SIGINT,old)

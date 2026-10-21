@@ -170,6 +170,11 @@ class OverlaySettings:
     label_autohide_s: float = 4.0
     label_debounce_s: float = 1.0
     diagnostic_size_px: int = 12
+    task_radius_px: int = 12
+    profile_name: str = 'builtin'
+    profile_poll_s: float = 1.0
+    tray_check_delay_ms: int = 500
+    web_url: str = 'http://127.0.0.1:8765'
 
     def __post_init__(self):
         import re
@@ -177,7 +182,7 @@ class OverlaySettings:
         for key in ('radius_cm','fallback_radius_px','opacity','fade_ms','stale_ms','stroke_px','idle_after_s','idle_fps'):
             finite(getattr(self,key),'overlay.'+key,positive=True)
         if self.opacity>1:raise ValueError('overlay.opacity 必须在 (0,1]')
-        for key in ('refresh_ms','label_font_px','label_inset_px','diagnostic_size_px'):
+        for key in ('refresh_ms','label_font_px','label_inset_px','diagnostic_size_px','task_radius_px','tray_check_delay_ms'):
             if type(getattr(self,key)) is not int or getattr(self,key)<=0:raise ValueError('overlay.'+key+' 必须为正整数')
         for key in ('label_bottom_inset_px','label_padding_px'):
             if type(getattr(self,key)) is not int or getattr(self,key)<0:raise ValueError('overlay.'+key+' 必须为非负整数')
@@ -188,6 +193,13 @@ class OverlaySettings:
                 raise ValueError('overlay.'+key+' 必须为非负数')
         if not isinstance(self.color,str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',self.color):
             raise ValueError('overlay.color 必须为 #RRGGBB')
+        from .devices import device_name
+        device_name(self.profile_name)
+        finite(self.profile_poll_s,'overlay.profile_poll_s',positive=True)
+        from urllib.parse import urlsplit
+        url=urlsplit(self.web_url)
+        if url.scheme!='http' or url.hostname not in {'127.0.0.1','localhost','::1'}:
+            raise ValueError('overlay.web_url 必须为本机 http 地址')
 
 
 @dataclass(frozen=True)

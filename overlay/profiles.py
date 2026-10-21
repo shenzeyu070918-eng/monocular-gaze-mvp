@@ -132,6 +132,7 @@ class ProfileManager:
         conditions=deepcopy(self.conditions)
         calibration=dict(sample_count=result['sample_count'],target_count=9,
                          estimated_distance_cm_median=result['estimated_distance_cm_median'])
+        if result.get('quality') is not None:calibration['quality']=deepcopy(result['quality'])
         def save():
             save_python_profile(result['matrix'],name=self.name,conditions=conditions,
                                 calibration_id=result['calibration_id'],calibration=calibration,directory=self.directory)

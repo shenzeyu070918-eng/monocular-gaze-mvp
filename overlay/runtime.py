@@ -93,6 +93,21 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         from PySide6.QtGui import QDesktopServices
         from PySide6.QtWidgets import QFileDialog
         actions,panel=controls.actions,controls.panel
+        redo_dialog=None
+        def offer_redo(quality,decide):
+            nonlocal redo_dialog
+            points=', '.join(p['target_id'] for p in quality['points'] if p['redo'])
+            redo_dialog=QMessageBox(QMessageBox.Icon.Question,'九点校准质量',
+                f'以下校准点自身拟合残差超过 {quality["threshold"]:g} cm：{points}。\n是否补看这些点？最多一轮，与原样本合并后仍使用仿射拟合。\n'
+                '取消会保留首次完整结果；这不是独立 B 组精度。',
+                QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.Cancel,panel)
+            redo_dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
+            def finished(answer):
+                decide(answer==QMessageBox.StandardButton.Yes)
+                if session.task is not None:
+                    window.hide();panel.hide()
+            redo_dialog.finished.connect(finished);redo_dialog.open()
+        session.request_redo=offer_redo
         def start_task(kind):
             nonlocal restore_visible
             restore_visible=window.isVisible()

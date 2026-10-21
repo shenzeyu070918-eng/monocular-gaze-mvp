@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from collections import Counter
 import hashlib
 import json
+import math
+from numbers import Real
 from pathlib import Path
 import numpy as np
 
@@ -12,6 +14,28 @@ from .evaluation import evaluate
 from .implicit_calibration import (MODELS, M5_RULE_VERSION, M5_RULE_TEXT, ExperimentSettings,
     sample_clicks, blocked_cv, fit_robust, decide_m5, coverage)
 from tools.replay import read_session
+
+
+# Fixed by PR #10 verification correction; not experimental selection knobs.
+PANEL_REL_TOL=1e-9
+PANEL_ABS_TOL=1e-12
+EXPLORATION_MINUTES=10
+
+
+def summaries_match(left,right):
+    """Exact JSON structure/labels, tolerant finite real-valued leaves."""
+    if isinstance(left,dict) or isinstance(right,dict):
+        return (isinstance(left,dict) and isinstance(right,dict) and left.keys()==right.keys()
+                and all(summaries_match(left[key],right[key]) for key in left))
+    if isinstance(left,list) or isinstance(right,list):
+        return (isinstance(left,list) and isinstance(right,list) and len(left)==len(right)
+                and all(summaries_match(a,b) for a,b in zip(left,right)))
+    if isinstance(left,bool) or isinstance(right,bool):return type(left) is type(right) and left==right
+    if isinstance(left,Real) and isinstance(right,Real):
+        return (math.isfinite(left) and math.isfinite(right)
+                and math.isclose(left,right,rel_tol=PANEL_REL_TOL,abs_tol=PANEL_ABS_TOL))
+    if left is None or right is None:return left is right
+    return isinstance(left,str) and isinstance(right,str) and left==right
 
 
 @dataclass
@@ -148,6 +172,59 @@ def _check(trial,matrix=None):
     return result['groups']['B' if matrix is not None else 'A']
 
 
+def exploratory_analysis(trial,trained):
+    """Post-registration diagnostics, deliberately outside the M5 decision path.
+
+    Residuals mean click target minus prediction: their median is the additive
+    correction. Radial MedAE is median(norm(residual)), not a centered MAD.
+    """
+    choice=trained['selection']
+    window_index=choice['window_index'] if choice is not None else 0
+    samples=trained['samples_by_window'][window_index]['samples']
+    scale=np.array([trial.geometry.width_cm,trial.geometry.height_cm],dtype=float)
+    baseline=np.array(trial.baseline['baseline_matrix'],dtype=float,copy=True)
+    identity=np.array([[1.,0.],[0.,1.],[0.,0.]])
+    span=EXPLORATION_MINUTES*60*1_000_000_000
+    recent_start=trial.check_start_ns-span
+    first_start=trial.collection['collection_start_ns']
+    subsets=(('all',samples),
+             ('recent_10_minutes',[s for s in samples if recent_start<=s['event_ns']<=trial.check_start_ns]),
+             ('first_10_minutes',[s for s in samples if first_start<=s['event_ns']<first_start+span]))
+
+    def residual_summary(selected,matrix):
+        if not selected:
+            return dict(sample_count=0,median_horizontal_cm=None,median_vertical_cm=None,
+                        median_absolute_horizontal_cm=None,median_absolute_vertical_cm=None,
+                        median_absolute_error_cm=None)
+        raw=np.asarray([s['raw'] for s in selected],dtype=float)
+        targets=np.asarray([s['target'] for s in selected],dtype=float)
+        residual=(targets-np.column_stack((raw,np.ones(len(raw))))@matrix)*scale
+        med=np.median(residual,axis=0);absolute=np.median(np.abs(residual),axis=0)
+        return dict(sample_count=len(selected),median_horizontal_cm=float(med[0]),median_vertical_cm=float(med[1]),
+                    median_absolute_horizontal_cm=float(absolute[0]),median_absolute_vertical_cm=float(absolute[1]),
+                    median_absolute_error_cm=float(np.median(np.linalg.norm(residual,axis=1))))
+
+    def score(selected,matrix,method,subset):
+        residual=residual_summary(selected,matrix)
+        row=dict(method=method,subset=subset,sample_count=len(selected),residuals=residual,
+                 participates_in_m5=False,ok=bool(selected))
+        if not selected:return dict(row,reason='no_usable_click_samples',matrix=None,summary=None)
+        correction=[residual['median_horizontal_cm']/scale[0],residual['median_vertical_cm']/scale[1]]
+        corrected=matrix.copy();corrected[2]+=correction
+        return dict(row,reason=None,correction_cm=[residual['median_horizontal_cm'],residual['median_vertical_cm']],
+                    matrix=corrected.tolist(),summary=_check(trial,corrected))
+
+    rows=[score(selected,baseline,'B_plus_click_median_offset',name) for name,selected in subsets]
+    rows.append(score(samples,identity,'raw_click_median_offset','all'))
+    return dict(title='非预登记探索分析（不参与 M5 判定）',participates_in_m5=False,
+                statement='本节为非预登记探索分析，不参与 M5 判定；不修改预登记窗口、模型、N 或规则。',
+                residual_definition='点击目标减预测；正校正量向右/向下。中位绝对误差为逐点击二维残差长度的中位数，非中心化 MAD。',
+                sample_definition='使用既有点击前窗口的前置筛选/连点合并样本，不额外套用 RANSAC 或空间覆盖门槛。',
+                window_index=window_index,window_source='training_selected' if choice is not None else 'first_configured_exploratory_only',
+                minutes=EXPLORATION_MINUTES,recent_anchor_ns=trial.check_start_ns,first_anchor_ns=first_start,
+                B_click_residuals=residual_summary(samples,baseline),results=rows)
+
+
 def _summary_distribution(values, settings):
     """Intervals describe repeated subset sampling, not population confidence."""
     if not values:return dict(median=None,low=None,high=None,n=0)
@@ -198,7 +275,7 @@ def analyze_experiment(trial,settings):
     trained=select_training(trial,settings);chosen=trained['selection']
     baseline=_check(trial,trial.baseline['baseline_matrix']);unadjusted=_check(trial)
     panel=trial.summary.get('summary',{}).get('groups',{})
-    comparable=(panel.get('A')==unadjusted and panel.get('B')==baseline)
+    comparable=summaries_match(panel,dict(A=unadjusted,B=baseline))
     times=sorted(r['capture_ns'] for r in trial.frames)
     measured_fps=(len(times)-1)*1e9/(times[-1]-times[0]) if len(times)>1 and times[-1]>times[0] else None
     recorded_fps=trial.collection.get('actual_inference_fps')
@@ -210,7 +287,9 @@ def analyze_experiment(trial,settings):
               check_task_id=trial.summary['task_id'],check_frame_count=len(trial.check_frames),
               check_start_ns=trial.check_start_ns,
               check_frame_ids=[r['frame_id'] for r in trial.check_frames],sampling=trial.summary['sampling'],
-              panel_recomputed_exactly=comparable,A=unadjusted,B=baseline,selection=chosen,
+              panel_recomputed_exactly=comparable,
+              panel_comparison=dict(relative_tolerance=PANEL_REL_TOL,absolute_tolerance=PANEL_ABS_TOL,structure='exact'),
+              A=unadjusted,B=baseline,selection=chosen,
               window_scan=trained['window_scan'],recent_scan=trained['recent_scan'],
               collection=dict(duration_seconds=(trial.collection['collection_end_ns']-trial.collection['collection_start_ns'])/1e9,
                               wait_before_check_seconds=(trial.check_start_ns-trial.collection['collection_end_ns'])/1e9,
@@ -225,7 +304,9 @@ def analyze_experiment(trial,settings):
               sample_count=len(trial.clicks),count_results=[],recent_results=[],C_all=None,C_recent=None)
     if chosen is None:
         base['decision']=decide_m5(baseline['all']['mean_cm'],None,None)
-        base['warnings']=trial.warnings+['训练点击不足或退化，没有从公共核对成绩选择模型或时间窗口。'];return base
+        base['warnings']=trial.warnings+['训练点击不足或退化，没有从公共核对成绩选择模型或时间窗口。']
+        base['exploratory']=exploratory_analysis(trial,trained)
+        return base
     samples=trained['samples_by_window'][chosen['window_index']]['samples']
     for count in list(dict.fromkeys([*settings.counts,len(samples)])):
         rows=_repeat_subsets(trial,samples,count,settings,seed=settings.seed+count)
@@ -264,6 +345,8 @@ def analyze_experiment(trial,settings):
     base['decision']=decide_m5(baseline['all']['mean_cm'] if complete and comparable else None,all_mean,recent_mean)
     base['warnings']=trial.warnings+([] if complete else ['公共核对目标不完整，M5 判定为证据不足。'])+(
         [] if comparable else ['录制面板汇总与原始选帧重算不一致，保留结果但 M5 判定为证据不足。'])
+    # The preregistered decision is final before any exploratory scores exist.
+    base['exploratory']=exploratory_analysis(trial,trained)
     return base
 
 

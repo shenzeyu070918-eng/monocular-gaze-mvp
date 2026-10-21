@@ -1,7 +1,7 @@
 """End-to-end experiments use temporary synthetic numeric JSONL only."""
 from contextlib import redirect_stdout,redirect_stderr
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict,replace
 import io
 import json
 from pathlib import Path
@@ -12,7 +12,8 @@ import numpy as np
 
 from gaze_core.config import ROOT
 from gaze_core.evaluation import evaluate
-from gaze_core.implicit_experiment import read_experiments,select_training,analyze_recordings,load_manifest
+from gaze_core.implicit_experiment import (read_experiments,select_training,analyze_recordings,load_manifest,
+                                           summaries_match,exploratory_analysis)
 from tools.implicit_calib_experiment import main,write_report
 from test_implicit_calibration import GEOMETRY,small_settings,stable_click
 
@@ -70,6 +71,84 @@ def recording(path,*,complete=True,exact=True,invalid_collect_frame=False,check_
 
 
 class ImplicitExperimentTests(unittest.TestCase):
+    def test_tolerant_comparison_keeps_json_structure_and_non_numeric_values_exact(self):
+        original=dict(value=np.float64(1.),near_zero=0.,points=[dict(region='edge',complete=True,error=None)])
+        close=deepcopy(original);close.update(value=1.+5e-10,near_zero=5e-13)
+        self.assertTrue(summaries_match(original,close))
+        for altered in (dict(close,value=1.+2e-9),dict(close,near_zero=2e-12),dict(close,extra=1),
+                        dict(close,points=[]),dict(close,points=tuple(close['points'])),
+                        dict(close,points=[dict(region='center',complete=True,error=None)]),
+                        dict(close,points=[dict(region='edge',complete=1,error=None)]),
+                        dict(close,points=[dict(region='edge',complete=True,error=0.)])):
+            with self.subTest(altered=altered):self.assertFalse(summaries_match(original,altered))
+        self.assertFalse(summaries_match(dict(value=float('nan')),dict(value=float('nan'))))
+        self.assertFalse(summaries_match(dict(value=float('inf')),dict(value=float('inf'))))
+
+    def test_panel_roundoff_does_not_block_m5_but_real_or_structural_difference_does(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'roundoff.jsonl';source=recording(path)
+            for case in ('roundoff','numeric_mismatch','extra_key'):
+                rows=deepcopy(source)
+                panel=next(r for r in rows if r['type']=='evaluation_summary')['summary']['groups']
+                panel['A']['all']['mean_cm']+=1e-14
+                panel['B']['all']['mean_cm']+=1e-15
+                if case=='numeric_mismatch':panel['B']['all']['mean_cm']+=1e-5
+                elif case=='extra_key':panel['B']['all']['unexpected']=None
+                path.write_text(''.join(json.dumps(r)+'\n' for r in rows))
+                trial=analyze_recordings([path],small_settings())['experiments'][0]
+                with self.subTest(case=case):
+                    self.assertEqual(trial['panel_recomputed_exactly'],case=='roundoff')
+                    self.assertEqual(trial['decision']['decision'],'M5 值得做' if case=='roundoff' else '证据不足')
+                    self.assertEqual(trial['panel_comparison']['relative_tolerance'],1e-9)
+                    self.assertEqual(trial['panel_comparison']['absolute_tolerance'],1e-12)
+
+    def test_exploratory_median_offset_preserves_B_linear_part_and_uses_same_check(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'recording.jsonl';recording(path)
+            trials,_=read_experiments(path);trial=trials[0]
+            matrix=np.array([[1.2,.1],[.2,.7],[.1,-.2]])
+            trial.baseline['baseline_matrix']=matrix.tolist()
+            trial.collection['collection_start_ns']=0;trial.check_start_ns=1_200_000_000_000
+            raw=np.array([[.2,.3],[.4,.6],[.5,.6]])
+            residual_cm=np.array([[-2.,3.],[1.,4.],[3.,5.]])
+            targets=np.column_stack((raw,np.ones(3)))@matrix+residual_cm/[30.,20.]
+            samples=[dict(raw=raw[i].tolist(),target=targets[i].tolist(),event_ns=t)
+                     for i,t in enumerate((100_000_000_000,650_000_000_000,1_150_000_000_000))]
+            trained=dict(selection=dict(window_index=0),samples_by_window=[dict(samples=samples)])
+            before=deepcopy((trial,trained));result=exploratory_analysis(trial,trained)
+            self.assertFalse(result['participates_in_m5'])
+            residual=result['B_click_residuals']
+            self.assertAlmostEqual(residual['median_horizontal_cm'],1.)
+            self.assertAlmostEqual(residual['median_vertical_cm'],4.)
+            self.assertAlmostEqual(residual['median_absolute_horizontal_cm'],2.)
+            self.assertAlmostEqual(residual['median_absolute_vertical_cm'],4.)
+            self.assertAlmostEqual(residual['median_absolute_error_cm'],np.sqrt(17.))
+            rows=result['results'];self.assertEqual([r['sample_count'] for r in rows],[3,2,1,3])
+            expected=matrix.copy();expected[2]+=[1/30,4/20]
+            np.testing.assert_allclose(rows[0]['matrix'],expected)
+            self.assertEqual(rows[0]['summary'],evaluate(trial.check_frames,trial.targets,trial.geometry,expected)['groups']['B'])
+            delta=np.median(targets-raw,axis=0)
+            np.testing.assert_allclose(rows[-1]['matrix'],[[1,0],[0,1],delta.tolist()])
+            np.testing.assert_allclose(trial.baseline['baseline_matrix'],before[0].baseline['baseline_matrix'])
+            self.assertEqual(trained,before[1])
+            trial.check_start_ns+=1_000_000_000_000
+            empty=exploratory_analysis(trial,dict(trained,selection=None))
+            self.assertFalse(empty['results'][1]['ok']);self.assertIsNone(empty['results'][1]['summary'])
+            self.assertEqual(empty['window_source'],'first_configured_exploratory_only')
+
+    def test_exploration_cannot_change_preregistered_selection_scores_or_decision(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'recording.jsonl';recording(path)
+            before=analyze_recordings([path],small_settings())['experiments'][0]
+            with patch('gaze_core.implicit_experiment.exploratory_analysis',return_value=dict(decision='九点 + 点击微调')):
+                altered=analyze_recordings([path],small_settings())['experiments'][0]
+            for key in ('decision','selection','C_all','C_recent','count_results','recent_results'):
+                self.assertEqual(before[key],altered[key])
+            unavailable=analyze_recordings([path],replace(small_settings(),min_training_clicks=100))['experiments'][0]
+            self.assertIsNone(unavailable['selection'])
+            self.assertEqual(unavailable['decision']['decision'],'证据不足')
+            self.assertTrue(unavailable['exploratory']['results'][0]['ok'])
+
     def test_exact_shared_frames_recompute_panel_and_readonly_single_user(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'synthetic.jsonl';recording(path,invalid_collect_frame=True)
@@ -175,6 +254,12 @@ class ImplicitExperimentTests(unittest.TestCase):
             self.assertGreater(artifacts['images'][0].stat().st_size,100)
             data=json.loads(artifacts['json'].read_text());self.assertEqual(data['sample_size']['subjects'],1)
             self.assertIn('固定种子',text);self.assertIn('采集开始时',text)
+            self.assertIn('### 非预登记探索分析（不参与 M5 判定）',text)
+            self.assertIn('本节为非预登记探索分析，不参与 M5 判定',text)
+            self.assertIn('仅点击中位数偏移（不叠加 B）',text)
+            self.assertIn('最近 10 分钟',text);self.assertIn('前 10 分钟',text)
+            self.assertFalse(data['experiments'][0]['exploratory']['participates_in_m5'])
+            self.assertIn('exploratory_not_for_m5',artifacts['csv'].read_text())
 
     def test_cli_works_and_never_touches_input_or_profiles(self):
         (ROOT/'data').mkdir(exist_ok=True)

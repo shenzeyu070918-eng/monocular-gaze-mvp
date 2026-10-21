@@ -22,6 +22,37 @@ from tools.replay import ReplayError
 def _number(value):return '不可用' if value is None else f'{value:.4f}'
 
 
+def _exploratory_lines(trial,csv_rows):
+    analysis=trial['exploratory'];residual=analysis['B_click_residuals']
+    lines=['','### 非预登记探索分析（不参与 M5 判定）','',analysis['statement'],
+           analysis['residual_definition'],analysis['sample_definition'],
+           f"窗口索引 {analysis['window_index']}，来源 `{analysis['window_source']}`；最近 10 分钟从公共核对开始回溯，前 10 分钟从采集开始计算。",
+           '中位数偏移不额外要求预登记模型的覆盖度，但仍列出样本量；没有可用点击时不填成绩。','',
+           '| 九点校正后的点击样本 | 数值 |','|---|---:|',
+           f"| 可用点击数 | {residual['sample_count']} |",
+           f"| 水平残差中位数 cm | {_number(residual['median_horizontal_cm'])} |",
+           f"| 垂直残差中位数 cm | {_number(residual['median_vertical_cm'])} |",
+           f"| 水平绝对残差中位数 cm | {_number(residual['median_absolute_horizontal_cm'])} |",
+           f"| 垂直绝对残差中位数 cm | {_number(residual['median_absolute_vertical_cm'])} |",
+           f"| 二维中位绝对误差 cm | {_number(residual['median_absolute_error_cm'])} |",'',
+           '| 探索方法（不参与 M5 判定） | 点击子集 | 点击数 | 整体平均 cm | P90 cm | 中央 cm | 边缘 cm | 水平校正量 cm | 垂直校正量 cm |',
+           '|---|---|---:|---:|---:|---:|---:|---:|---:|']
+    for row in analysis['results']:
+        label='B + 点击中位数偏移' if row['method']=='B_plus_click_median_offset' else '仅点击中位数偏移（不叠加 B）'
+        subset={'all':'全部点击','recent_10_minutes':'最近 10 分钟','first_10_minutes':'前 10 分钟'}[row['subset']]
+        summary=row['summary'];correction=row.get('correction_cm',[None,None])
+        values=([summary['all']['mean_cm'],summary['all']['p90_cm'],summary['center']['mean_cm'],summary['edge']['mean_cm']]
+                if row['ok'] else [None]*4)
+        lines.append('| '+label+' | '+subset+f" | {row['sample_count']} | "+' | '.join(_number(v) for v in values+correction)+' |')
+        if row['ok']:
+            for region in ('all','center','edge'):
+                csv_rows.append(dict(experiment_id=trial['experiment_id'],subject=trial['subject'],machine=trial['machine'],
+                                     kind='exploratory_not_for_m5',label=label,model=row['method'],subset=row['subset'],
+                                     count=row['sample_count'],participates_in_m5=False,region=region,**summary[region]))
+    lines+=['','以上为非预登记探索分析，不参与 M5 判定；预登记结论保持前文结果。','']
+    return lines
+
+
 def plot_results(result,path):
     if not result['experiments']:return []
     os.environ.setdefault('MPLCONFIGDIR',str(Path(tempfile.gettempdir())/'gaze-matplotlib'))
@@ -101,7 +132,8 @@ def write_report(result,output,*,plots=True):
                   f"文件 `{trial['file']}`，SHA256 `{trial['sha256']}`；session `{trial['session_id']}`；experiment `{trial['experiment_id']}`。",
                   '录制时系统、设备、相机和屏幕条件：`'+json.dumps(trial['provenance'],ensure_ascii=False)+'`。',
                   f"条件指纹 `{trial['conditions_fingerprint']}`；B 时间 `{trial['baseline_created_at']}`，开始采集时年龄 {_number(trial['baseline_age_s'])} 秒。",
-                  f"公共核对 `{trial['check_task_id']}`，确切取样帧 {trial['check_frame_count']}；与录制面板汇总逐项一致：{trial['panel_recomputed_exactly']}。"]
+                  f"公共核对 `{trial['check_task_id']}`，确切取样帧 {trial['check_frame_count']}；面板汇总结构/键名完全一致且数值在容差内：{trial['panel_recomputed_exactly']}。",
+                  f"比较容差：相对 {trial['panel_comparison']['relative_tolerance']}、绝对 {trial['panel_comparison']['absolute_tolerance']}；布尔、空值和文字严格比较。"]
         collection=trial['collection']
         lines += [f"采集 {_number(collection['duration_seconds'])} 秒，共 {collection['frame_count']} 帧（有效 {collection['valid_frame_count']}）；"
                   f"capture_ns 实测 {_number(collection['capture_ns_fps'])} fps；事件记录 {_number(collection['actual_inference_fps'])} fps；"
@@ -166,6 +198,7 @@ def write_report(result,output,*,plots=True):
                 if failures:lines.append(f"- {key} / {subset.get('label',subset.get('minutes'))}：`{dict(failures)}`。")
                 if subset.get('unavailable_reason'):lines.append(f"- {key} / {subset.get('label')}：{subset['unavailable_reason']}。")
         if images:lines+=['',f'![点击数量、最近时间、训练窗口扫描和点击覆盖]({images[index-1].name})','']
+        lines+=_exploratory_lines(trial,csv_rows)
     if result['skipped']:
         lines+=['','## 不可分析的输入','']
         for row in result['skipped']:lines.append('- `'+row['file']+'`：'+', '.join(row['reasons']))

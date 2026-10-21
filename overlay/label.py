@@ -19,7 +19,7 @@ def _timing(value, name, *, positive=False):
 
 
 class LabelVisibility:
-    """Debounce transient states; recovery updates text without restarting the hold."""
+    """Debounce transient states; recovery immediately fades from current opacity."""
 
     def __init__(self, text, autohide_s, fade_ms, *, debounce_s=1.0, diagnostic=False,
                  clock=time.monotonic):
@@ -30,8 +30,10 @@ class LabelVisibility:
         self._clock = clock
         self._text = text
         self._kind = 'immediate'
+        self._observed_kind = 'immediate'
         self._pending = None
         self._shown_at = clock()
+        self._recovery_fade = None
 
     @property
     def text(self):
@@ -46,10 +48,14 @@ class LabelVisibility:
 
         immediate: lifecycle/error status, or an explicit user action (force).
         transient: commit only after the same status persists for debounce_s.
-        tracking: cancel transient status; never restart visibility on recovery.
+        tracking: cancel transient status and fade immediately on recovery,
+                  including recovery from a transient too short to be painted.
         """
         if kind not in {'immediate', 'transient', 'tracking'}:
             raise ValueError('invalid label status kind')
+        if force:
+            kind = 'immediate'
+        previous_observed_kind, self._observed_kind = self._observed_kind, kind
         if kind == 'transient':
             if (text, kind) == (self._text, self._kind):
                 self._pending = None
@@ -62,8 +68,13 @@ class LabelVisibility:
         changed = (text, kind) != (self._text, self._kind)
         if kind == 'immediate' and (changed or force):
             self._shown_at = self._clock()
+            self._recovery_fade = None
+        recovery = kind == 'tracking' and previous_observed_kind == 'transient'
+        if recovery:
+            now = self._clock()
+            self._recovery_fade = (now, self._opacity_at(now))
         self._text, self._kind = text, kind
-        return changed or force
+        return changed or force or recovery
 
     def _commit_pending(self, now):
         if self._pending is None or now - self._pending[1] < self._debounce_s:
@@ -71,14 +82,21 @@ class LabelVisibility:
         self._text, self._kind = self._pending[0], 'transient'
         self._pending = None
         self._shown_at = now
+        self._recovery_fade = None
         return True
 
-    def opacity(self):
-        now = self._clock()
-        self._commit_pending(now)
+    def _opacity_at(self, now):
         if self._diagnostic or self._autohide_s == 0:
             return 1.0
+        if self._recovery_fade is not None:
+            started, opacity = self._recovery_fade
+            return opacity * max(0.0, 1.0 - (now-started)*1000/self._fade_ms)
         fade_elapsed_s = now - (self._shown_at + self._autohide_s)
         if fade_elapsed_s <= 0:
             return 1.0
         return max(0.0, 1.0 - fade_elapsed_s * 1000 / self._fade_ms)
+
+    def opacity(self):
+        now = self._clock()
+        self._commit_pending(now)
+        return self._opacity_at(now)

@@ -228,11 +228,29 @@ class RuntimeLabelTests(unittest.TestCase):
             self.assertEqual(c.window._label_opacity, 1.)
             self.tick(c, 8.1)
             self.assertEqual(c.window.label, tracking_label)
-            self.tick(c, 12.11)
+            self.tick(c, 8.2)
             self.assertAlmostEqual(c.window._label_opacity, .5)
+            self.tick(c, 8.4)
+            self.assertEqual(c.window._label_opacity, 0.)
             self.tick(c, 12.3)
             self.assertEqual(c.window._label_opacity, 0.)
 
+        self.exercise(scenario)
+
+    def test_short_blink_recovery_fades_startup_hint_without_stopping_live_tray(self):
+        def scenario(c):
+            self.tick(c, 0.)
+            self.tick(c, 1., 'blink')
+            self.assertTrue(c.window._label_visibility.pending)
+            self.assertIn('眨眼', c.tray.toolTip())
+            self.tick(c, 1.1)
+            self.assertEqual(c.window._label_opacity, 1.)
+            self.assertFalse(c.window._label_visibility.pending)
+            self.assertIn('Python 摄像头', c.tray.toolTip())
+            self.tick(c, 1.2)
+            self.assertAlmostEqual(c.window._label_opacity, .5)
+            self.tick(c, 1.4)
+            self.assertEqual(c.window._label_opacity, 0.)
         self.exercise(scenario)
 
     def test_screen_change_immediately_overrides_pending_anomaly(self):

@@ -9,21 +9,26 @@ class ControllerView:
     error: str | None
     result: object
     idle: bool
+    report: dict | None = None
+    matrix_revision: int = 0
 
 
 class OverlayController:
-    def __init__(self,settings,*,pipeline_factory=None):
+    def __init__(self,settings,*,pipeline_factory=None,result_sink=None,shutdown=None):
         if pipeline_factory is None:
             from gaze_core.capture import CameraPipeline
             from gaze_core.display import DisplayPipeline
             def pipeline_factory():
                 return CameraPipeline(settings,display_pipeline=DisplayPipeline(settings.filter,settings.fixation,matrix=None),
-                                      idle_after_s=settings.overlay.idle_after_s,idle_fps=settings.overlay.idle_fps)
+                                      idle_after_s=settings.overlay.idle_after_s,idle_fps=settings.overlay.idle_fps,
+                                      result_sink=result_sink)
         self._factory=pipeline_factory
+        self._shutdown=shutdown
         self._poll_seconds=settings.overlay.refresh_ms/1000
         self._condition=threading.Condition()
         self._wanted='paused';self._revision=0
         self._status='paused';self._error=None;self._latest=None;self._idle=False
+        self._report=None;self._matrix=None;self._matrix_revision=0;self._clear_numeric=False
         self.closed=threading.Event()
         self.thread=threading.Thread(target=self._worker,name='overlay-control',daemon=True)
         self.thread.start()
@@ -37,7 +42,20 @@ class OverlayController:
             self._condition.notify_all()
 
     def snapshot(self):
-        with self._condition:return ControllerView(self._status,self._error,self._latest,self._idle)
+        with self._condition:return ControllerView(self._status,self._error,self._latest,self._idle,self._report,self._matrix_revision)
+
+    def set_matrix(self,matrix):
+        from gaze_core.display import calibration_matrix
+        value=calibration_matrix(matrix)
+        with self._condition:
+            self._matrix=None if value is None else value.tolist()
+            self._matrix_revision+=1;self._condition.notify_all()
+
+    def clear_numeric_error(self):
+        with self._condition:
+            self._clear_numeric=True
+            if self._report is not None:self._report=dict(self._report,result_sink_error=None)
+            self._condition.notify_all()
 
     def _set(self,status,**values):
         with self._condition:
@@ -46,7 +64,7 @@ class OverlayController:
             self._condition.notify_all()
 
     def _worker(self):
-        pipeline=None;active=False;cursor=0;handled=-1
+        pipeline=None;active=False;cursor=0;handled=-1;matrix_revision=0
         while not self.closed.is_set():
             with self._condition:
                 if not active and handled==self._revision:self._condition.wait()
@@ -55,6 +73,7 @@ class OverlayController:
                 if wanted=='closed':
                     self._set('closing',latest=None)
                     if pipeline is not None:pipeline.close()
+                    if self._shutdown is not None:self._shutdown()
                     self._set('closed',latest=None,idle=False);self.closed.set();return
                 if wanted=='paused':
                     self._set('pausing',latest=None)
@@ -65,13 +84,22 @@ class OverlayController:
                 if not active:
                     self._set('starting',latest=None)
                     if pipeline is None:pipeline=self._factory()
+                    with self._condition:matrix,revision_matrix=self._matrix,self._matrix_revision
+                    if revision_matrix!=matrix_revision:
+                        pipeline.set_display_matrix(matrix,revision=revision_matrix);matrix_revision=revision_matrix
                     pipeline.resume();active=True
                     self._set('running')
+                with self._condition:matrix,revision_matrix=self._matrix,self._matrix_revision
+                if revision_matrix!=matrix_revision:
+                    pipeline.set_display_matrix(matrix,revision=revision_matrix);matrix_revision=revision_matrix
+                with self._condition:clear_numeric,self._clear_numeric=self._clear_numeric,False
+                if clear_numeric:pipeline.clear_result_sink_error()
                 result=pipeline.wait_for_result(cursor,timeout=self._poll_seconds)
+                report=pipeline.report()
                 with self._condition:
                     if result is not None and revision==self._revision and self._wanted=='running':
                         self._latest=result;cursor=result.sequence
-                    self._idle=bool(pipeline.report().get('software_idle_pacing'))
+                    self._idle=bool(report.get('software_idle_pacing'));self._report=report
                     self._condition.notify_all()
                 handled=revision
             except Exception as exc:

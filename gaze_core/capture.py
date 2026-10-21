@@ -160,6 +160,7 @@ class CameraPipeline:
         self._display_pipeline = display_pipeline
         self._display_matrix = None
         self._display_matrix_set = False
+        self._display_matrix_revision = 0
         self._result_sink = result_sink
         self._result_queue = queue.Queue(self.settings.recording.queue_size)
         self._result_sink_error = None
@@ -286,14 +287,17 @@ class CameraPipeline:
                 self._engine = None
             self._closed = True
 
-    def set_display_matrix(self, matrix):
+    def set_display_matrix(self, matrix, *, revision=None):
         """Only swap immutable input; filtering stays on the inference worker."""
         from .display import calibration_matrix
+        if revision is not None and (isinstance(revision, bool) or not isinstance(revision, Integral) or revision < 0):
+            raise ValueError('显示矩阵版本必须为非负整数。')
         validated = calibration_matrix(matrix)
         snapshot = None if validated is None else tuple(tuple(float(v) for v in row) for row in validated)
         with self._condition:
             self._display_matrix = snapshot
             self._display_matrix_set = True
+            self._display_matrix_revision = self._display_matrix_revision+1 if revision is None else int(revision)
 
     @property
     def result_sink_error(self):
@@ -551,9 +555,10 @@ class CameraPipeline:
                 if self._display_pipeline is not None:
                     with self._condition:
                         matrix_kwargs = {'matrix': self._display_matrix} if self._display_matrix_set else {}
+                        matrix_revision = self._display_matrix_revision
                     display=self._display_pipeline.process(data,source='python',capture_ns=frame.captured_ns,
                                                            geometry=self.settings.geometry, **matrix_kwargs)
-                    data=dict(data,display=display)
+                    data=dict(data,display=dict(display,matrix_revision=matrix_revision))
                 with self._condition:
                     if self._pacing is not None:self._pacing.observe(data.get('status'),frame.captured_ns)
                     self._predicted += 1

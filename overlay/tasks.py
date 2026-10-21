@@ -134,7 +134,7 @@ class TaskRunner:
                 if values.shape != (2,) or not np.isfinite(values).all():
                     raise ValueError('校准/核对原始坐标必须为有限二维数值')
                 raw = values.tolist()  # Never filter or clip these positions.
-            row = dict(target_id=self.targets[window['index']]['target_id'], valid=valid,
+            row = dict(frame_id=int(sequence), target_id=self.targets[window['index']]['target_id'], valid=valid,
                        raw=raw, origin_m=deepcopy(data.get('origin_m')))
             window['frames'].append(row)
             self._frames.append(row)
@@ -191,7 +191,11 @@ class TaskRunner:
                       calibration_id=self.calibration_id,
                       sample_count=sum(row['valid'] for row in self._frames),
                       estimated_distance_cm_median=float(np.median(self._distances)) if self._distances else None,
-                      estimated_distance_sample_count=len(self._distances))
+                      estimated_distance_sample_count=len(self._distances),
+                      sample_selection=[dict(frame_id=row['frame_id'], target_id=row['target_id'])
+                                        for row in self._frames],
+                      sampling={key: getattr(self.settings, key)
+                                for key in ('settle_ms', 'dwell_ms', 'max_dwell_ms')})
         if self.kind == 'calibrate':
             rows=deepcopy(self.redo_from['_calibration_samples']) if self.redo_from is not None else []
             rows.extend(dict(target_id=r['target_id'],raw=r['raw']) for r in self._frames if r['valid'])

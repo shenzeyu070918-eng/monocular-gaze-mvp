@@ -76,6 +76,23 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual([row["seq"] for row in session.records], [0, 3, 2, 1, 4])
         self.assertEqual(session.summary()["duration_seconds"], .004)
 
+    def test_click_session_and_native_click_follow_event_clock_not_arrival(self):
+        rows = self.rows('python', [
+            {'type':'click_session', 'action':'started', 'experiment_id':'test', 'event_ns':9_000_000_000},
+            {'type':'click', 'x':.2, 'y':.3, 'button':'other', 'event_ns':9_002_000_000,
+             'received_ns':9_009_000_000, 'native_timestamp':1.2, 'timestamp_source':'native_mapped',
+             'callback_delay_estimate_ns':7_000_000, 'clock_uncertainty_ns':100,
+             'excluded':False, 'exclusion_reason':None},
+            self.frame(9_001_000_000, source='python'),
+            {'type':'click_session', 'action':'completed', 'experiment_id':'test', 'event_ns':9_003_000_000},
+        ])
+        session = read_session(self.write(rows))
+        self.assertEqual([row['seq'] for row in session.records], [0,1,3,2,4,5])
+        self.assertEqual(session.summary()['event_counts'], dict(click=1,click_session=2))
+        click = next(row for row in session.records if row['type']=='click')
+        self.assertEqual(click['event_ns'], 9_002_000_000)
+        self.assertEqual(click['received_ns'], 9_009_000_000)
+
     def test_processor_receives_frames_only_in_capture_order(self):
         self.write(self.rows(body=[self.frame(20), {"type": "target", "browser_time_ms": 10}, self.frame(5)]))
         self.assertEqual(list(replay(self.path, lambda frame: (frame["browser_capture_ms"], frame["raw"]))),

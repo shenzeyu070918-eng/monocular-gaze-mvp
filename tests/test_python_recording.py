@@ -94,6 +94,63 @@ class RuntimeRecordingTests(unittest.TestCase):
         self.assertEqual([read_session(r.path).summary()['frame_count'] for r in self.recorders], [2,1])
         self.assertEqual(read_session(self.recorders[1].path).records[-1]['reason'], 'cancelled')
 
+    def test_independent_holders_share_one_session_with_manual_and_tasks(self):
+        recording = self.make_recording()
+        recording.set_metadata(metadata())
+        self.assertTrue(recording.acquire('experiment'))
+        self.assertTrue(recording.acquire('experiment'))  # Idempotent ownership.
+        self.assertTrue(recording.acquire('clicks'))
+        self.assertTrue(recording.manual(True))
+        self.assertTrue(recording.begin_task('nine'))
+        self.assertTrue(recording.record_prediction(prediction(1)))
+        self.assertTrue(recording.end_task('nine'))
+        self.assertTrue(recording.manual(False))
+        self.assertTrue(recording.status()['active'])
+        self.assertEqual(recording.status()['holders'], ['clicks', 'experiment'])
+        self.assertTrue(recording.release('clicks'))
+        self.assertFalse(recording.release('clicks'))
+        self.assertTrue(recording.begin_task('check'))
+        self.assertTrue(recording.release('experiment'))
+        self.assertTrue(recording.status()['active'])
+        self.assertTrue(recording.record_prediction(prediction(2)))
+        self.assertTrue(recording.end_task('check', 'experiment_completed'))
+        self.assertFalse(recording.status()['active'])
+        recording.close()
+        self.assertEqual(len(self.recorders), 1)
+        session = read_session(self.recorders[0].path)
+        self.assertEqual(session.summary()['frame_count'], 2)
+        self.assertEqual(session.records[-1]['reason'], 'experiment_completed')
+
+    def test_releasing_experiment_does_not_close_borrowed_manual_session(self):
+        recording = self.make_recording(metadata_factory=metadata)
+        self.assertTrue(recording.manual(True))
+        self.assertTrue(recording.acquire('experiment'))
+        self.assertTrue(recording.release('experiment', 'experiment_completed'))
+        self.assertTrue(recording.status()['active'])
+        self.assertTrue(recording.status()['manual'])
+        self.assertTrue(recording.record_prediction(prediction(1)))
+        self.assertTrue(recording.manual(False))
+        recording.close()
+        self.assertEqual(len(self.recorders), 1)
+
+    def test_failure_clears_holders_and_click_counts_come_from_flushed_writer(self):
+        recording = self.make_recording(metadata_factory=metadata)
+        self.assertTrue(recording.acquire('experiment'))
+        self.assertTrue(recording.acquire('clicks'))
+        self.assertEqual(recording.status()['written_clicks'], 0)
+        self.assertTrue(recording.emit('click', x=.2, y=.5, button='left', event_ns=10))
+        wait_for(lambda: recording.status()['written_clicks'] == 1)
+        self.assertTrue(recording.emit('click', x=.2, y=.5, button='left', event_ns=11,
+                                       received_ns=11, native_timestamp=None, timestamp_source='callback_received',
+                                       callback_delay_estimate_ns=None, clock_uncertainty_ns=None,
+                                       excluded=True, exclusion_reason='own_panel'))
+        wait_for(lambda: recording.status()['excluded_clicks'] == 1)
+        self.assertFalse(recording.emit('click', x=.5, y=.5, button='left', image='not allowed'))
+        self.assertFalse(recording.status()['active'])
+        self.assertEqual(recording.status()['holders'], [])
+        recording.close()
+        self.assertFalse(recording.acquire('clicks'))
+
     def test_metadata_preparation_is_background_and_cannot_block_producer(self):
         gate = threading.Event()
         entered = threading.Event()

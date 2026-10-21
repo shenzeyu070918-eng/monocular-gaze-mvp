@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterator
 import warnings
 
 
-EVENT_TYPES = frozenset({"target", "calibration", "calibration_quality", "distance_check", "evaluation_summary", "click"})
+EVENT_TYPES = frozenset({"target", "calibration", "calibration_quality", "distance_check", "evaluation_summary", "click", "click_session"})
 RECORD_TYPES = EVENT_TYPES | {"session", "frame", "end"}
 
 

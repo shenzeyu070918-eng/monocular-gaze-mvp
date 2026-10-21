@@ -17,7 +17,10 @@ def wait_for(controller,predicate):
 
 class FakePipeline:
     def __init__(self):
-        self.calls=[];self.active=False;self.sequence=0
+        self.calls=[];self.active=False;self.sequence=0;self.task_states=[]
+    def set_task_active(self,active):
+        self.task_states.append(active)
+        self.calls.append(('task-active' if active else 'task-inactive',threading.current_thread().name))
     def resume(self):self.calls.append(('resume',threading.current_thread().name));self.active=True
     def pause(self):self.calls.append(('pause',threading.current_thread().name));self.active=False
     def close(self):self.calls.append(('close',threading.current_thread().name));self.active=False
@@ -29,6 +32,68 @@ class FakePipeline:
 
 
 class ControllerTests(unittest.TestCase):
+    def test_task_pacing_changes_are_worker_owned_deduplicated_and_pause_clears(self):
+        pipe=FakePipeline()
+        c=OverlayController(load_settings(use_local=False),pipeline_factory=lambda:pipe)
+        try:
+            c.set_task_active(True);c.request('running')
+            wait_for(c,lambda s:s.result is not None)
+            self.assertEqual(pipe.task_states,[True])
+            c.set_task_active(True)
+            previous=c.snapshot().result.sequence
+            wait_for(c,lambda s:s.result is not None and s.result.sequence>previous+2)
+            self.assertEqual(pipe.task_states,[True],'polling must not resend pacing intent')
+            c.set_task_active(False)
+            wait_for(c,lambda s:pipe.task_states==[True,False])
+            c.set_task_active(True)
+            wait_for(c,lambda s:pipe.task_states==[True,False,True])
+            c.request('paused');wait_for(c,lambda s:s.status=='paused')
+            self.assertEqual(pipe.task_states,[True,False,True,False])
+            c.request('running');wait_for(c,lambda s:s.result is not None)
+            self.assertFalse(pipe.task_states[-1])
+            with self.assertRaisesRegex(ValueError,'布尔'):c.set_task_active(1)
+        finally:
+            c.request('closed');self.assertTrue(c.closed.wait(3));c.thread.join(1)
+        self.assertTrue(all(owner=='overlay-control' for _,owner in pipe.calls))
+
+    def test_task_end_during_blocked_start_and_close_never_block_gui(self):
+        started=threading.Event();release=threading.Event();pipe=FakePipeline()
+        def resume():started.set();release.wait(3);pipe.active=True
+        pipe.resume=resume
+        c=OverlayController(load_settings(use_local=False),pipeline_factory=lambda:pipe)
+        try:
+            c.set_task_active(True);c.request('running')
+            self.assertTrue(started.wait(3))
+            c.set_task_active(False)
+            c.request('closed')
+            self.assertFalse(c.closed.is_set())
+            c.set_task_active(True)  # Closing cannot revive a task.
+            release.set();self.assertTrue(c.closed.wait(3));c.thread.join(1)
+            self.assertEqual(pipe.task_states,[True,False])
+            self.assertFalse(pipe.active)
+        finally:
+            release.set();c.request('closed');self.assertTrue(c.closed.wait(3));c.thread.join(1)
+
+    def test_task_failure_restores_cap_before_retrying_pipeline(self):
+        pipe=FakePipeline();original_wait=pipe.wait_for_result;calls=[]
+        def wait(cursor,timeout):
+            calls.append(1)
+            if len(calls)==1:raise RuntimeError('fake task inference failure')
+            return original_wait(cursor,timeout)
+        pipe.wait_for_result=wait
+        c=OverlayController(load_settings(use_local=False),pipeline_factory=lambda:pipe)
+        try:
+            c.set_task_active(True);c.request('running')
+            wait_for(c,lambda s:s.status=='error')
+            self.assertEqual(pipe.task_states,[True,False])
+            self.assertFalse(c._task_active)
+            c.request('running');wait_for(c,lambda s:s.result is not None)
+            self.assertFalse(pipe.task_states[-1])
+            self.assertEqual([action for action,_ in pipe.calls][:4],
+                             ['task-active','resume','task-inactive','pause'])
+        finally:
+            c.request('closed');self.assertTrue(c.closed.wait(3));c.thread.join(1)
+
     def test_twenty_pause_resume_cycles_have_one_owner_and_one_pipeline(self):
         settings=load_settings(use_local=False);pipe=FakePipeline();created=[]
         def factory():created.append(1);return pipe

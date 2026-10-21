@@ -1,8 +1,9 @@
 device_file: null  # Relative to this config: devices/<设备名>.yaml; null uses estimated intrinsics.
 inference:
-  device: auto  # auto / cpu / cuda / mps; auto remains CUDA if available, otherwise CPU (Mac default unchanged).
-  num_threads: 4  # PyTorch intraop only; legacy cpu_threads still accepted. Compare 2 vs 4 on hardware.
-  max_fps: null  # Python inference start-rate cap; null=unlimited. Capture clock and One Euro dt unchanged.
+  # Mac 实测选择；Windows 待测，可在 config/local.yaml 中覆盖以下设置。
+  device: auto  # auto / cpu / cuda / mps; auto selects CUDA if available, otherwise CPU (Mac uses CPU).
+  num_threads: 2  # PyTorch intraop only; legacy cpu_threads still accepted.
+  max_fps: 15  # Python inference start-rate cap; null=unlimited. Overlay calibration/redo/check temporarily run uncapped.
   max_faces: 1
   blink_threshold: 0.14
   distance_min_m: 0.15

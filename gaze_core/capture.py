@@ -151,6 +151,7 @@ class CameraPipeline:
         self._engine_factory = engine_factory or self._new_engine
         self._collect_timings, self._clock_ns = collect_timings, clock_ns
         self._condition = threading.Condition()
+        self._task_active = False
         self._control = threading.RLock()
         self._stop, self._run = threading.Event(), threading.Event()
         self._threads = ()
@@ -308,6 +309,18 @@ class CameraPipeline:
             self._display_matrix = snapshot
             self._display_matrix_set = True
             self._display_matrix_revision = self._display_matrix_revision+1 if revision is None else int(revision)
+
+    def set_task_active(self, active):
+        """Temporarily bypass the configured inference cap without resetting data.
+
+        This only changes pacing. The capture clock, latest pending frame,
+        engine and display filter keep their current state.
+        """
+        if type(active) is not bool:
+            raise ValueError('任务状态必须为布尔值。')
+        with self._condition:
+            self._task_active = active
+            self._condition.notify_all()
 
     @property
     def result_sink_error(self):
@@ -553,13 +566,20 @@ class CameraPipeline:
                         break
                     # Pace starts, then take the newest pending frame. Waiting
                     # is interruptible; capture continues replacing old frames.
-                    if self.settings.inference.max_fps is not None and last_started_ns is not None:
-                        deadline=last_started_ns+1_000_000_000/self.settings.inference.max_fps
-                        while not self._stop.is_set():
-                            remaining=(deadline-self._clock_ns())/1_000_000_000
-                            if remaining<=0:break
-                            self._condition.wait(remaining)
-                        if self._stop.is_set():break
+                    while not self._stop.is_set() and last_started_ns is not None:
+                        max_fps = None if self._task_active else self.settings.inference.max_fps
+                        if max_fps is None:
+                            break
+                        deadline = last_started_ns+1_000_000_000/max_fps
+                        remaining = (deadline-self._clock_ns())/1_000_000_000
+                        if remaining <= 0:
+                            break
+                        # A task can begin during this wait. Re-read its flag
+                        # after every notification rather than retaining the
+                        # old low-rate deadline until it expires.
+                        self._condition.wait(remaining)
+                    if self._stop.is_set():
+                        break
                     frame, self._pending = self._pending, None
                     self._in_flight = True
                 self._prepare_recorder(engine, frame.image)

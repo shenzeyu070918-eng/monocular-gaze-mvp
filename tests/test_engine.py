@@ -30,6 +30,7 @@ class SettingsTests(unittest.TestCase):
     def test_defaults_match_web_input(self):
         settings = load_settings(use_local=False)
         self.assertEqual(settings.inference.device, 'auto')
+        self.assertEqual((settings.inference.num_threads,settings.inference.max_fps),(2,15))
         self.assertEqual((settings.camera.width, settings.camera.height), (640, 480))
         self.assertEqual(settings.camera.backend, 'auto')
         self.assertFalse(settings.camera.grayscale)
@@ -67,9 +68,9 @@ class SettingsTests(unittest.TestCase):
 
 
 class EngineTests(unittest.TestCase):
-    def build_engine(self, mode='auto', available=False, mps_available=False):
+    def build_engine(self, mode='auto', available=False, mps_available=False, num_threads=4):
         settings = load_settings(use_local=False)
-        settings = replace(settings, inference=replace(settings.inference, device=mode))
+        settings = replace(settings, inference=replace(settings.inference, device=mode,cpu_threads=num_threads))
         backend = SimpleNamespace(_gaze_estimation_model=SimpleNamespace(parameters=lambda: []),
                                   _normalized_camera=object(), detect_faces=Mock(return_value=[]),
                                   estimate_gaze=Mock(), close=Mock())

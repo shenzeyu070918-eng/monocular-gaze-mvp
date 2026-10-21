@@ -25,6 +25,12 @@ class OverlaySession:
         self._pending_calibration=None;self._first_calibration=None
         self.request_redo=None;self.dismiss_redo=None;self._window_factory=None;self._qscreen=None
         self.display_revision=0;self.matrix_since_ns=0
+        self._inference_task_active=False
+
+    def _task_inference(self,active):
+        if active==self._inference_task_active:return
+        if self.controller is not None:self.controller.set_task_active(active)
+        self._inference_task_active=active
 
     def _matrix(self,matrix):
         self.matrix_since_ns=self.clock_ns();self.display_revision+=1
@@ -155,6 +161,7 @@ class OverlaySession:
                             matrix=self.profiles.matrix,group='B' if self.profiles.matrix is not None else 'A',
                             calibration_id=self.profiles.calibration_id,coordinate_system='full_screen_normalized',pipeline='python')
         try:
+            self._task_inference(True)
             runner.begin();window.open()
         except Exception:
             runner.cancel('task_window_failed');self._events()
@@ -164,6 +171,7 @@ class OverlaySession:
         return runner
 
     def cancel(self,reason='cancelled'):
+        self._task_inference(False)
         if self._pending_calibration is not None:
             result=self._pending_calibration;self._pending_calibration=None;self._first_calibration=None
             if self.dismiss_redo is not None:self.dismiss_redo()
@@ -172,6 +180,7 @@ class OverlaySession:
             self.task.cancel(reason);self._events();self.task_window.refresh()
 
     def _dispose(self):
+        self._task_inference(False)
         window=self.task_window;self.task=self.task_window=None
         window.close();window.deleteLater();self.restore()
 
@@ -186,6 +195,9 @@ class OverlaySession:
             self._quality_event(first,'redo_cancelled');self._save_calibration(first)
 
     def _completed(self,result):
+        # Sampling has ended; restore the configured cap before formatting,
+        # profile IO or a redo confirmation can keep the user waiting.
+        self._task_inference(False)
         self._events()
         if result['kind']=='calibrate':
             quality=result.get('quality')
@@ -248,6 +260,7 @@ class OverlaySession:
             window=self._window_factory(runner,self._qscreen,self.settings.overlay,clock_ns=self.clock_ns)
             self._first_calibration=first;self.task,self.task_window=runner,window
             self.buffer.clear();window.completed.connect(self._completed);window.cancelled.connect(self._cancelled)
+            self._task_inference(True)
             runner.begin();window.open()
         except Exception as exc:
             if self.task_window is not None:self._dispose()
@@ -256,4 +269,5 @@ class OverlaySession:
 
     def close(self):
         # Called by the lifecycle worker only after the camera/sink have drained.
+        self._task_inference(False)
         self.recording.close();self.profiles.close()

@@ -88,10 +88,14 @@ class Recording:
 
 
 class Controller:
-    def __init__(self): self.matrices = []; self.clears = 0
+    def __init__(self):
+        self.matrices = []; self.clears = 0
+        self.task_active=False;self.task_states=[]
     def snapshot(self): return SimpleNamespace(status='running')
     def set_matrix(self,matrix): self.matrices.append(deepcopy(matrix))
     def clear_numeric_error(self): self.clears += 1
+    def set_task_active(self,active):
+        self.task_active=active;self.task_states.append(active)
 
 
 class OverlaySessionTests(unittest.TestCase):
@@ -170,6 +174,42 @@ class OverlaySessionTests(unittest.TestCase):
         self.assertFalse(self.path.exists())
         self.assertEqual(self.session.recording.ends[-1][1],'task_window_failed')
         self.assertTrue(self.restores)
+        self.assertEqual(self.controller.task_states,[True,False])
+
+    def test_calibration_and_check_uncap_only_while_sampling_and_keep_configuration(self):
+        original=self.settings.inference
+        for kind in ('calibrate','evaluate'):
+            with self.subTest(kind=kind):
+                self.controller.task_states.clear()
+                runner=self.start(kind)
+                self.assertTrue(self.controller.task_active)
+                self.fill_task(runner)
+                self.assertFalse(self.controller.task_active)
+                self.finish_io()
+                self.assertEqual(self.controller.task_states,[True,False])
+                self.assertIs(self.settings.inference,original)
+                self.now+=1_000_000
+
+    def test_cancel_and_close_restore_limit_before_cleanup(self):
+        for reason in ('cancelled','camera_paused','closing','recording_failed','conditions_changed'):
+            with self.subTest(reason=reason):
+                self.controller.task_states.clear()
+                self.start('calibrate')
+                self.session.cancel(reason)
+                self.assertFalse(self.controller.task_active)
+                self.assertEqual(self.controller.task_states,[True,False])
+                self.assertFalse(self.session.active)
+                self.now+=1_000_000
+        self.start('calibrate')
+        self.session.close()
+        self.assertFalse(self.controller.task_active)
+
+    def test_completed_analysis_failure_does_not_leave_inference_unlimited(self):
+        runner=self.start('evaluate')
+        self.session.results=lambda *_:(_ for _ in ()).throw(RuntimeError('synthetic panel failure'))
+        with self.assertRaisesRegex(RuntimeError,'synthetic panel failure'):
+            self.fill_task(runner)
+        self.assertFalse(self.controller.task_active)
 
     def fill_task(self, runner, *, offset=(.1,-.2), distance=48.):
         frames = []
@@ -204,6 +244,7 @@ class OverlaySessionTests(unittest.TestCase):
         self.assertTrue(self.session.active)
         self.assertFalse(self.path.exists())
         self.assertIsNone(self.session.task)
+        self.assertFalse(self.controller.task_active)
         with self.assertRaises(ValueError):self.start('evaluate')
         return runner,choices[0]
 
@@ -213,6 +254,7 @@ class OverlaySessionTests(unittest.TestCase):
         self.assertEqual(len(quality['points']),9)
         self.assertTrue(any(p['redo'] for p in quality['points']))
         decide(False);self.finish_io()
+        self.assertEqual(self.controller.task_states,[True,False])
         profile=json.loads(self.path.read_text())
         self.assertEqual(profile['matrix'],first.result['matrix'])
         self.assertEqual(profile['calibration']['quality'],quality)
@@ -224,8 +266,11 @@ class OverlaySessionTests(unittest.TestCase):
     def test_redo_only_flagged_points_merges_samples_once_and_retains_one_session(self):
         first,(quality,decide)=self.prepare_quality_prompt()
         decide(True);redo=self.session.task
+        self.assertTrue(self.controller.task_active)
         self.assertEqual({t['target_id'] for t in redo.targets},{p['target_id'] for p in quality['points'] if p['redo']})
         self.fill_task(redo,offset=(0.,0.),distance=40.);self.finish_io()
+        self.assertFalse(self.controller.task_active)
+        self.assertEqual(self.controller.task_states,[True,False,True,False])
         result=redo.result
         self.assertEqual(result['sample_count'],72+8*len(redo.targets))
         self.assertEqual(result['estimated_distance_sample_count'],result['sample_count'])
@@ -238,6 +283,7 @@ class OverlaySessionTests(unittest.TestCase):
     def test_esc_in_redo_keeps_first_complete_fit_but_pause_pending_does_not_save(self):
         first,(_,decide)=self.prepare_quality_prompt()
         decide(True);self.session.task_window.escape();self.finish_io()
+        self.assertFalse(self.controller.task_active)
         self.assertEqual(json.loads(self.path.read_text())['matrix'],first.result['matrix'])
         self.assertIn('redo_cancelled',[e.get('phase') for e in self.session.recording.events])
         before=self.path.read_bytes()
@@ -246,6 +292,7 @@ class OverlaySessionTests(unittest.TestCase):
         runner=self.start('calibrate')
         self.fill_task(runner,offset=lambda p:(0.,.5) if p['target_id']=='calibration-1' else (0.,0.))
         self.session.cancel('camera_paused');self.choice(True);self.finish_io()
+        self.assertFalse(self.controller.task_active)
         self.assertEqual(self.path.read_bytes(),before)
         self.assertFalse(self.session.active)
 

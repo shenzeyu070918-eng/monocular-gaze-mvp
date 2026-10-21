@@ -120,6 +120,16 @@ def open_camera(options):
     return cv2.VideoCapture(options.index, backend)
 
 
+def configure_camera(camera, options):
+    """Shared post-open setup; the caller retains ownership, including failures."""
+    import cv2
+    if not camera.isOpened():
+        raise RuntimeError('无法打开摄像头；请检查权限、设备编号或是否被浏览器/其他程序占用。')
+    camera.set(cv2.CAP_PROP_FRAME_WIDTH, options.width)
+    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, options.height)
+    return camera.getBackendName()
+
+
 class CameraPipeline:
     """Two owned workers and one replaceable pending frame; never a frame queue.
 
@@ -484,14 +494,10 @@ class CameraPipeline:
     def _capture_loop(self):
         camera = None
         try:
-            import cv2
             camera = self._camera_factory(self.settings.camera)
-            if not camera.isOpened():
-                raise RuntimeError('无法打开摄像头；请检查权限、设备编号或是否被浏览器/其他程序占用。')
-            camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.settings.camera.width)
-            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.settings.camera.height)
+            backend = configure_camera(camera, self.settings.camera)
             with self._condition:
-                self._actual_backend = camera.getBackendName()
+                self._actual_backend = backend
             self._capture_ready.set()
             self._run.wait()
             for image, captured_ns in read_camera_frames(camera, self.settings.camera,

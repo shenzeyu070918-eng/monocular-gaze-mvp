@@ -1,5 +1,7 @@
 """Native calls are fake: tests neither register real shortcuts nor observe keys."""
 import ctypes as C
+from contextlib import redirect_stdout
+import io
 import unittest
 from unittest.mock import Mock
 from types import SimpleNamespace
@@ -11,6 +13,22 @@ from gaze_core.config import OverlaySettings
 
 
 class HotkeyTests(unittest.TestCase):
+    def test_each_received_registered_hotkey_logs_action_before_dispatch(self):
+        received=[]
+        output=io.StringIO()
+        def dispatch(action):
+            self.assertTrue(output.getvalue().endswith('收到热键：'+{
+                'toggle':'显示/隐藏','pause':'暂停/恢复','calibrate':'开始九点','panel':'控制面板'}[action]+'\n'))
+            received.append(action)
+        bindings=dict(toggle='Ctrl+Alt+G',pause='Ctrl+Alt+P',calibrate='Ctrl+Alt+C',panel='Ctrl+Alt+O')
+        keys=Hotkeys(bindings,dispatch,backend_factory=lambda cb:Mock())
+        with redirect_stdout(output):
+            for ident in range(1,5):keys._activated(ident)
+            keys._activated(999)
+            keys.close();keys._activated(1)
+        self.assertEqual(received,list(bindings))
+        self.assertEqual(len(output.getvalue().splitlines()),4)
+
     def test_new_overlay_options_validate_without_rejecting_one_bad_shortcut_at_load(self):
         for fields in (dict(panel_on_start='other'),dict(calibration_redo_cm=0),dict(calibration_redo_cm=True),dict(hotkeys={})):
             with self.assertRaises(ValueError):OverlaySettings(**fields)

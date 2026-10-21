@@ -1,6 +1,8 @@
 """Register only named system shortcuts; never inspect general key events."""
 import sys
 
+ACTION_LABELS = {'toggle':'显示/隐藏','pause':'暂停/恢复','calibrate':'开始九点','panel':'控制面板'}
+
 
 def parse_shortcut(text):
     parts = [p.strip().upper() for p in text.split('+')]
@@ -44,7 +46,9 @@ class Hotkeys:
 
     def _activated(self, ident):
         action=self._actions.get(ident)
-        if action is not None:self._dispatch(action)
+        if action is not None:
+            print('收到热键：'+ACTION_LABELS.get(action,action),flush=True)
+            self._dispatch(action)
 
     def close(self):
         self._actions.clear()
@@ -53,5 +57,4 @@ class Hotkeys:
             backend.close()
 
     def text(self):
-        labels={'toggle':'显示/隐藏','pause':'暂停/恢复','calibrate':'开始九点','panel':'控制面板'}
-        return '\n'.join(labels[k]+'：'+v for k,v in self.status.items())
+        return '\n'.join(ACTION_LABELS[k]+'：'+v for k,v in self.status.items())

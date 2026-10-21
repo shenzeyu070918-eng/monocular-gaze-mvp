@@ -25,7 +25,8 @@ class ControlPanel(QWidget):
         layout.addWidget(self.results)
 
     def present(self):
-        self.show(); self.raise_(); self.activateWindow()
+        from .platforms import present_panel
+        present_panel(self)
 
     def closeEvent(self, event):
         event.ignore(); self.hide()

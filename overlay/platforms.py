@@ -63,6 +63,42 @@ def configure_window(widget):
     # supply the native tool-window, no-activation and click-through behavior.
 
 
+def present_panel(widget):
+    """Bring ordinary controls forward, including an accessory app on macOS."""
+    from PySide6.QtGui import QGuiApplication
+    native = None
+    # Offscreen Qt has no Cocoa NSView. Keep headless tests and other platforms
+    # on Qt's normal window path instead of importing or activating AppKit.
+    if sys.platform == 'darwin' and QGuiApplication.platformName() == 'cocoa':
+        try:
+            import objc
+            import AppKit
+            application = AppKit.NSApplication.sharedApplication()
+            view = objc.objc_object(c_void_p=int(widget.winId()))
+            native = view.window()
+            if native is None:
+                raise RuntimeError('无法取得控制面板的 macOS 窗口。')
+            # The panel follows the current Space when summoned, rather than
+            # activating the Space where an already-visible panel was left.
+            conflicts = (AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces |
+                         AppKit.NSWindowCollectionBehaviorFullScreenPrimary |
+                         getattr(AppKit, 'NSWindowCollectionBehaviorFullScreenNone', 0))
+            behavior = ((native.collectionBehavior() & ~conflicts) |
+                        AppKit.NSWindowCollectionBehaviorMoveToActiveSpace |
+                        AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary)
+            native.setCollectionBehavior_(behavior)
+            application.activateIgnoringOtherApps_(True)
+        except Exception as exc:
+            native = None
+            print('控制面板原生前置失败：' + str(exc), file=sys.stderr, flush=True)
+    widget.show()
+    widget.raise_()
+    widget.activateWindow()
+    if native is not None:
+        native.makeKeyAndOrderFront_(None)
+        native.orderFrontRegardless()
+
+
 def camera_permission():
     """Preflight only; OpenCV owns capture. Never request input monitoring."""
     if sys.platform=='darwin':

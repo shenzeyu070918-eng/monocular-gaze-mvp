@@ -8,7 +8,7 @@ from .controller import OverlayController
 from .state import RingState
 
 
-def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,permission_check,*,controls=None):
+def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,permission_check,*,controls=None,profile_seconds=None):
     notice=permission_check()
     if notice:
         print(notice,file=sys.stderr)
@@ -218,11 +218,38 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             actions['record'].setText('手动录制'+('（任务自动录制中）' if record['task_id'] and not record['manual'] else ''))
             actions['web'].setEnabled(not shutdown_requested and not session.active)
             actions['toggle'].setEnabled(not session.active and not shutdown_requested)
-    timer.timeout.connect(tick)
+    profiler=None;timer_tick=tick;profiled_label=None
+    if profile_seconds is not None:
+        from .profiling import CallbackProfiler
+        def ready():
+            snapshot=controller.snapshot()
+            return snapshot.status=='running' and snapshot.result is not None and (session is None or
+                   (session.profiles.conditions is not None and not session.profiles.busy))
+        def context():
+            import platform
+            from dataclasses import asdict
+            snapshot=controller.snapshot();report=snapshot.report or {}
+            return dict(system=platform.platform(),python=platform.python_version(),
+                        inference=dict(device=settings.inference.device,num_threads=settings.inference.num_threads,max_fps=settings.inference.max_fps),
+                        actual_device=report.get('device'),actual_resolution=report.get('actual_resolution'),
+                        measurement_source=report.get('measurement_source','live_camera'),
+                        predicted_frames=report.get('predicted_frames'),valid_predictions=report.get('valid_predictions'),
+                        camera=asdict(settings.camera),refresh_ms=settings.overlay.refresh_ms,
+                        profile_loaded=session is not None and session.profiles.profile is not None)
+        profiler=CallbackProfiler(profile_seconds,ready=ready,context=context)
+        timer_tick=profiler.wrap(tick,'tick')
+        profiled_label=profiler.wrap(window._refresh_label,'label')
+        window._label_timer.timeout.disconnect(window._refresh_label)
+        window._label_timer.timeout.connect(profiled_label)
+    timer.timeout.connect(timer_tick)
     try:
         controller.request('running')
         return app.exec()
     finally:
+        if profiler is not None:
+            profiler.finish()
+            window._label_timer.timeout.disconnect(profiled_label)
+            window._label_timer.timeout.connect(window._refresh_label)
         if hotkeys is not None:hotkeys.close()
         # Normal quits pass QuitGate and arrive here only after worker cleanup.
         # Exceptional Qt exits still request cleanup and keep it off the UI loop.
@@ -230,7 +257,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             controller.request('closed')
             controller.thread.join(settings.camera.startup_timeout_s+settings.camera.stop_timeout_s+settings.recording.close_timeout_s)
         app.removeEventFilter(gate)
-        timer.timeout.disconnect(tick)
+        timer.timeout.disconnect(timer_tick)
         for event_signal in screen_signals:
             try:event_signal.disconnect(changed)
             except (RuntimeError,TypeError):pass

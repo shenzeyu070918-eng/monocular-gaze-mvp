@@ -28,8 +28,15 @@ EVENT_FIELDS = {
     'calibration': {'action', 'matrix', 'calibration_id', 'group', 'browser_time_ms', 'coordinate_system'},
     'distance_check': {'measured_cm', 'estimated_cm', 'bias_cm', 'bias_percent', 'sample_count',
                        'sample_start_ms', 'sample_end_ms', 'browser_time_ms', 'warning', 'camera'},
-    'evaluation_summary': {'task_id', 'run_id', 'calibration_id', 'completed', 'reason', 'summary', 'browser_time_ms'},
-    'click': {'x', 'y', 'button', 'browser_time_ms'},  # Reserved schema; no input listener in M0.
+    'evaluation_summary': {'task_id', 'run_id', 'calibration_id', 'completed', 'reason', 'summary', 'browser_time_ms',
+                           'sample_selection', 'sampling'},
+    'click': {'x', 'y', 'button', 'browser_time_ms', 'received_ns', 'native_timestamp',
+              'timestamp_source', 'callback_delay_estimate_ns', 'clock_uncertainty_ns',
+              'excluded', 'exclusion_reason'},
+    'click_session': {'action', 'experiment_id', 'baseline_matrix', 'baseline_calibration_id',
+                      'baseline_created_at', 'baseline_age_s', 'conditions_fingerprint',
+                      'check_task_id', 'reason', 'collection_start_ns', 'collection_end_ns',
+                      'max_fps', 'inference_frame_count', 'actual_inference_fps'},
     'calibration_quality': {'task_id','calibration_id','phase','quality','browser_time_ms'},
 }
 for _event_fields in EVENT_FIELDS.values():
@@ -38,6 +45,9 @@ for _kind in ('calibration', 'evaluation_summary', 'calibration_quality'):
     EVENT_FIELDS[_kind].update({'estimated_distance_cm_median', 'estimated_distance_sample_count',
                                 'conditions_fingerprint', 'pipeline', 'profile_file'})
 STATUSES = {'tracking', 'no_face', 'blink', 'geometry_invalid', 'prediction_error', 'screen_unconfigured'}
+CLICK_TIMING_FIELDS = {'received_ns', 'native_timestamp', 'timestamp_source',
+                       'callback_delay_estimate_ns', 'clock_uncertainty_ns', 'excluded', 'exclusion_reason'}
+CLICK_EXCLUSION_REASONS = {'own_ui', 'own_panel', 'own_task'}
 
 
 def number(value, name, nullable=False):
@@ -299,9 +309,90 @@ def validate_payload(kind, fields, source):
             for key in ('task_id','run_id','calibration_id','reason'):text_value(fields.get(key),key)
             if type(fields.get('completed')) is not bool:raise ValueError('completed 必须为布尔值')
             validate_summary(fields.get('summary'))
-        else:
+            if 'sample_selection' in fields:
+                selection = fields['sample_selection']
+                if not isinstance(selection, list):
+                    raise ValueError('sample_selection 必须为数组')
+                seen = set()
+                for item in selection:
+                    if not isinstance(item, dict) or set(item) != {'frame_id', 'target_id'}:
+                        raise ValueError('sample_selection 只接受 frame_id 和 target_id')
+                    frame_id = item['frame_id']
+                    if isinstance(frame_id, bool) or not isinstance(frame_id, Integral) or frame_id < 0 or int(frame_id) in seen:
+                        raise ValueError('sample_selection 的帧编号必须为唯一非负整数')
+                    seen.add(int(frame_id))
+                    text_value(item['target_id'], 'target_id')
+            if 'sampling' in fields:
+                sampling = fields['sampling']
+                if not isinstance(sampling, dict) or set(sampling) != {'settle_ms', 'dwell_ms', 'max_dwell_ms'}:
+                    raise ValueError('sampling 字段不完整或包含未允许数据')
+                for key, value in sampling.items():
+                    if number(value, key) < 0:
+                        raise ValueError('sampling 时长不得为负数')
+                if not sampling['settle_ms'] < sampling['dwell_ms'] <= sampling['max_dwell_ms']:
+                    raise ValueError('sampling 稳定窗口无效')
+        elif kind == 'click_session':
+            action = fields.get('action')
+            if not isinstance(action, str) or action not in {'started', 'baseline', 'collecting', 'collection_ended',
+                                                              'check_started', 'completed', 'aborted'}:
+                raise ValueError('click_session 动作无效')
+            text_value(fields.get('experiment_id'), 'experiment_id')
+            clock_value(fields.get('event_ns'), 'event_ns')
+            for key in ('baseline_calibration_id', 'baseline_created_at', 'check_task_id', 'reason'):
+                if key in fields:
+                    text_value(fields[key], key, nullable=True)
+            if fields.get('baseline_created_at') is not None:
+                try:
+                    stamp = datetime.fromisoformat(fields['baseline_created_at'].replace('Z', '+00:00'))
+                except ValueError as exc:
+                    raise ValueError('baseline_created_at 必须为带时区的 ISO 时间') from exc
+                if stamp.tzinfo is None:
+                    raise ValueError('baseline_created_at 必须为带时区的 ISO 时间')
+            matrix = fields.get('baseline_matrix')
+            if matrix is not None:
+                if not isinstance(matrix, list) or len(matrix) != 3:
+                    raise ValueError('B 组矩阵必须为 3×2')
+                for row in matrix:
+                    vector(row, 2, 'baseline_matrix')
+            for key in ('collection_start_ns', 'collection_end_ns'):
+                if key in fields:
+                    clock_value(fields[key], key, nullable=True)
+            start, end = fields.get('collection_start_ns'), fields.get('collection_end_ns')
+            if start is not None and end is not None and end < start:
+                raise ValueError('点击采集结束时间不得早于开始时间')
+            for key in ('baseline_age_s', 'max_fps', 'actual_inference_fps'):
+                if key in fields:
+                    value = number(fields[key], key, nullable=True)
+                    if value is not None and (value < 0 or (key == 'max_fps' and value == 0)):
+                        raise ValueError(key+' 必须为非负数；限帧必须为正数或 null')
+            if 'inference_frame_count' in fields:
+                count = fields['inference_frame_count']
+                if isinstance(count, bool) or not isinstance(count, Integral) or count < 0:
+                    raise ValueError('inference_frame_count 必须为非负整数')
+        elif kind == 'click':
             number(fields.get('x'), 'x'); number(fields.get('y'), 'y')
-            if fields.get('button') not in {'left','middle','right'}: raise ValueError('按键类型无效')
+            button = fields.get('button')
+            if not isinstance(button, str) or button not in {'left','middle','right','other'}:
+                raise ValueError('按键类型无效')
+            # The original reserved click schema stays readable. Newly captured
+            # native clicks must include complete timing/exclusion provenance.
+            if CLICK_TIMING_FIELDS & set(fields):
+                if not CLICK_TIMING_FIELDS <= set(fields):
+                    raise ValueError('原生 click 缺少时间或排除标记字段')
+                clock_value(fields.get('event_ns'), 'event_ns')
+                clock_value(fields['received_ns'], 'received_ns')
+                clock_value(fields['native_timestamp'], 'native_timestamp', nullable=True)
+                if not isinstance(fields['timestamp_source'], str) or fields['timestamp_source'] not in {'native_mapped', 'callback_received'}:
+                    raise ValueError('点击时间来源无效')
+                for key in ('callback_delay_estimate_ns', 'clock_uncertainty_ns'):
+                    clock_value(fields[key], key, nullable=True)
+                if type(fields['excluded']) is not bool:
+                    raise ValueError('excluded 必须为布尔值')
+                reason = fields['exclusion_reason']
+                if reason is not None and (not isinstance(reason, str) or reason not in CLICK_EXCLUSION_REASONS):
+                    raise ValueError('点击排除原因无效')
+                if fields['excluded'] != (reason is not None):
+                    raise ValueError('点击排除标记与原因不一致')
 
 
 class SessionRecorder:
@@ -315,6 +406,7 @@ class SessionRecorder:
         self._closing, self._closed, self._ready = threading.Event(), threading.Event(), threading.Event()
         self._error = None
         self._failed = self._written = 0
+        self._written_clicks = self._excluded_clicks = 0
         self._next_seq = 1
         self._reason, self._end_browser_ms = 'user', None
         self._open = file_factory or open
@@ -363,7 +455,7 @@ class SessionRecorder:
             if self.source == 'web': record['page_clock_id'] = self.page_clock_id
             encoded = _json_line(record)
             try:
-                self._queue.put_nowait(encoded)
+                self._queue.put_nowait((encoded, kind == 'click', fields.get('excluded') is True))
             except queue.Full:
                 self._failure('录制队列已满；录制已停止，推理继续运行。')
                 return False
@@ -385,7 +477,8 @@ class SessionRecorder:
         with self._lock:
             return {'session_id': self.session_id, 'active': not self._closing.is_set() and not self._closed.is_set() and self._error is None,
                     'error': self._error, 'file': self.path.name, 'written_lines': self._written,
-                    'failed_records': self._failed}
+                    'failed_records': self._failed,
+                    'written_clicks': self._written_clicks, 'excluded_clicks': self._excluded_clicks}
 
     def close(self, reason='user', browser_time_ms=None):
         text_value(reason, 'reason'); clock_value(browser_time_ms, 'browser_time_ms', nullable=True)
@@ -406,11 +499,17 @@ class SessionRecorder:
                 with self._lock: self._written += 1
                 self._ready.set()
                 while not self._closing.is_set() or not self._queue.empty():
-                    try: line = self._queue.get(timeout=.05)
+                    try: line, is_click, excluded = self._queue.get(timeout=.05)
                     except queue.Empty: continue
                     output.write(line)
                     output.flush()
-                    with self._lock: self._written += 1
+                    with self._lock:
+                        self._written += 1
+                        if is_click:
+                            if excluded:
+                                self._excluded_clicks += 1
+                            else:
+                                self._written_clicks += 1
                 with self._lock:
                     end = self._envelope('end', self._next_seq, written_lines=self._written+1,
                                          failed_records=self._failed, reason=self._reason,

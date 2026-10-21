@@ -87,6 +87,34 @@ class OverlayTaskTests(unittest.TestCase):
         self.assertEqual(runner.result['calibration_id'], 'existing')
         self.assertTrue(any(r['raw'][1] < 0 for r in raw_frames))
 
+    def test_evaluation_selection_exactly_replays_valid_and_invalid_raw_frames(self):
+        runner = self.runner('evaluate', matrix=[[1.,0.],[0.,1.],[-.1,.2]])
+        runner.begin()
+        captured = {}
+        for index, point in enumerate(runner.targets):
+            start = self.start_target(runner)
+            # Settling and final watermark frames are not part of the test set.
+            settling = self.prediction(start+100_000_000, [.5,.5])
+            runner.ingest(settling)
+            for offset, raw in [(650_000_000, None),
+                                (750_000_000, [point['target'][0]+.1, point['target'][1]-.2])]:
+                prediction = self.prediction(start+offset, raw)
+                captured[prediction.sequence] = prediction
+                runner.ingest(prediction)
+            self.now[0] = start+2_210_000_000
+            runner.advance()
+        self.finish_watermark(runner)
+        result = runner.result
+        self.assertEqual(result['sampling'], dict(settle_ms=650, dwell_ms=2200, max_dwell_ms=10000))
+        self.assertEqual(len(result['sample_selection']), len(runner.targets)*2)
+        restored = []
+        for selected in result['sample_selection']:
+            prediction = captured[selected['frame_id']]
+            restored.append(dict(target_id=selected['target_id'], valid=prediction.data['valid'],
+                                 raw=prediction.data['raw'], origin_m=prediction.data['origin_m']))
+        self.assertTrue(any(not frame['valid'] for frame in restored))
+        self.assertEqual(result['summary'], evaluate(restored, runner.targets, self.settings.geometry, runner.matrix))
+
     def test_capture_window_boundaries_dedup_and_late_result_old_target(self):
         runner = self.runner('evaluate')
         runner.begin()

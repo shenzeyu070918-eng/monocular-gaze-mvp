@@ -7,6 +7,21 @@ import yaml
 import gaze_core.config as config
 
 class LocalConfigurationTests(unittest.TestCase):
+    def test_click_session_rate_and_baseline_age_validation(self):
+        base=config.load_settings(use_local=False)
+        self.assertIsNone(base.click_session.max_fps)
+        self.assertEqual(base.click_session.recent_baseline_max_age_s,300)
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'settings.yaml'
+            data=yaml.safe_load(config.DEFAULT_CONFIG.read_text())
+            data['click_session']['max_fps']=23
+            path.write_text(yaml.safe_dump(data))
+            self.assertEqual(config.load_settings(path).click_session.max_fps,23)
+            for value in (True,0,-1,float('nan')):
+                data['click_session']['max_fps']=value
+                path.write_text(yaml.safe_dump(data))
+                with self.assertRaises(ValueError):config.load_settings(path)
+
     def test_thread_alias_normalizes_each_layer_before_merge(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'default.yaml';path.write_text(config.DEFAULT_CONFIG.read_text())

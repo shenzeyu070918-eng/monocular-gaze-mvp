@@ -25,6 +25,7 @@ class PythonRecording:
         self._stop = threading.Event()
         self._manual = self._desired = self._closed = False
         self._task = None
+        self._holders = set()
         self._recorder = None
         self._last = {}
         self._error = None
@@ -47,6 +48,7 @@ class PythonRecording:
                 self._error = str(message)
             self._manual = self._desired = False
             self._task = None
+            self._holders.clear()
             self._abort.set()
 
     def _put(self, command):
@@ -82,9 +84,29 @@ class PythonRecording:
                 self._manual = True
                 return True
             self._manual = False
-            if self._task is None and self._desired:
+            if self._task is None and not self._holders and self._desired:
                 self._desired = False
                 return self._put(('close', 'user'))
+            return True
+
+    def acquire(self, owner):
+        """Hold the current single session without nesting calibration tasks."""
+        text_value(owner, 'owner')
+        with self._lock:
+            if not self._enable():
+                return False
+            self._holders.add(owner)
+            return True
+
+    def release(self, owner, reason='owner_completed'):
+        text_value(owner, 'owner'); text_value(reason, 'reason')
+        with self._lock:
+            if owner not in self._holders:
+                return False
+            self._holders.remove(owner)
+            if not self._holders and self._task is None and not self._manual and self._desired:
+                self._desired = False
+                return self._put(('close', reason))
             return True
 
     def begin_task(self, task_id):
@@ -105,7 +127,7 @@ class PythonRecording:
             if self._task != task_id:
                 return False
             self._task = None
-            if not self._manual and self._desired:
+            if not self._manual and not self._holders and self._desired:
                 self._desired = False
                 return self._put(('close', reason))
             return True
@@ -145,6 +167,9 @@ class PythonRecording:
                 self._failure(writer_error)
             return dict(current, active=self._desired and self._error is None,
                         manual=self._manual, task_id=self._task,
+                        holders=sorted(self._holders),
+                        written_clicks=current.get('written_clicks', 0),
+                        excluded_clicks=current.get('excluded_clicks', 0),
                         preparing=self._desired and recorder is None,
                         closing=not self._desired and (recorder is not None or not self._queue.empty()),
                         buffered_predictions=self._queue.qsize(), error=self._error,
@@ -225,6 +250,7 @@ class PythonRecording:
             self._closed = True
             self._desired = self._manual = False
             self._task = None
+            self._holders.clear()
             self._close_reason = reason
             self._stop.set()
         self._worker.join(self.settings.close_timeout_s)

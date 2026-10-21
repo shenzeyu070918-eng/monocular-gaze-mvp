@@ -17,7 +17,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         raise ValueError('请先在 local.yaml 选择设备文件，或配置屏幕宽高；M3a 不使用网页或个人档案。')
     ring=RingState(settings.overlay)
     closing=False;shutdown_requested=False;screen_changed=False;last_error=None;error_box=None
-    paused_requested=False;session=None;display_revision=0;restore_visible=True
+    paused_requested=False;session=None;display_revision=0;restore_visible=True;hotkeys=None
 
     def notice(text,error=False):
         print('悬浮层：'+text,file=sys.stderr)
@@ -125,6 +125,17 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         actions.connect('reset',session.profiles.disable)
         actions.connect('record',manual_record)
         actions.connect('web',open_web)
+        from .hotkeys import Hotkeys
+        from PySide6.QtCore import QTimer
+        # Carbon and WM_HOTKEY execute on the Qt thread. Queue actions outside
+        # native callbacks so modal UI and shutdown cannot reenter Carbon.
+        def dispatch_hotkey(name):
+            QTimer.singleShot(0,lambda:actions[name].trigger() if not shutdown_requested else None)
+        hotkeys=Hotkeys(settings.overlay.hotkeys,dispatch_hotkey)
+        panel.hotkeys.setText(hotkeys.text())
+        print('系统热键（不申请输入监控）：\n'+hotkeys.text(),file=sys.stderr)
+        failures=[v for v in hotkeys.status.values() if v.startswith('注册失败')]
+        if failures:notice('系统热键部分注册失败：'+'；'.join(failures),True)
 
     def tick():
         nonlocal last_error,error_box,closing,display_revision
@@ -196,6 +207,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
     try:
         return app.exec()
     finally:
+        if hotkeys is not None:hotkeys.close()
         # Normal quits pass QuitGate and arrive here only after worker cleanup.
         # Exceptional Qt exits still request cleanup and keep it off the UI loop.
         if not controller.closed.is_set():

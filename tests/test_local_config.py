@@ -7,6 +7,22 @@ import yaml
 import gaze_core.config as config
 
 class LocalConfigurationTests(unittest.TestCase):
+    def test_thread_alias_normalizes_each_layer_before_merge(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'default.yaml';path.write_text(config.DEFAULT_CONFIG.read_text())
+            local=path.with_name('local.yaml')
+            with patch.object(config,'DEFAULT_CONFIG',path):
+                for key in ('cpu_threads','num_threads'):
+                    local.write_text('inference:\n  '+key+': 2\n  max_fps: 15\n  device: mps\n')
+                    settings=config.load_settings(path)
+                    self.assertEqual((settings.inference.num_threads,settings.inference.cpu_threads),(2,2))
+                    self.assertEqual(settings.inference.max_fps,15)
+                    self.assertEqual(settings.inference.device,'mps')
+                local.write_text('inference:\n  cpu_threads: 2\n  num_threads: 4\n')
+                with self.assertRaisesRegex(ValueError,'冲突'):config.load_settings(path)
+                for key,value in (('num_threads','true'),('max_fps','true'),('max_fps','0'),('max_fps','.nan'),('max_fps','-1')):
+                    local.write_text('inference:\n  '+key+': '+value+'\n')
+                    with self.assertRaises(ValueError):config.load_settings(path)
     def test_recursive_merge_scalar_null_and_array(self):
         base = {'camera': {'index': 0, 'width': 640}, 'device_file': 'old', 'values': [1,2]}
         result = config.merge_config(base, {'camera': {'index': np.int64(1)}, 'device_file': None, 'values': [3]})

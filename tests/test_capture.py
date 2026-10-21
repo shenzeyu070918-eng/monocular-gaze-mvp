@@ -160,6 +160,25 @@ class FakeRecorder:
 
 
 class PipelineTests(unittest.TestCase):
+    def test_max_fps_keeps_latest_capture_clock_and_pause_interrupts_wait(self):
+        settings=load_settings(use_local=False)
+        settings=replace(settings,inference=replace(settings.inference,max_fps=5.))
+        pipeline,cameras,engines=self.make_pipeline(settings=settings)
+        pipeline.start()
+        first=pipeline.wait_for_result(timeout=3)
+        second=pipeline.wait_for_result(after_sequence=first.sequence,timeout=3)
+        self.assertGreaterEqual(second.completed_ns-first.completed_ns,180_000_000)
+        self.assertGreater(second.sequence,first.sequence+1)
+        # Timestamp comes from a recent real fake-camera read, not a scheduled
+        # inference deadline or completion. The newer pending image was used.
+        self.assertGreater(second.captured_ns,first.captured_ns)
+        self.assertLess(second.completed_ns-second.captured_ns,100_000_000)
+        self.assertGreater(pipeline.report()['dropped_frames'],0)
+        pipeline.settings=replace(settings,inference=replace(settings.inference,max_fps=.01))
+        started=time.monotonic();pipeline.pause()
+        self.assertLess(time.monotonic()-started,.5)
+        self.assert_camera_released_safely(cameras[0])
+
     def make_pipeline(self, gate=None, failure=None, settings=None, controlled=False,
                       recorder=None, recording_factory=None):
         cameras, engines = [], []

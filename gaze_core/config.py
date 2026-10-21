@@ -1,5 +1,5 @@
 """Shared configuration without UI or model imports."""
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, field
 import math
 from pathlib import Path
 
@@ -16,6 +16,11 @@ class InferenceSettings:
     distance_min_m: float
     distance_max_m: float
     normalized_camera_distance_m: float
+    max_fps: float | None = None
+
+    @property
+    def num_threads(self):
+        return self.cpu_threads  # Backward-compatible dataclass construction.
 
 
 @dataclass(frozen=True)
@@ -175,6 +180,9 @@ class OverlaySettings:
     profile_poll_s: float = 1.0
     tray_check_delay_ms: int = 500
     web_url: str = 'http://127.0.0.1:8765'
+    panel_on_start: str = 'auto'
+    calibration_redo_cm: float = 2.0
+    hotkeys: dict = field(default_factory=lambda: dict(toggle='Ctrl+Alt+G', pause='Ctrl+Alt+P', calibrate='Ctrl+Alt+C', panel='Ctrl+Alt+O'))
 
     def __post_init__(self):
         import re
@@ -196,6 +204,11 @@ class OverlaySettings:
         from .devices import device_name
         device_name(self.profile_name)
         finite(self.profile_poll_s,'overlay.profile_poll_s',positive=True)
+        if self.panel_on_start not in ('auto','always','never'):
+            raise ValueError('overlay.panel_on_start 必须为 auto / always / never')
+        finite(self.calibration_redo_cm,'overlay.calibration_redo_cm',positive=True)
+        if not isinstance(self.hotkeys,dict) or set(self.hotkeys)!={'toggle','pause','calibrate','panel'} or any(not isinstance(v,str) for v in self.hotkeys.values()):
+            raise ValueError('overlay.hotkeys 必须包含 toggle / pause / calibrate / panel 字符串；空字符串禁用该项')
         from urllib.parse import urlsplit
         url=urlsplit(self.web_url)
         if url.scheme!='http' or url.hostname not in {'127.0.0.1','localhost','::1'}:
@@ -223,12 +236,25 @@ class Settings:
     overlay: OverlaySettings = OverlaySettings()
 
 
-def select_device(requested, cuda_available):
-    if requested not in {'auto', 'cpu', 'cuda'}:
-        raise ValueError('inference.device 必须是 auto、cpu 或 cuda')
+def select_device(requested, cuda_available, mps_available=False):
+    if requested not in {'auto', 'cpu', 'cuda', 'mps'}:
+        raise ValueError('inference.device 必须是 auto、cpu、cuda 或 mps')
+    if requested == 'mps':
+        return 'mps' if mps_available else 'cpu'
     if requested == 'cuda' and not cuda_available:
         raise RuntimeError('已指定 CUDA，但当前 PyTorch 无法使用 CUDA；请检查 CUDA 版 PyTorch 安装及显卡驱动，或改用 cpu/auto。')
     return 'cuda' if requested != 'cpu' and cuda_available else 'cpu'
+
+
+def normalize_inference_keys(data):
+    """Normalize each layer BEFORE merging so a local legacy key overrides defaults."""
+    if not isinstance(data,dict) or not isinstance(data.get('inference'),dict):return data
+    options=dict(data['inference'])
+    if 'num_threads' in options:
+        if 'cpu_threads' in options and (type(options['num_threads']) is not type(options['cpu_threads']) or options['num_threads']!=options['cpu_threads']):
+            raise ValueError('同一配置层的 inference.num_threads 与 cpu_threads 冲突')
+        options['cpu_threads']=options.pop('num_threads')
+    return dict(data,inference=options)
 
 
 def merge_config(base, overrides):
@@ -243,7 +269,7 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
     import yaml
     path = Path(path).resolve()
     with path.open(encoding='utf-8') as source:
-        data = yaml.safe_load(source)
+        data = normalize_inference_keys(yaml.safe_load(source))
     sources = [str(path)]
     key_sources = {}
     def note(mapping, filename, prefix=''):
@@ -258,7 +284,7 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
     local = path.with_name('local.yaml')
     if use_local and path == DEFAULT_CONFIG.resolve() and local.exists():
         with local.open(encoding='utf-8') as source:
-            override = yaml.safe_load(source)
+            override = normalize_inference_keys(yaml.safe_load(source))
         if not isinstance(override, dict):
             raise ValueError('local.yaml 必须为映射')
         data = merge_config(data, override)
@@ -279,8 +305,10 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
                        overlay=OverlaySettings(**data.get('overlay', {})))
     i, c, g = settings.inference, settings.camera, settings.geometry
     # Validate the request separately from actual device availability.
-    if i.device not in {'auto', 'cpu', 'cuda'}:
-        raise ValueError('inference.device 必须是 auto、cpu 或 cuda')
+    if i.device not in {'auto', 'cpu', 'cuda', 'mps'}:
+        raise ValueError('inference.device 必须是 auto、cpu、cuda 或 mps')
+    if i.max_fps is not None and (isinstance(i.max_fps,bool) or not isinstance(i.max_fps,(int,float)) or not math.isfinite(i.max_fps) or i.max_fps<=0):
+        raise ValueError('inference.max_fps 必须为有限正数或 null（不限制）')
     for name, value in [('cpu_threads', i.cpu_threads), ('max_faces', i.max_faces),
                         ('width', c.width), ('height', c.height)]:
         if type(value) is not int or value <= 0:
@@ -382,7 +410,8 @@ def configuration_info(settings):
     from dataclasses import asdict
     return {'files': list(settings.config_sources), 'keys': dict(settings.key_sources or {}),
             'device_file': settings.device_file, 'camera': asdict(settings.camera), 'geometry': asdict(settings.geometry), 'filter': asdict(settings.filter),
-            'fixation': asdict(settings.fixation), 'offline_filter': asdict(settings.offline_filter)}
+            'fixation': asdict(settings.fixation), 'offline_filter': asdict(settings.offline_filter),
+            'inference':dict(device=settings.inference.device,num_threads=settings.inference.num_threads,max_fps=settings.inference.max_fps)}
 
 
 def print_configuration(settings):

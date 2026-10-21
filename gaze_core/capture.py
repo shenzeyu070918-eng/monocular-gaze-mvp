@@ -539,15 +539,26 @@ class CameraPipeline:
                 self._device, self._device_name = engine.device, engine.device_name
             self._engine_ready.set()
             self._run.wait()
+            last_started_ns = None
             while True:
                 with self._condition:
                     self._condition.wait_for(lambda: self._stop.is_set() or self._pending is not None)
                     if self._stop.is_set():
                         break
+                    # Pace starts, then take the newest pending frame. Waiting
+                    # is interruptible; capture continues replacing old frames.
+                    if self.settings.inference.max_fps is not None and last_started_ns is not None:
+                        deadline=last_started_ns+1_000_000_000/self.settings.inference.max_fps
+                        while not self._stop.is_set():
+                            remaining=(deadline-self._clock_ns())/1_000_000_000
+                            if remaining<=0:break
+                            self._condition.wait(remaining)
+                        if self._stop.is_set():break
                     frame, self._pending = self._pending, None
                     self._in_flight = True
                 self._prepare_recorder(engine, frame.image)
                 started_ns = self._clock_ns()
+                last_started_ns = started_ns
                 data = engine.predict(frame.image, self.settings.geometry, self.settings.camera.grayscale)
                 completed_ns = self._clock_ns()
                 self._record_prediction(frame, completed_ns, data)

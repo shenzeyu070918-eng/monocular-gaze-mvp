@@ -120,6 +120,16 @@ def open_camera(options):
     return cv2.VideoCapture(options.index, backend)
 
 
+def configure_camera(camera, options):
+    """Shared post-open setup; the caller retains ownership, including failures."""
+    import cv2
+    if not camera.isOpened():
+        raise RuntimeError('无法打开摄像头；请检查权限、设备编号或是否被浏览器/其他程序占用。')
+    camera.set(cv2.CAP_PROP_FRAME_WIDTH, options.width)
+    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, options.height)
+    return camera.getBackendName()
+
+
 class CameraPipeline:
     """Two owned workers and one replaceable pending frame; never a frame queue.
 
@@ -141,6 +151,7 @@ class CameraPipeline:
         self._engine_factory = engine_factory or self._new_engine
         self._collect_timings, self._clock_ns = collect_timings, clock_ns
         self._condition = threading.Condition()
+        self._task_active = False
         self._control = threading.RLock()
         self._stop, self._run = threading.Event(), threading.Event()
         self._threads = ()
@@ -298,6 +309,18 @@ class CameraPipeline:
             self._display_matrix = snapshot
             self._display_matrix_set = True
             self._display_matrix_revision = self._display_matrix_revision+1 if revision is None else int(revision)
+
+    def set_task_active(self, active):
+        """Temporarily bypass the configured inference cap without resetting data.
+
+        This only changes pacing. The capture clock, latest pending frame,
+        engine and display filter keep their current state.
+        """
+        if type(active) is not bool:
+            raise ValueError('任务状态必须为布尔值。')
+        with self._condition:
+            self._task_active = active
+            self._condition.notify_all()
 
     @property
     def result_sink_error(self):
@@ -484,14 +507,10 @@ class CameraPipeline:
     def _capture_loop(self):
         camera = None
         try:
-            import cv2
             camera = self._camera_factory(self.settings.camera)
-            if not camera.isOpened():
-                raise RuntimeError('无法打开摄像头；请检查权限、设备编号或是否被浏览器/其他程序占用。')
-            camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.settings.camera.width)
-            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.settings.camera.height)
+            backend = configure_camera(camera, self.settings.camera)
             with self._condition:
-                self._actual_backend = camera.getBackendName()
+                self._actual_backend = backend
             self._capture_ready.set()
             self._run.wait()
             for image, captured_ns in read_camera_frames(camera, self.settings.camera,
@@ -539,15 +558,33 @@ class CameraPipeline:
                 self._device, self._device_name = engine.device, engine.device_name
             self._engine_ready.set()
             self._run.wait()
+            last_started_ns = None
             while True:
                 with self._condition:
                     self._condition.wait_for(lambda: self._stop.is_set() or self._pending is not None)
+                    if self._stop.is_set():
+                        break
+                    # Pace starts, then take the newest pending frame. Waiting
+                    # is interruptible; capture continues replacing old frames.
+                    while not self._stop.is_set() and last_started_ns is not None:
+                        max_fps = None if self._task_active else self.settings.inference.max_fps
+                        if max_fps is None:
+                            break
+                        deadline = last_started_ns+1_000_000_000/max_fps
+                        remaining = (deadline-self._clock_ns())/1_000_000_000
+                        if remaining <= 0:
+                            break
+                        # A task can begin during this wait. Re-read its flag
+                        # after every notification rather than retaining the
+                        # old low-rate deadline until it expires.
+                        self._condition.wait(remaining)
                     if self._stop.is_set():
                         break
                     frame, self._pending = self._pending, None
                     self._in_flight = True
                 self._prepare_recorder(engine, frame.image)
                 started_ns = self._clock_ns()
+                last_started_ns = started_ns
                 data = engine.predict(frame.image, self.settings.geometry, self.settings.camera.grayscale)
                 completed_ns = self._clock_ns()
                 self._record_prediction(frame, completed_ns, data)

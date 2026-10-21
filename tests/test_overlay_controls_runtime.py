@@ -188,6 +188,7 @@ class ControlsRuntimeTests(unittest.TestCase):
         app = Application()
         actions = OverlayActions()
         panel = ControlPanel(actions)
+        actions.connect('panel',panel.present)
         menu = QMenu(panel)
         actions.add_to_menu(menu)
         controls = SimpleNamespace(actions=actions, panel=panel, screen=object(), mode=QAction('未校准'))
@@ -211,6 +212,7 @@ class ControlsRuntimeTests(unittest.TestCase):
             return context.controller
 
         def run():
+            context.hotkey_dispatch=hotkeys.call_args.args[1]
             scenario(context)
             if not context.controller.closed.is_set(): panel.buttons['quit'].click()
             timer.timeout.emit()
@@ -220,6 +222,7 @@ class ControlsRuntimeTests(unittest.TestCase):
         app.scenario = run
         try:
             with patch('overlay.session.OverlaySession', side_effect=make_session), \
+                 patch('overlay.hotkeys.Hotkeys') as hotkeys, \
                  patch('overlay.runtime.OverlayController', side_effect=make_controller), \
                  patch('overlay.runtime.time.perf_counter_ns', side_effect=clock.ns), \
                  patch('PySide6.QtGui.QDesktopServices.openUrl', return_value=True) as open_web, \
@@ -228,6 +231,8 @@ class ControlsRuntimeTests(unittest.TestCase):
                  patch('sys.excepthook', side_effect=lambda *error: qt_errors.append(error)), \
                  redirect_stderr(io.StringIO()):
                 context.open_web, context.message_box, context.select_web = open_web, message_box, select_web
+                hotkeys.return_value.text.return_value='fake registered hotkeys'
+                hotkeys.return_value.status={}
                 message_box.StandardButton = QtMessageBox.StandardButton
                 self.assertEqual(run_camera_overlay(app, window, tray, actions['pause'], actions['quit'],
                                                     timer, settings, lambda: None, controls=controls), 0)
@@ -252,6 +257,34 @@ class ControlsRuntimeTests(unittest.TestCase):
         if now is not None: context.clock.now = now
         if publish and context.controller.status == 'running': context.controller.publish()
         context.timer.timeout.emit()
+
+    def test_queued_panel_hotkey_fronts_hidden_and_visible_panel_each_time(self):
+        from overlay.platforms import present_panel
+        def scenario(c):
+            for visible in (False,True):
+                c.panel.setVisible(visible)
+                with patch('overlay.platforms.present_panel',wraps=present_panel) as front:
+                    c.hotkey_dispatch('panel')
+                    self.qt_app.processEvents()
+                    front.assert_called_once_with(c.panel)
+                self.assertTrue(c.panel.isVisible())
+        self.exercise(scenario)
+
+    def test_unchanged_ticks_skip_render_and_qt_setters_but_stale_results_still_fade(self):
+        def scenario(c):
+            self.tick(c,1.)
+            with patch.object(c.window,'set_display',wraps=c.window.set_display) as render, \
+                 patch.object(c.tray,'setToolTip',wraps=c.tray.setToolTip) as tooltip, \
+                 patch.object(c.panel.mode,'setText',wraps=c.panel.mode.setText) as text, \
+                 patch.object(c.actions['pause'],'setEnabled',wraps=c.actions['pause'].setEnabled) as enabled:
+                for _ in range(100):self.tick(c,publish=False)
+                render.assert_not_called();tooltip.assert_not_called();text.assert_not_called();enabled.assert_not_called()
+                self.tick(c,1.31,publish=False)
+                self.assertTrue(render.called)
+                self.assertGreater(c.window.opacity,0.)
+                self.tick(c,1.51,publish=False)
+                self.assertEqual(c.window.opacity,0.)
+        self.exercise(scenario)
 
     def test_shared_panel_actions_start_each_task_once_and_controller_owns_shutdown(self):
         def scenario(c):

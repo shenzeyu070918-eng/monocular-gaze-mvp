@@ -1,6 +1,6 @@
 """Rendering only. All positions are already logical pixels; never camera data."""
 import time
-from PySide6.QtCore import Qt,QRectF,QTimer
+from PySide6.QtCore import Qt,QRectF,QTimer,QEvent
 from PySide6.QtGui import QColor,QPainter,QPen,QFont,QFontMetrics,QRegion
 from PySide6.QtWidgets import QWidget
 from .mapping import ScreenRect
@@ -25,6 +25,8 @@ class OverlayWindow(QWidget):
         self.label='未校准 · 窗口诊断（无摄像头）' if diagnostic else '未校准 · 正在启动'
         font=QFont();font.setPixelSize(options.label_font_px);self.setFont(font)
         self._label_metrics=QFontMetrics(font)
+        self._label_layout_key=None;self._label_layout_rect=None
+        self._observed_status=(self.label,'immediate')
         self._label_visibility=LabelVisibility(self.label,options.label_autohide_s,options.fade_ms,
                                                debounce_s=options.label_debounce_s,diagnostic=diagnostic,clock=clock)
         self._label_opacity=1.
@@ -44,19 +46,29 @@ class OverlayWindow(QWidget):
 
     def set_display(self,position,radii,opacity,label,*,label_kind='immediate'):
         ring_changed=(position,radii,opacity)!=(self.position,self.radii,self.opacity)
-        old_bounds=self._ring_bounds()
-        self.position,self.radii,self.opacity=position,radii,opacity
         if ring_changed:
+            old_bounds=self._ring_bounds()
+            self.position,self.radii,self.opacity=position,radii,opacity
             region=QRegion(old_bounds.toAlignedRect())|QRegion(self._ring_bounds().toAlignedRect())
             if not region.isEmpty():self.update(region.intersected(QRegion(self.rect())))
         self.set_status(label,kind=label_kind)
 
     def set_status(self,label,*,kind='immediate',force=False):
+        observed=(label,'immediate' if force else kind)
+        if not force and observed==self._observed_status:
+            # The label timer owns debounce/fade progression. Also advance when
+            # called directly while it is active, without observing the same
+            # status again or restarting either clock.
+            if self._label_timer.isActive():self._refresh_label()
+            return
         self._label_visibility.set_text(label,kind=kind,force=force)
+        self._observed_status=observed
         self._refresh_label()
 
     def _label_rect(self):
         width,height=self.width(),self.height()
+        key=(self.label,width,height)
+        if key==self._label_layout_key:return QRectF(self._label_layout_rect)
         inset=min(self.options.label_inset_px,(width-1)/2)
         text_width=self._label_metrics.horizontalAdvance(self.label)
         bar_width=min(text_width+2*self.options.label_padding_px,width-2*inset)
@@ -66,19 +78,28 @@ class OverlayWindow(QWidget):
         else:
             x=(width-bar_width)/2 if self.options.label_position=='bottom_center' else width-inset-bar_width
             y=max(0,height-self.options.label_bottom_inset_px-bar_height)
-        return QRectF(x,y,bar_width,bar_height)
+        self._label_layout_key=key;self._label_layout_rect=QRectF(x,y,bar_width,bar_height)
+        # paintEvent adjusts its local text rectangle; never expose the cache.
+        return QRectF(self._label_layout_rect)
+
+    def changeEvent(self,event):
+        if event.type()==QEvent.Type.FontChange and hasattr(self,'_label_metrics'):
+            old=self._label_rect()
+            self._label_metrics=QFontMetrics(self.font());self._label_layout_key=None
+            self._update_label_regions(old,self._label_rect())
+        super().changeEvent(event)
 
     def _update_label_regions(self,old,new):
         region=QRegion(old.toAlignedRect())|QRegion(new.toAlignedRect())
         self.update(region.intersected(QRegion(self.rect())))
 
     def _refresh_label(self):
-        old_rect=self._label_rect();old_label=self.label
         opacity=self._label_visibility.opacity()
-        self.label=self._label_visibility.text
-        changed=old_label!=self.label or opacity!=self._label_opacity
-        self._label_opacity=opacity
-        if changed:self._update_label_regions(old_rect,self._label_rect())
+        label=self._label_visibility.text
+        if label!=self.label or opacity!=self._label_opacity:
+            old_rect=self._label_rect()
+            self.label=label;self._label_opacity=opacity
+            self._update_label_regions(old_rect,self._label_rect())
         ticking=self._label_visibility.pending or (opacity>0 and not self.diagnostic and self.options.label_autohide_s>0)
         if ticking and not self._label_timer.isActive():self._label_timer.start()
         elif not ticking:self._label_timer.stop()

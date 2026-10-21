@@ -15,6 +15,7 @@ from gaze_core.devices import finite
 from gaze_core.display import calibration_matrix
 from gaze_core.evaluation import evaluate, evaluation_targets
 from gaze_core.geometry import fit_affine
+from gaze_core.calibration_quality import calibration_quality
 
 
 def _nanoseconds(value):
@@ -33,7 +34,8 @@ class TaskRunner:
     No profile is written or activated here.
     """
     def __init__(self, kind, settings, *, matrix=None, calibration_id='none',
-                 clock_ns=time.perf_counter_ns, task_id=None, run_id=None, rng=None):
+                 clock_ns=time.perf_counter_ns, task_id=None, run_id=None, rng=None,
+                 screen_size=None, redo_from=None, redo_target_ids=None):
         if kind not in {'calibrate', 'evaluate'}:
             raise ValueError('任务类型必须为 calibrate 或 evaluate')
         self.kind, self.settings, self.geometry = kind, settings.evaluation, settings.geometry
@@ -41,12 +43,23 @@ class TaskRunner:
         self.task_id = task_id or uuid.uuid4().hex
         self.run_id = run_id or uuid.uuid4().hex
         self.calibration_id = uuid.uuid4().hex if kind == 'calibrate' else calibration_id
+        self.screen_size=screen_size;self.redo_from=deepcopy(redo_from)
+        self.redo_threshold=settings.overlay.calibration_redo_cm
         array = calibration_matrix(matrix)
         self.matrix = None if array is None else array.tolist()
         self.targets = (evaluation_targets(settings.evaluation, settings.jump.margin, rng=rng)
                         if kind == 'evaluate' else
                         [dict(target_id=f'calibration-{i+1}', target=list(p), region='center')
                          for i, p in enumerate(self.settings.calibration_points)])
+        self.all_targets=deepcopy(self.targets)
+        if redo_from is not None:
+            if kind!='calibrate' or redo_from.get('redo_round',0)!=0:
+                raise ValueError('仅允许补看一轮校准点')
+            allowed={p['target_id'] for p in redo_from['quality']['points'] if p['redo']}
+            selected=set(redo_target_ids or ())
+            if not selected or not selected<=allowed:raise ValueError('补看只能使用首次残差超过阈值的校准点')
+            self.targets=[p for p in self.targets if p['target_id'] in selected]
+            self.calibration_id=redo_from['calibration_id']
         self.state, self.reason, self.result, self.error = 'idle', None, None, None
         self.index = 0
         self._events, self._windows, self._frames, self._distances = [], [], [], []
@@ -180,15 +193,26 @@ class TaskRunner:
                       estimated_distance_cm_median=float(np.median(self._distances)) if self._distances else None,
                       estimated_distance_sample_count=len(self._distances))
         if self.kind == 'calibrate':
-            samples = [dict(target=self.targets[w['index']]['target'],
-                            raw=np.median([r['raw'] for r in w['frames'] if r['valid']], axis=0).tolist())
-                       for w in self._windows]
+            rows=deepcopy(self.redo_from['_calibration_samples']) if self.redo_from is not None else []
+            rows.extend(dict(target_id=r['target_id'],raw=r['raw']) for r in self._frames if r['valid'])
+            distances=(self.redo_from['_distance_samples_cm'] if self.redo_from is not None else [])+self._distances
+            samples=[]
+            for point in self.all_targets:
+                values=[r['raw'] for r in rows if r['target_id']==point['target_id']]
+                samples.append(dict(target_id=point['target_id'],target=point['target'],
+                                    raw=np.median(values,axis=0).tolist(),sample_count=len(values)))
             try:
                 result['matrix'] = fit_affine(samples)
             except ValueError as exc:
                 self.error = str(exc)
                 self.cancel('calibration_failed')
                 return
+            result.update(_calibration_samples=rows,_distance_samples_cm=deepcopy(distances),
+                          sample_count=len(rows),redo_round=int(self.redo_from is not None),
+                          estimated_distance_cm_median=float(np.median(distances)) if distances else None,
+                          estimated_distance_sample_count=len(distances))
+            result['quality']=calibration_quality(samples,result['matrix'],self.geometry,screen_size=self.screen_size,
+                                                   threshold_cm=self.redo_threshold,round_index=result['redo_round'])
         else:
             result['matrix'] = deepcopy(self.matrix)
             result['summary'] = evaluate(self._frames, self.targets, self.geometry, self.matrix)

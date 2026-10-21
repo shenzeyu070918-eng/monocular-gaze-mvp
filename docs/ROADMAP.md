@@ -169,7 +169,8 @@ Oct 15, 2026 · @shenzeyu
 - **M3b，M3a 实机验证通过后另开 PR**：悬浮层自己的全屏九点校准与快速精度核对，复用 evaluation / profiles；输出同网页口径的 A/B 逐目标汇总并写入数值录制。档案增加 `pipeline: web / python`，只自动加载匹配的 python 档案，手动加载 web 档案明确提示裁切/链路差异风险；网页矩阵不能假定可直接用于 OpenCV。最近有效 B 组核对结果用于圆环误差尺度；加入完整托盘与系统热键。
 - **M3b 热键约束**：macOS 必须用 Carbon `RegisterEventHotKey`，Windows 必须用 `RegisterHotKey`；禁止监听全部键盘事件（例如 pynput 键盘监听），不需要也不申请「输入监控」权限。
 - **M3b 本次拆分（用户批准）**：第一个 PR，分支 `m3b-calibration`，实现独立九点/核对、档案隔离与匹配、数值录制、B 核对半径、必要控制面板/托盘失效退路，以及异常恢复立即淡出。设备指纹仅含有意义的参数，不对 YAML 原文计算；校准/核对记录估计距离中位数，仅供分析，档案年龄仅显示、不自动过期。
-- **M3b 第二个 PR（第一个合并后从最新 main 开始，尚未实施）**：完整托盘与四类可配置系统热键；面板逐项显示注册失败，其他热键仍可用；`inference.num_threads` 默认 4 并兼容旧 cpu_threads、显式 MPS 不可用回 CPU、同输入 CPU/MPS 数值及耗时对比；新增默认不限制的 `inference.max_fps`，显示仍用 One Euro、不插值。Mac 默认后端待实测决定；对比包含 num_threads=2 与 4，并解释 PyTorch 限制不等于进程总线程数，分别实测 CPU/GPU/总线程和各线程来源，不预填结果。
+- **M3b 第二个 PR（第一个 PR #8 已合并，从 main ba8943a 建立 m3b-controls）**：完整托盘与四类可配置系统热键；面板逐项显示注册失败，其他热键仍可用；`inference.num_threads` 兼容旧 cpu_threads、显式 MPS 不可用回 CPU、同输入 CPU/MPS 数值及耗时对比；新增 `inference.max_fps`，显示仍用 One Euro、不插值。根据 Mac 收尾实测，默认采用 `device: auto`（Mac 仍选 CPU）、`num_threads: 2`、`max_fps: 15`，Windows 待测，可用 local.yaml 覆盖；九点、补看和精度核对期间临时不限推理帧率，结束或中断后恢复任务前实际上限（默认 15）。对比包含 num_threads=2 与 4，并解释 PyTorch 限制不等于进程总线程数，分别实测 CPU/GPU/总线程和各线程来源，不预填结果。用户已报告的 Mac 结果见验证记录，未逐项报告及 Windows 实机路径保持未验证。
+- **M3b 第二个 PR 追加（用户批准）**：`overlay.panel_on_start: auto / always / never`，macOS auto 等于 always，延迟仍打印托盘状态。九点后显示/录制校准点自身仿射残差；实测厘米超过 `overlay.calibration_redo_cm`（默认 2.0）时可只补看这些点，与原稳定样本合并、重新取点中位数后拟合，最多一轮；取消补看保留首次完整结果。未实测屏幕只报告逻辑像素，不套用厘米阈值。不引入非线性映射，不把拟合残差当作独立 B 组精度。
 - M3a 不实现 M3b 功能；各阶段界面与可测试逻辑分离。下列任务中校准档案、误差核对半径、完整托盘和热键属于 M3b。
 
 **任务**

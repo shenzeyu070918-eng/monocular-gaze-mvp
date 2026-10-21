@@ -39,6 +39,9 @@ class ProfileManager:
         self._executor=ThreadPoolExecutor(max_workers=1,thread_name_prefix='overlay-profiles')
         self._pending=None;self._next_poll=0.;self._signature=object();self._suppressed=False
         self.last_operation=None;self.last_error=None;self._matrix_key=None
+        self._camera_snapshot=None;self._radius=None
+        self._mode_text='未校准';self._mode_refresh_at=None
+        self._device_fingerprint=device_fingerprint(settings.device_profile)
 
     @property
     def busy(self):return self._pending is not None
@@ -52,23 +55,33 @@ class ProfileManager:
     @property
     def mode(self):
         if self.profile is None:return '未校准'
-        source=' · web 档案（手动）' if self.profile.get('pipeline','web')=='web' else ''
-        return '九点 · '+profile_age_text(self.profile)+source
+        now=self.clock()
+        if self._mode_refresh_at is None or now>=self._mode_refresh_at:
+            source=' · web 档案（手动）' if self.profile.get('pipeline','web')=='web' else ''
+            self._mode_text='九点 · '+profile_age_text(self.profile)+source
+            self._mode_refresh_at=now+1.
+        return self._mode_text
 
     @property
     def radius(self):
-        if self.profile is not None and self.profile.get('pipeline')=='python':
-            return radius_from_profile(self.profile,self.conditions)
-        return None
+        return self._radius
 
     def _activate(self,profile,reason):
+        # Loaded profiles are immutable during display. Validate the complete
+        # check once per activation, rather than on every GUI timer callback.
+        radius=radius_from_profile(profile,self.conditions) if profile is not None and profile.get('pipeline')=='python' else None
         self.profile=profile;self.reason=reason;self.revision+=1
+        self._radius=radius;self._mode_refresh_at=None
         key=None if profile is None else (profile.get('matrix_id'),profile['calibration_id'],tuple(tuple(r) for r in profile['matrix']))
         if key!=self._matrix_key:
             self._matrix_key=key;self.on_matrix(None if profile is None else deepcopy(profile['matrix']))
 
     def observe(self,camera):
+        if self._camera_snapshot is not None and camera==self._camera_snapshot:return False
         conditions=build_conditions(self.settings,camera,self.screen)
+        # Keep our own value snapshot: providers may reuse a dict and mutate a
+        # nested matrix, so identity alone cannot establish unchanged inputs.
+        self._camera_snapshot=deepcopy(camera)
         if self.conditions==conditions:return False
         self.conditions=conditions;self._pending=None;self._suppressed=False
         self._activate(None,'实际相机/屏幕条件变化，正在重新匹配档案')
@@ -113,7 +126,7 @@ class ProfileManager:
         self._signature=signature;self._suppressed=False
         conditions=deepcopy(self.conditions)
         def load():
-            if self.device_path is not None and device_fingerprint(load_device(self.device_path))!=device_fingerprint(self.settings.device_profile):
+            if self.device_path is not None and device_fingerprint(load_device(self.device_path))!=self._device_fingerprint:
                 raise ValueError('设备文件的标定/几何参数已改变，请重新启动后匹配档案')
             return load_python_profile(name=self.name,conditions=conditions,directory=self.directory)
         self._submit('load',load)
@@ -132,6 +145,7 @@ class ProfileManager:
         conditions=deepcopy(self.conditions)
         calibration=dict(sample_count=result['sample_count'],target_count=9,
                          estimated_distance_cm_median=result['estimated_distance_cm_median'])
+        if result.get('quality') is not None:calibration['quality']=deepcopy(result['quality'])
         def save():
             save_python_profile(result['matrix'],name=self.name,conditions=conditions,
                                 calibration_id=result['calibration_id'],calibration=calibration,directory=self.directory)

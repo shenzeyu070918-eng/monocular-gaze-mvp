@@ -1,11 +1,14 @@
 """Shared controls and result presentation offscreen; no camera or input hook."""
 from copy import deepcopy
+from contextlib import redirect_stdout
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import os
+import io
 import re
+from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 os.environ['QT_QPA_PLATFORM']='offscreen'
 from PySide6.QtWidgets import QApplication, QMenu
@@ -15,6 +18,8 @@ from gaze_core.evaluation import evaluate
 from gaze_core.profiles import profile_age_text
 from overlay.actions import OverlayActions, TrayFallback
 from overlay.panel import ControlPanel, summary_text
+from overlay.hotkeys import Hotkeys
+from overlay import platforms
 
 
 class TrayFallbackTests(unittest.TestCase):
@@ -95,6 +100,48 @@ class ControlPanelTests(unittest.TestCase):
         self.assertFalse(self.panel.isVisible());quit_callback.assert_not_called()
         self.panel.present();self.app.processEvents();self.assertTrue(self.panel.isVisible())
         self.panel.buttons['quit'].click();quit_callback.assert_called_once()
+
+    def test_panel_hotkey_fronts_hidden_and_already_visible_accessory_window(self):
+        self.actions.connect('panel',self.panel.present)
+        keys=Hotkeys(dict(panel='Ctrl+Option+O'),lambda action:self.actions[action].trigger(),
+                     backend_factory=lambda cb:Mock())
+        try:
+            for visible in (False,True):
+                with self.subTest(visible=visible):
+                    self.panel.setVisible(visible);self.app.processEvents()
+                    calls=Mock()
+                    application=Mock();native=Mock()
+                    native.collectionBehavior.return_value=1|16|32|64
+                    calls.attach_mock(application.activateIgnoringOtherApps_,'activate')
+                    calls.attach_mock(native.makeKeyAndOrderFront_,'make_key')
+                    calls.attach_mock(native.orderFrontRegardless,'order_front')
+                    objc=SimpleNamespace(objc_object=Mock(return_value=SimpleNamespace(window=lambda:native)))
+                    appkit=SimpleNamespace(NSApplication=SimpleNamespace(sharedApplication=lambda:application),
+                        NSWindowCollectionBehaviorCanJoinAllSpaces=1,
+                        NSWindowCollectionBehaviorMoveToActiveSpace=2,
+                        NSWindowCollectionBehaviorFullScreenAuxiliary=8,
+                        NSWindowCollectionBehaviorFullScreenPrimary=16,
+                        NSWindowCollectionBehaviorFullScreenNone=32)
+                    with patch.object(platforms.sys,'platform','darwin'), \
+                         patch('PySide6.QtGui.QGuiApplication.platformName',return_value='cocoa'), \
+                         patch.dict('sys.modules',objc=objc,AppKit=appkit),redirect_stdout(io.StringIO()):
+                        keys._activated(1)
+                    self.assertTrue(self.panel.isVisible())
+                    self.assertEqual(calls.mock_calls,[unittest.mock.call.activate(True),
+                        unittest.mock.call.make_key(None),unittest.mock.call.order_front()])
+                    native.setCollectionBehavior_.assert_called_once_with(2|8|64)
+                    objc.objc_object.assert_called_once_with(c_void_p=int(self.panel.winId()))
+                    application.setActivationPolicy_.assert_not_called()
+        finally:keys.close()
+
+    def test_offscreen_panel_presentation_never_imports_or_activates_appkit(self):
+        appkit=Mock()
+        with patch.object(platforms.sys,'platform','darwin'), \
+             patch('PySide6.QtGui.QGuiApplication.platformName',return_value='offscreen'), \
+             patch.dict('sys.modules',AppKit=appkit):
+            self.panel.present()
+        self.assertTrue(self.panel.isVisible())
+        appkit.NSApplication.sharedApplication.assert_not_called()
 
     def test_panel_shows_old_profile_age_without_expiring_or_changing_mode(self):
         now=datetime(2026,10,20,tzinfo=timezone.utc)

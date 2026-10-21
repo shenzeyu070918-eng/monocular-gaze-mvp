@@ -160,8 +160,85 @@ class FakeRecorder:
 
 
 class PipelineTests(unittest.TestCase):
+    def test_task_bypass_wakes_long_cap_wait_then_restores_original_cap(self):
+        settings=load_settings(use_local=False)
+        settings=replace(settings,inference=replace(settings.inference,max_fps=.01))
+        display=Mock();display.process.return_value={}
+        pipeline,cameras,engines=self.make_pipeline(settings=settings,controlled=True,
+                                                   display_pipeline=display)
+        waiting=threading.Event()
+        original_wait=pipeline._condition.wait
+        def wait(timeout=None):
+            if threading.current_thread().name=='gaze-inference' and timeout is not None and timeout>10:
+                waiting.set()
+            return original_wait(timeout)
+        pipeline._condition.wait=wait
+        pipeline.start();camera=cameras[0];engine=engines[0]
+        resets_before_task=display.reset.call_count
+        camera.send(1)
+        first=pipeline.wait_for_result(timeout=3)
+        camera.send(2);camera.send(3)
+        self.assertTrue(waiting.wait(3))
+        camera.wait_for_reads(4)
+        with pipeline._condition:
+            latest_capture=pipeline._pending.captured_ns
+        pipeline.set_task_active(True)
+        result=pipeline.wait_for_result(after_sequence=first.sequence,timeout=1)
+        self.assertIsNotNone(result,'task start must wake the 100-second pacing wait')
+        self.assertEqual((result.sequence,result.captured_ns),(3,latest_capture))
+        self.assertEqual(engine.values,[1,3])
+        self.assertEqual(display.process.call_args.kwargs['capture_ns'],latest_capture)
+        # Ending the task restores this pipeline's original cap, not a fixed
+        # 15 FPS value. The next frame must wait for its 100-second deadline.
+        waiting.clear();pipeline.set_task_active(False);camera.send(4)
+        self.assertTrue(waiting.wait(3))
+        self.assertIsNone(pipeline.wait_for_result(after_sequence=3,timeout=.05))
+        self.assertEqual(engine.values,[1,3])
+        self.assertIs(pipeline.settings,settings)
+        self.assertEqual(display.reset.call_count,resets_before_task)
+        self.assertEqual(len(engines),1)
+        pipeline.close()
+        self.assert_camera_released_safely(camera)
+        self.assertTrue(engine.closed)
+        self.assert_workers_stopped()
+
+    def test_task_end_keeps_null_config_unlimited_and_validates_boolean(self):
+        settings=load_settings(use_local=False)
+        settings=replace(settings,inference=replace(settings.inference,max_fps=None))
+        pipeline,cameras,engines=self.make_pipeline(settings=settings,controlled=True)
+        pipeline.set_task_active(True);pipeline.start();camera=cameras[0]
+        sequence=0
+        for active,value in [(True,1),(False,2),(True,3),(False,4)]:
+            pipeline.set_task_active(active);camera.send(value)
+            result=pipeline.wait_for_result(after_sequence=sequence,timeout=1)
+            self.assertIsNotNone(result)
+            sequence=result.sequence
+        self.assertEqual(engines[0].values,[1,2,3,4])
+        self.assertIsNone(pipeline.settings.inference.max_fps)
+        with self.assertRaisesRegex(ValueError,'布尔'):
+            pipeline.set_task_active(1)
+
+    def test_max_fps_keeps_latest_capture_clock_and_pause_interrupts_wait(self):
+        settings=load_settings(use_local=False)
+        settings=replace(settings,inference=replace(settings.inference,max_fps=5.))
+        pipeline,cameras,engines=self.make_pipeline(settings=settings)
+        pipeline.start()
+        first=pipeline.wait_for_result(timeout=3)
+        second=pipeline.wait_for_result(after_sequence=first.sequence,timeout=3)
+        self.assertGreaterEqual(second.completed_ns-first.completed_ns,180_000_000)
+        self.assertGreater(second.sequence,first.sequence+1)
+        # Timestamp comes from a recent real fake-camera read, not a scheduled
+        # inference deadline or completion. The newer pending image was used.
+        self.assertGreater(second.captured_ns,first.captured_ns)
+        self.assertLess(second.completed_ns-second.captured_ns,100_000_000)
+        self.assertGreater(pipeline.report()['dropped_frames'],0)
+        pipeline.settings=replace(settings,inference=replace(settings.inference,max_fps=.01))
+        started=time.monotonic();pipeline.pause()
+        self.assertLess(time.monotonic()-started,.5)
+        self.assert_camera_released_safely(cameras[0])
+
     def make_pipeline(self, gate=None, failure=None, settings=None, controlled=False,
-                      recorder=None, recording_factory=None):
+                      recorder=None, recording_factory=None,display_pipeline=None):
         cameras, engines = [], []
         def camera_factory(options):
             self.assertEqual((options.width, options.height), (640, 480))
@@ -174,7 +251,7 @@ class PipelineTests(unittest.TestCase):
             return engine
         pipeline = CameraPipeline(settings, camera_factory=camera_factory, engine_factory=engine_factory,
                                   collect_timings=True, recorder=recorder,
-                                  recording_factory=recording_factory)
+                                  recording_factory=recording_factory,display_pipeline=display_pipeline)
         self.addCleanup(pipeline.close)
         return pipeline, cameras, engines
 

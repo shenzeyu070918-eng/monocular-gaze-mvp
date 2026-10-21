@@ -30,10 +30,11 @@ EVENT_FIELDS = {
                        'sample_start_ms', 'sample_end_ms', 'browser_time_ms', 'warning', 'camera'},
     'evaluation_summary': {'task_id', 'run_id', 'calibration_id', 'completed', 'reason', 'summary', 'browser_time_ms'},
     'click': {'x', 'y', 'button', 'browser_time_ms'},  # Reserved schema; no input listener in M0.
+    'calibration_quality': {'task_id','calibration_id','phase','quality','browser_time_ms'},
 }
 for _event_fields in EVENT_FIELDS.values():
     _event_fields.add('event_ns')
-for _kind in ('calibration', 'evaluation_summary'):
+for _kind in ('calibration', 'evaluation_summary', 'calibration_quality'):
     EVENT_FIELDS[_kind].update({'estimated_distance_cm_median', 'estimated_distance_sample_count',
                                 'conditions_fingerprint', 'pipeline', 'profile_file'})
 STATUSES = {'tracking', 'no_face', 'blink', 'geometry_invalid', 'prediction_error', 'screen_unconfigured'}
@@ -71,7 +72,7 @@ def _json_numbers(value, field=''):
         return value
     converted = number(value, field or '数值')
     if isinstance(value, Integral) and (field.endswith(('_ns','_count','_frames','_targets')) or field in {
-            'schema_version', 'seq', 'frame_id', 'index', 'camera_index', 'configured_camera_index', 'sample_count', 'written_lines', 'failed_records'}):
+            'schema_version', 'seq', 'frame_id', 'index', 'round', 'camera_index', 'configured_camera_index', 'sample_count', 'written_lines', 'failed_records'}):
         return int(value)
     return converted
 
@@ -268,6 +269,12 @@ def validate_payload(kind, fields, source):
             vector(fields.get('target'), 2, 'target')
             vector(fields.get('stage_target'), 2, 'stage_target', nullable=True)
             if 'reason' in fields: text_value(fields['reason'], 'reason', nullable=True)
+        elif kind == 'calibration_quality':
+            from .calibration_quality import validate_quality
+            text_value(fields.get('task_id'),'task_id')
+            text_value(fields.get('calibration_id'),'calibration_id')
+            if fields.get('phase') not in ('initial','final','redo_cancelled'):raise ValueError('校准残差阶段无效')
+            validate_quality(fields.get('quality'))
         elif kind == 'calibration':
             if fields.get('action') not in {'applied','reset'} or fields.get('group') not in {'A','B'}:
                 raise ValueError('calibration 动作或分组无效')

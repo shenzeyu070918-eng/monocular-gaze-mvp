@@ -152,6 +152,7 @@ class CameraPipeline:
         self._collect_timings, self._clock_ns = collect_timings, clock_ns
         self._condition = threading.Condition()
         self._task_active = False
+        self._click_session_rate = (False,None)
         self._control = threading.RLock()
         self._stop, self._run = threading.Event(), threading.Event()
         self._threads = ()
@@ -321,6 +322,20 @@ class CameraPipeline:
         with self._condition:
             self._task_active = active
             self._condition.notify_all()
+
+    def set_click_session_rate(self,active,*,max_fps=None):
+        """A separate collection lease; explicit tasks always take precedence."""
+        from .devices import finite
+        if type(active) is not bool:raise ValueError('点击会话状态必须为布尔值')
+        if max_fps is not None:finite(max_fps,'click_session.max_fps',positive=True)
+        with self._condition:
+            self._click_session_rate=(active,max_fps)
+            self._condition.notify_all()
+
+    def _effective_max_fps(self):
+        if self._task_active:return None
+        active,limit=self._click_session_rate
+        return limit if active else self.settings.inference.max_fps
 
     @property
     def result_sink_error(self):
@@ -567,7 +582,7 @@ class CameraPipeline:
                     # Pace starts, then take the newest pending frame. Waiting
                     # is interruptible; capture continues replacing old frames.
                     while not self._stop.is_set() and last_started_ns is not None:
-                        max_fps = None if self._task_active else self.settings.inference.max_fps
+                        max_fps = self._effective_max_fps()
                         if max_fps is None:
                             break
                         deadline = last_started_ns+1_000_000_000/max_fps
@@ -641,6 +656,7 @@ class CameraPipeline:
                 'actual_resolution': self._actual_resolution,
                 'grayscale': self.settings.camera.grayscale,
                 'software_idle_pacing': bool(self._pacing and self._pacing.idle),
+                'inference_max_fps': self._effective_max_fps(),
                 'requested_backend': self.settings.camera.backend, 'actual_backend': self._actual_backend,
                 'captured_frames': self._captured, 'predicted_frames': self._predicted,
                 'valid_predictions': self._valid_predictions, 'prediction_status_counts': dict(self._status_counts),

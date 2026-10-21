@@ -26,6 +26,15 @@ class OverlaySession:
         self.request_redo=None;self.dismiss_redo=None;self._window_factory=None;self._qscreen=None
         self.display_revision=0;self.matrix_since_ns=0
         self._inference_task_active=False
+        self.clicks=None
+
+    def bind_clicks(self,*,start_task,exclude=None,own_handles=None,listener_factory=None):
+        from .click_session import ClickSession
+        self.clicks=ClickSession(self.settings,self.screen,self.recording,self.profiles,start_task=start_task,
+                                set_rate=self.controller.set_click_session_rate,notice=self.notice,
+                                listener_factory=listener_factory,exclude=exclude,clock_ns=self.clock_ns,
+                                own_handles=own_handles,cancel_task=self.cancel)
+        return self.clicks
 
     def _task_inference(self,active):
         if active==self._inference_task_active:return
@@ -47,6 +56,7 @@ class OverlaySession:
         # Both receive numeric copies; overflow is explicit and never waits.
         self.recording.record_prediction(prediction)
         self.buffer.push(prediction)
+        if self.clicks is not None:self.clicks.observe(prediction)
 
     def metadata(self):
         snapshot=self._metadata_snapshot
@@ -97,7 +107,7 @@ class OverlaySession:
             camera=prediction.data.get('camera')
             if camera is not None:
                 changed=self.profiles.observe(camera)
-                if changed and self.active:self.cancel('conditions_changed')
+                if changed and (self.active or (self.clicks is not None and self.clicks.active)):self.cancel('conditions_changed')
                 self.latest=prediction
                 # Session metadata needs camera conditions and device identity,
                 # not per-tick counters. Preserve an owned snapshot only when
@@ -116,6 +126,7 @@ class OverlaySession:
         if error and self.active:
             self.notice('任务数值结果不完整：'+str(error),True);self.cancel('numeric_results_incomplete')
         status=self.recording.status()
+        if self.clicks is not None:self.clicks.tick()
         if status['error'] and status['error']!=self._record_error:
             self._record_error=status['error'];self.notice('录制失败：'+status['error'],True)
             self.cancel('recording_failed')
@@ -132,9 +143,11 @@ class OverlaySession:
                                     pipeline='python',conditions_fingerprint=conditions_id(self.profiles.conditions))
                 self.recording.end_task(saved['task_id'],'completed')
                 self.notice('九点档案已保存；'+self.radius_text,False)
+                if self.clicks is not None:self.clicks.baseline_ready(self.profiles.profile)
             else:
                 self.recording.end_task(saved['task_id'],'profile_save_failed')
                 self.notice('九点档案未激活：'+(self.profiles.last_error or '保存期间档案或设备条件改变'),True)
+                if self.clicks is not None and self.clicks.active:self.clicks.abort('profile_save_failed')
         if self.profiles.revision!=self._revision:
             self._revision=self.profiles.revision
             self.notice(self.profiles.reason+'；'+self.radius_text,False)
@@ -172,6 +185,7 @@ class OverlaySession:
 
     def cancel(self,reason='cancelled'):
         self._task_inference(False)
+        if self.clicks is not None:self.clicks.abort(reason)
         if self._pending_calibration is not None:
             result=self._pending_calibration;self._pending_calibration=None;self._first_calibration=None
             if self.dismiss_redo is not None:self.dismiss_redo()
@@ -191,6 +205,7 @@ class OverlaySession:
         retain=first is not None and reason in {'cancelled','escape','window_closed','fullscreen_exited','insufficient_samples','prediction_timeout','calibration_failed','target_not_presented'}
         if not retain:self.recording.end_task(runner.task_id,reason)
         self._dispose();self.notice('任务已取消：'+(runner.error or reason),False)
+        if self.clicks is not None and not retain:self.clicks.cancelled_task(runner.kind,reason)
         if retain:
             self._quality_event(first,'redo_cancelled');self._save_calibration(first)
 
@@ -218,12 +233,14 @@ class OverlaySession:
                                 calibration_id=result['calibration_id'],completed=True,reason='completed',summary=result['summary'],
                                 estimated_distance_cm_median=result['estimated_distance_cm_median'],
                                 estimated_distance_sample_count=result['estimated_distance_sample_count'],pipeline='python',
+                                sample_selection=result['sample_selection'],sampling=result['sampling'],
                                 conditions_fingerprint=conditions_id(self.profiles.conditions))
             self.results(summary_text(result['summary'],result['estimated_distance_cm_median']))
             group=result['summary']['groups'].get('B',{}).get('all',{})
             if group.get('complete') and group.get('mean_cm') is not None:self.profiles.save_check(result)
             else:self.notice('核对已完成；无完整、实测尺寸的 B 组结果，保留原半径来源',False)
             self.recording.end_task(result['task_id'],'completed')
+            if self.clicks is not None:self.clicks.completed_check(result)
         self._dispose()
 
     def _quality_event(self,result,phase):
@@ -270,4 +287,5 @@ class OverlaySession:
     def close(self):
         # Called by the lifecycle worker only after the camera/sink have drained.
         self._task_inference(False)
+        if self.clicks is not None:self.clicks.close()
         self.recording.close();self.profiles.close()

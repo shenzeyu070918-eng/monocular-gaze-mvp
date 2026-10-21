@@ -216,6 +216,25 @@ class OverlaySettings:
 
 
 @dataclass(frozen=True)
+class ClickSessionSettings:
+    max_fps: float | None = None
+    recent_baseline_max_age_s: float = 300.0
+    clock_resample_ms: float = 10000.0
+    clock_max_uncertainty_ms: float = 20.0
+    clock_max_drift_ms: float = 20.0
+    clock_max_delay_ms: float = 10000.0
+
+    def __post_init__(self):
+        from .devices import finite
+        if self.max_fps is not None:finite(self.max_fps,'click_session.max_fps',positive=True)
+        finite(self.recent_baseline_max_age_s,'click_session.recent_baseline_max_age_s',positive=True)
+        if self.recent_baseline_max_age_s>300:
+            raise ValueError('点击实验 B 基线复用时间不得超过 5 分钟')
+        for name in ('clock_resample_ms','clock_max_uncertainty_ms','clock_max_drift_ms','clock_max_delay_ms'):
+            finite(getattr(self,name),'click_session.'+name,positive=True)
+
+
+@dataclass(frozen=True)
 class Settings:
     inference: InferenceSettings
     camera: CameraSettings
@@ -234,6 +253,7 @@ class Settings:
     offline_filter: OfflineFilterSettings = OfflineFilterSettings()
     display: DisplaySettings = DisplaySettings()
     overlay: OverlaySettings = OverlaySettings()
+    click_session: ClickSessionSettings = ClickSessionSettings()
 
 
 def select_device(requested, cuda_available, mps_available=False):
@@ -292,7 +312,7 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
         note(override, str(local))
         sources.append(str(local))
     required = {'inference', 'camera', 'geometry', 'recording', 'jump'}
-    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay'}:
+    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay', 'click_session'}:
         raise ValueError('配置必须包含 inference、camera、geometry、recording、jump 五部分')
     settings = Settings(InferenceSettings(**data['inference']), CameraSettings(**data['camera']),
                         ScreenGeometry(**data['geometry']), RecordingSettings(**data['recording']), JumpSettings(**data['jump']),
@@ -303,7 +323,8 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
                        fixation=FixationSettings(**data.get('fixation', {})),
                        offline_filter=OfflineFilterSettings(**data.get('offline_filter', {})),
                        display=DisplaySettings(**data.get('display', {})),
-                       overlay=OverlaySettings(**data.get('overlay', {})))
+                       overlay=OverlaySettings(**data.get('overlay', {})),
+                       click_session=ClickSessionSettings(**data.get('click_session', {})))
     i, c, g = settings.inference, settings.camera, settings.geometry
     # Validate the request separately from actual device availability.
     if i.device not in {'auto', 'cpu', 'cuda', 'mps'}:

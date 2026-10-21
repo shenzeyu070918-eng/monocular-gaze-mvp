@@ -9,6 +9,13 @@ inference:
   distance_min_m: 0.15
   distance_max_m: 1.5
   normalized_camera_distance_m: 0.6
+click_session:
+  max_fps: null  # Click experiment collection runs uncapped; restore inference.max_fps afterwards.
+  recent_baseline_max_age_s: 300.0  # A matching Python nine-point profile younger than 5 minutes may be reused explicitly.
+  clock_resample_ms: 10000.0
+  clock_max_uncertainty_ms: 20.0  # Clock quality bound, not an experimental window or a precision claim.
+  clock_max_drift_ms: 20.0
+  clock_max_delay_ms: 10000.0
 camera:
   index: 0
   width: 640

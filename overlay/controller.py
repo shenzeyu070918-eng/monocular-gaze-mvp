@@ -30,6 +30,7 @@ class OverlayController:
         self._status='paused';self._error=None;self._latest=None;self._idle=False
         self._report=None;self._matrix=None;self._matrix_revision=0;self._clear_numeric=False
         self._task_active=False;self._task_revision=0
+        self._click_rate=(False,None);self._click_revision=0
         self.closed=threading.Event()
         self.thread=threading.Thread(target=self._worker,name='overlay-control',daemon=True)
         self.thread.start()
@@ -41,6 +42,8 @@ class OverlayController:
             if self._wanted=='closed' and self._status!='error':return
             if action in {'paused','closed'} and self._task_active:
                 self._task_active=False;self._task_revision+=1
+            if action in {'paused','closed'} and self._click_rate[0]:
+                self._click_rate=(False,None);self._click_revision+=1
             self._wanted=action;self._revision+=1;self._error=None;self._latest=None
             self._condition.notify_all()
 
@@ -69,6 +72,16 @@ class OverlayController:
             if self._report is not None:self._report=dict(self._report,result_sink_error=None)
             self._condition.notify_all()
 
+    def set_click_session_rate(self,active,*,max_fps=None):
+        from gaze_core.devices import finite
+        if type(active) is not bool:raise ValueError('点击会话状态必须为布尔值')
+        if max_fps is not None:finite(max_fps,'click_session.max_fps',positive=True)
+        with self._condition:
+            if self.closed.is_set() or self._wanted=='closed':return
+            value=(active,max_fps) if active else (False,None)
+            if value==self._click_rate:return
+            self._click_rate=value;self._click_revision+=1;self._condition.notify_all()
+
     def _set(self,status,**values):
         with self._condition:
             self._status=status
@@ -76,7 +89,7 @@ class OverlayController:
             self._condition.notify_all()
 
     def _worker(self):
-        pipeline=None;active=False;cursor=0;handled=-1;matrix_revision=0;task_revision=-1
+        pipeline=None;active=False;cursor=0;handled=-1;matrix_revision=0;task_revision=-1;click_revision=0
         while not self.closed.is_set():
             with self._condition:
                 if not active and handled==self._revision:self._condition.wait()
@@ -85,6 +98,9 @@ class OverlayController:
                 with self._condition:task_active,revision_task=self._task_active,self._task_revision
                 if pipeline is not None and revision_task!=task_revision:
                     pipeline.set_task_active(task_active);task_revision=revision_task
+                with self._condition:click_rate,revision_click=self._click_rate,self._click_revision
+                if pipeline is not None and revision_click!=click_revision:
+                    pipeline.set_click_session_rate(click_rate[0],max_fps=click_rate[1]);click_revision=revision_click
                 if wanted=='closed':
                     self._set('closing',latest=None)
                     if pipeline is not None:pipeline.close()
@@ -102,6 +118,9 @@ class OverlayController:
                         pipeline=self._factory()
                         with self._condition:task_active,revision_task=self._task_active,self._task_revision
                         pipeline.set_task_active(task_active);task_revision=revision_task
+                        with self._condition:click_rate,revision_click=self._click_rate,self._click_revision
+                        if click_rate[0]:pipeline.set_click_session_rate(True,max_fps=click_rate[1])
+                        click_revision=revision_click
                     with self._condition:matrix,revision_matrix=self._matrix,self._matrix_revision
                     if revision_matrix!=matrix_revision:
                         pipeline.set_display_matrix(matrix,revision=revision_matrix);matrix_revision=revision_matrix
@@ -127,9 +146,13 @@ class OverlayController:
                 with self._condition:
                     if self._task_active:
                         self._task_active=False;self._task_revision+=1
+                    click_was_active=self._click_rate[0]
+                    self._click_rate=(False,None);self._click_revision+=1
                 if pipeline is not None and wanted!='closed':
                     try:
                         pipeline.set_task_active(False)
+                        if click_was_active:pipeline.set_click_session_rate(False)
+                        with self._condition:click_revision=self._click_revision
                         with self._condition:task_revision=self._task_revision
                         pipeline.pause()
                     except Exception as stop_error:cleanup=stop_error

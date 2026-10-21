@@ -22,7 +22,10 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(select_device('cpu', available), 'cpu')
         self.assertEqual(select_device('cuda', True), 'cuda')
         with self.assertRaises(RuntimeError): select_device('cuda', False)
-        with self.assertRaises(ValueError): select_device('mps', True)
+        self.assertEqual(select_device('mps',True,True),'mps')
+        self.assertEqual(select_device('mps',False,False),'cpu')
+        self.assertEqual(select_device('auto',False,True),'cpu')
+        with self.assertRaises(ValueError): select_device('bogus', True)
 
     def test_defaults_match_web_input(self):
         settings = load_settings(use_local=False)
@@ -36,7 +39,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual((settings.jump.point_count,settings.jump.dwell_ms,settings.jump.min_distance,settings.jump.margin), (20,1500,.35,.05))
 
     def test_invalid_configuration_rejected(self):
-        for section, name, value in [('inference', 'device', 'mps'), ('camera', 'backend', 'other'),
+        for section, name, value in [('inference', 'device', 'bogus'), ('camera', 'backend', 'other'),
                                       ('camera', 'width', 0), ('camera', 'index', -1),
                                       ('camera', 'grayscale', 'false'), ('camera','undistort','true'),
                                       ('camera','undistort_alpha',float('nan')), ('camera','undistort_alpha',2),
@@ -64,7 +67,7 @@ class SettingsTests(unittest.TestCase):
 
 
 class EngineTests(unittest.TestCase):
-    def build_engine(self, mode='auto', available=False):
+    def build_engine(self, mode='auto', available=False, mps_available=False):
         settings = load_settings(use_local=False)
         settings = replace(settings, inference=replace(settings.inference, device=mode))
         backend = SimpleNamespace(_gaze_estimation_model=SimpleNamespace(parameters=lambda: []),
@@ -73,6 +76,7 @@ class EngineTests(unittest.TestCase):
         factory = Mock(return_value=backend)
         torch = SimpleNamespace(cuda=SimpleNamespace(is_available=Mock(return_value=available),
                                                      get_device_name=Mock(return_value='fake CUDA device')),
+                                backends=SimpleNamespace(mps=SimpleNamespace(is_available=Mock(return_value=mps_available))),
                                 set_num_threads=Mock())
         from omegaconf import OmegaConf
         modules = {
@@ -100,6 +104,20 @@ class EngineTests(unittest.TestCase):
         engine, _, _, torch = self.build_engine(mode='cpu', available=True)
         self.assertEqual(engine.device, 'cpu')
         torch.cuda.is_available.assert_not_called()
+
+    def test_mps_uses_actual_backend_or_explains_cpu_fallback(self):
+        import io,os
+        from contextlib import redirect_stderr
+        with patch.dict(os.environ,{'PYTORCH_ENABLE_MPS_FALLBACK':'0'}):
+            engine,_,cfg,torch=self.build_engine(mode='mps',mps_available=True)
+        self.assertEqual(engine.device,'mps');self.assertEqual(cfg.device,'mps')
+        torch.cuda.is_available.assert_not_called();torch.set_num_threads.assert_called_once_with(4)
+        output=io.StringIO()
+        with redirect_stderr(output):engine,_,cfg,_=self.build_engine(mode='mps',mps_available=False)
+        self.assertEqual(engine.device,'cpu');self.assertEqual(cfg.device,'cpu')
+        self.assertIn('回退到 CPU',output.getvalue())
+        with patch.dict(os.environ,{'PYTORCH_ENABLE_MPS_FALLBACK':'1'}),self.assertRaisesRegex(RuntimeError,'逐算子'):
+            self.build_engine(mode='mps',mps_available=True)
 
     def test_prediction_statuses_geometry_and_raw_coordinates(self):
         engine, backend, _, _ = self.build_engine()

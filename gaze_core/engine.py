@@ -22,10 +22,21 @@ class Engine:
 
         self.settings = settings or load_settings()
         options = self.settings.inference
-        self.device = select_device(options.device, options.device != 'cpu' and torch.cuda.is_available())
-        self.device_name = torch.cuda.get_device_name(0) if self.device == 'cuda' else 'CPU'
+        mps=getattr(getattr(torch,'backends',None),'mps',None)
+        mps_available=bool(mps and mps.is_available()) if options.device=='mps' else False
+        self.device = select_device(options.device, options.device in ('auto','cuda') and torch.cuda.is_available(),mps_available)
+        self.device_reason=None
+        if options.device=='mps' and not mps_available:
+            self.device_reason='已指定 MPS，但当前 PyTorch / 系统没有可用的 MPS 设备，回退到 CPU。'
+        if self.device=='mps':
+            import os
+            if os.environ.get('PYTORCH_ENABLE_MPS_FALLBACK')=='1':
+                raise RuntimeError('请取消 PYTORCH_ENABLE_MPS_FALLBACK=1；不允许将逐算子 CPU 回退计为 MPS 实测。')
+        import sys
+        self.device_name = torch.cuda.get_device_name(0) if self.device == 'cuda' else 'Apple MPS' if self.device=='mps' else 'CPU'
+        print(f'推理设备：请求 {options.device}，实际 {self.device}；num_threads={options.num_threads}；max_fps={options.max_fps}'+('；'+self.device_reason if self.device_reason else ''),file=sys.stderr)
         self._cv2, self._Camera, self._Normalizer = cv2, Camera, HeadPoseNormalizer
-        torch.set_num_threads(options.cpu_threads)
+        torch.set_num_threads(options.num_threads)
         package = Path(ptgaze.__file__).resolve().parent
         cfg = OmegaConf.merge(OmegaConf.structured(AppConfig), OmegaConf.load(package/'data/configs/eth-xgaze.yaml'))
         cfg.PACKAGE_ROOT = str(package)

@@ -1,7 +1,7 @@
 """Register only named system shortcuts; never inspect general key events."""
 import sys
 
-ACTION_LABELS = {'toggle':'显示/隐藏','pause':'暂停/恢复','calibrate':'开始九点','panel':'控制面板'}
+ACTION_LABELS = {'toggle':'显示/隐藏','pause':'暂停/恢复','calibrate':'开始九点','panel':'控制面板','heatmap_toggle':'热力图累加开/关','heatmap_view':'查看/隐藏热力图'}
 
 
 def parse_shortcut(text):

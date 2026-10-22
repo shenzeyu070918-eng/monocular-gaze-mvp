@@ -98,19 +98,22 @@ class CaptureNumericTests(unittest.TestCase):
                 self.calls.append((threading.current_thread().name,kwargs))
                 return dict(position=data['raw'])
         display = Display()
-        pipeline, _ = self.pipeline(lambda _:None, display=display)
+        delivered=[]
+        pipeline, _ = self.pipeline(delivered.append, display=display)
         matrix = [[1.,0.],[0.,1.],[.2,.3]]
         pipeline.set_display_matrix(matrix,revision=17)
         matrix[2][0] = 99
         pipeline.start(); self.wait_count(pipeline, 3); pipeline.pause()
         first = list(display.calls)
         self.assertEqual(pipeline._latest.data['display']['matrix_revision'],17)
+        self.assertTrue(delivered);self.assertTrue(all(p.data['matrix_revision']==17 for p in delivered))
         self.assertTrue(first)
         self.assertTrue(all(name=='gaze-inference' and args['matrix'][2][0]==.2 for name,args in first))
         pipeline.set_display_matrix(None,revision=23)
         pipeline.resume(); self.wait_count(pipeline, 3); pipeline.close()
         self.assertTrue(all(args['matrix'] is None for _,args in display.calls[len(first):]))
         self.assertEqual(pipeline._latest.data['display']['matrix_revision'],23)
+        self.assertEqual(delivered[-1].data['matrix_revision'],23)
 
     def test_inflight_display_keeps_matrix_and_revision_from_the_same_snapshot(self):
         entered=threading.Event();release=threading.Event()
@@ -121,7 +124,7 @@ class CaptureNumericTests(unittest.TestCase):
                     entered.set()
                     if not release.wait(3):raise RuntimeError('display test gate timed out')
                 return dict(position=list(kwargs['matrix'][2]))
-        pipeline,_=self.pipeline(lambda _:None,display=Display())
+        delivered=[];pipeline,_=self.pipeline(delivered.append,display=Display())
         pipeline.set_display_matrix([[1,0],[0,1],[.2,.3]],revision=4)
         pipeline.start()
         try:
@@ -135,6 +138,8 @@ class CaptureNumericTests(unittest.TestCase):
             pipeline.pause()
             self.assertEqual(pipeline._latest.data['display']['matrix_revision'],5)
             self.assertEqual(pipeline._latest.data['display']['position'],[.8,.9])
+            self.assertEqual(delivered[0].data['matrix_revision'],4)
+            self.assertEqual(delivered[-1].data['matrix_revision'],5)
             for value in (-1,True,1.5):
                 with self.assertRaises(ValueError):pipeline.set_display_matrix(None,revision=value)
         finally:release.set()

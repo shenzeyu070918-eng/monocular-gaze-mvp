@@ -179,12 +179,17 @@ class SessionHeatmapTests(unittest.TestCase):
             path=Path(inputs)/'python.jsonl';recording(path,versioned=False)
             settings=replace(self.settings,heatmap=replace(self.settings.heatmap,alpha_threshold=.25))
             result=session_heatmap(path,settings);destination=Path(folder)/'export'
-            output=export_heatmap(result,directory=destination)
+            from gaze_core.heatmap_render import render_heatmap
+            with patch('gaze_core.heatmap_export.render_heatmap',wraps=render_heatmap) as render:
+                output=export_heatmap(result,directory=destination)
+            self.assertEqual(render.call_count,1)
+            self.assertEqual(render.call_args.kwargs['dither_strength'],settings.heatmap.dither_strength)
             self.assertGreater((output/'heatmap.png').stat().st_size,1000)
             meta=json.loads((output/'regions.json').read_text());self.assertEqual(len(meta['targets']),14)
             self.assertIn('edge_clamped_s',meta);self.assertIn('outside_s',meta)
             self.assertEqual(meta['visualization']['alpha_threshold'],.25)
             self.assertEqual(meta['visualization']['palette'],'transparent_yellow_red')
+            self.assertGreaterEqual(meta['render']['render_ms'],0)
             with (output/'grid.csv').open() as stream:
                 self.assertAlmostEqual(sum(float(r['seconds_per_cell']) for r in csv.DictReader(stream)),result['grid'].sum())
             report=(output/'report.md').read_text();self.assertIn('不表示「看了什么内容」',report);self.assertIn('旧录制缺矩阵版本号',report)

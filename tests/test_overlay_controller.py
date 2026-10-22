@@ -35,6 +35,25 @@ class FakePipeline:
 
 
 class ControllerTests(unittest.TestCase):
+    def test_autocal_pacing_does_not_release_the_independent_M4_owner(self):
+        pipe=FakePipeline();c=OverlayController(load_settings(use_local=False),pipeline_factory=lambda:pipe)
+        try:
+            c.request('running');wait_for(c,lambda s:s.result is not None)
+            c.set_autocal_rate(True,max_fps=15)
+            wait_for(c,lambda s:pipe.click_rates[-1:]==[(True,15)])
+            c.set_click_session_rate(True,max_fps=None)
+            wait_for(c,lambda s:pipe.click_rates[-1:]==[(True,None)])
+            c.set_autocal_rate(False)
+            wait_for(c,lambda s:pipe.click_rates[-1:]==[(True,None)])
+            self.assertTrue(c._click_rate[0])
+            c.set_click_session_rate(False)
+            wait_for(c,lambda s:pipe.click_rates[-1:]==[(False,None)])
+            c.set_autocal_rate(True,max_fps=None)
+            c.request('paused');wait_for(c,lambda s:s.status=='paused')
+            self.assertFalse(c._autocal_rate[0])
+        finally:
+            c.request('closed');self.assertTrue(c.closed.wait(3));c.thread.join(1)
+
     def test_click_rate_is_applied_once_and_cleared_by_pause(self):
         pipe=FakePipeline();c=OverlayController(load_settings(use_local=False),pipeline_factory=lambda:pipe)
         try:

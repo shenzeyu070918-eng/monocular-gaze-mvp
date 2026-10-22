@@ -125,3 +125,16 @@ overlay:
     pause: Ctrl+Alt+P
     calibrate: Ctrl+Alt+C
     panel: Ctrl+Alt+O
+    heatmap_toggle: Ctrl+Alt+H
+
+# M6: screen regions only, never content. All heatmap work is off the GUI thread.
+heatmap:
+  enabled: false
+  allow_uncalibrated: false
+  grid_width: 160  # Height follows the full logical screen aspect ratio.
+  update_hz: 4.0  # Try 2.0 if WindowServer CPU/GPU costs are high.
+  half_life_s: 60.0
+  max_opacity: 0.4  # Hard ceiling; the gaze ring is painted above the heatmap.
+  queue_size: 256
+  regions: null  # Default 3x3; or [{id: left, rect: [0, 0, 0.5, 1]}, ...], no overlaps.
+  target_neighborhood_sigma: 1.0  # Target validation radius in multiples of the SAME sigma.

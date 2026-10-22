@@ -338,6 +338,44 @@ def _web_profile(data):
     return _canonical_numbers(dict(data,pipeline='web',matrix=_matrix(data['matrix'])))
 
 
+def conditions_fingerprint(conditions):
+    return _fingerprint(_conditions(conditions))
+
+
+def click_profile_path(name,directory=None):
+    return Path(directory or ROOT/'data/profiles/python')/(device_name(name)+'.click_offset.json')
+
+
+def _click_profile(data):
+    _fields(data,{'schema_version','pipeline','kind','offset_norm','sample_count','updated_at','conditions_fingerprint'},'click_offset')
+    if type(data['schema_version']) is not int or data['schema_version']!=1 or data['pipeline']!='python' or data['kind']!='click_offset':
+        raise ValueError('粗校准档案类型或版本无效')
+    offset=data['offset_norm']
+    if not isinstance(offset,(list,tuple)) or len(offset)!=2:raise ValueError('offset_norm 必须为全屏归一化二维偏移')
+    offset=[finite(v,'offset_norm') for v in offset]
+    count=_int(data['sample_count'],'sample_count',1);_timestamp(data['updated_at'])
+    fingerprint=data['conditions_fingerprint']
+    if not isinstance(fingerprint,str) or len(fingerprint)!=64 or any(c not in '0123456789abcdef' for c in fingerprint):
+        raise ValueError('粗校准条件指纹无效')
+    return dict(data,offset_norm=offset,sample_count=count)
+
+
+def save_click_profile(offset,*,name,count,conditions,directory=None,updated_at=None):
+    data=_click_profile(dict(schema_version=1,pipeline='python',kind='click_offset',offset_norm=offset,
+                            sample_count=count,updated_at=updated_at or datetime.now(timezone.utc).isoformat(),
+                            conditions_fingerprint=conditions_fingerprint(conditions)))
+    path=click_profile_path(name,directory)
+    _atomic_save(data,path.stem,path.parent)
+    return data
+
+
+def load_click_profile(*,name,conditions,directory=None):
+    data=_click_profile(json.loads(click_profile_path(name,directory).read_text(encoding='utf-8')))
+    if data['conditions_fingerprint']!=conditions_fingerprint(conditions):
+        raise ValueError('粗校准档案与实际设备/相机/屏幕条件不匹配')
+    return data
+
+
 def profile_age_text(profile, now=None):
     """Informational age only; distance and age do not invalidate a calibration."""
     stamp=_timestamp(profile['created_at'] if isinstance(profile,dict) else profile)

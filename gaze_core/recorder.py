@@ -292,7 +292,7 @@ def validate_payload(kind, fields, source):
         elif kind == 'calibration':
             if 'calibration_matched' in fields and type(fields['calibration_matched']) is not bool:
                 raise ValueError('calibration_matched 必须为布尔值')
-            if fields.get('action') not in {'applied','reset'} or fields.get('group') not in {'A','B'}:
+            if fields.get('action') not in {'applied','reset'} or fields.get('group') not in ({'A','B','C'} if source=='python' else {'A','B'}):
                 raise ValueError('calibration 动作或分组无效')
             if fields.get('coordinate_system') not in {None,'full_screen_normalized'}:raise ValueError('校准坐标系无效')
             text_value(fields.get('calibration_id'), 'calibration_id')
@@ -300,7 +300,7 @@ def validate_payload(kind, fields, source):
             if 'error_radius_cm' in fields:
                 radius=number(fields['error_radius_cm'],'error_radius_cm',nullable=True)
                 if radius is not None and radius<=0:raise ValueError('error_radius_cm 必须为正数或 null')
-            if 'error_radius_source' in fields and fields['error_radius_source'] not in {'matching_B_check','configured_cm','configured_logical_pixels'}:
+            if 'error_radius_source' in fields and fields['error_radius_source'] not in {'matching_B_check','matching_C_check','configured_cm','configured_logical_pixels'}:
                 raise ValueError('error_radius_source 无效')
             if matrix is not None:
                 if not isinstance(matrix, list) or len(matrix) != 3: raise ValueError('校准矩阵必须为 3×2')
@@ -320,6 +320,7 @@ def validate_payload(kind, fields, source):
             for key in ('task_id','run_id','calibration_id','reason'):text_value(fields.get(key),key)
             if type(fields.get('completed')) is not bool:raise ValueError('completed 必须为布尔值')
             validate_summary(fields.get('summary'))
+            if source=='web' and 'C' in fields['summary']['groups']:raise ValueError('网页评估不接受 C 组')
             if 'sample_selection' in fields:
                 selection = fields['sample_selection']
                 if not isinstance(selection, list):

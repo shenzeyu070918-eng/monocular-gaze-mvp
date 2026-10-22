@@ -126,20 +126,26 @@ class ProfileManager:
         self._signature=signature;self._suppressed=False
         conditions=deepcopy(self.conditions)
         def load():
-            if self.device_path is not None and device_fingerprint(load_device(self.device_path))!=self._device_fingerprint:
-                raise ValueError('设备文件的标定/几何参数已改变，请重新启动后匹配档案')
+            self.validate_device()
             return load_python_profile(name=self.name,conditions=conditions,directory=self.directory)
         self._submit('load',load)
 
     def _file_signature(self):
         return _stamp(self.path),_stamp(self.device_path) if self.device_path is not None else None
 
+    def device_signature(self):
+        return _stamp(self.device_path) if self.device_path is not None else None
+
+    def validate_device(self):
+        if self.device_path is not None and device_fingerprint(load_device(self.device_path))!=self._device_fingerprint:
+            raise ValueError('设备文件的标定/几何参数已改变，请重新启动后匹配档案')
+
     def reload(self):
         self._suppressed=False;self._signature=object();self._next_poll=0.;self.poll()
 
     def disable(self):
         self._pending=None;self._suppressed=True;self._signature=self._file_signature()
-        self._activate(None,'已手动停用个人修正；档案文件变化或手动加载后重新匹配')
+        self._activate(None,'已手动停用九点修正；档案文件变化或手动加载后重新匹配')
 
     def save_calibration(self,result):
         conditions=deepcopy(self.conditions)

@@ -172,7 +172,7 @@ def validate_summary(summary):
         raise ValueError('评估汇总字段无效')
     for key in root-{'measured','groups'}: text_value(summary[key],key)
     groups=summary['groups']
-    if not isinstance(groups,dict) or set(groups) not in ({'A'},{'A','B'}): raise ValueError('评估分组无效')
+    if not isinstance(groups,dict) or set(groups) not in ({'A'},{'A','B'},{'A','C'}): raise ValueError('评估分组无效')
     aggregate_keys=set(_aggregate([],0))
     point_keys={'target_id','region','target','frame_count','valid_frame_count','prediction','error_cm',
                 'horizontal_cm','vertical_cm','angle_deg','yaw_deg','pitch_deg','missing_origin_frames','invalid_origin_frames','angle_frame_count'}

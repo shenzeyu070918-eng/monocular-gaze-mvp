@@ -355,6 +355,7 @@ class DemoSettings:
     footer_px: float = 65.0
     background: str = '#101B30'
     button_color: str = '#EDF3FF'
+    hole_color: str = '#294363'
     text_color: str = '#112444'
     progress_color: str = '#FFCA55'
     feedback_color: str = '#FFCA55'
@@ -372,7 +373,7 @@ class DemoSettings:
             if type(getattr(self,name)) is not int or getattr(self,name)<minimum:raise ValueError('demo.'+name+f' 必须为整数且至少 {minimum}')
         if not isinstance(self.labels,(tuple,list)) or len(self.labels)!=6 or any(not isinstance(v,str) or not v.strip() or len(v)>120 for v in self.labels):
             raise ValueError('demo.labels 需要六条非空短文字，每条不超过120字')
-        for name in ('background','button_color','text_color','progress_color','feedback_color'):
+        for name in ('background','button_color','hole_color','text_color','progress_color','feedback_color'):
             if not isinstance(getattr(self,name),str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',getattr(self,name)):
                 raise ValueError('demo.'+name+' 必须为 #RRGGBB')
 

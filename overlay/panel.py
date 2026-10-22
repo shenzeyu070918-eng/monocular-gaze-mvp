@@ -25,7 +25,7 @@ class ControlPanel(QWidget):
         for label in (self.mode, self.radius, self.recording, self.clicks,self.autocal, self.heatmap,self.heatmap_sigma,self.heatmap_notice,self.hotkeys, self.notice):
             label.setWordWrap(True); layout.addWidget(label)
         self.buttons = {}
-        for name in ('calibrate','check','load_web','reset','record','clicks','click_session','abort_click_session','autocal',
+        for name in ('demo','presentation','calibrate','check','load_web','reset','record','clicks','click_session','abort_click_session','autocal',
                      'heatmap_toggle','heatmap_view','heatmap_clear','heatmap_export','toggle','pause','web','quit'):
             button = QToolButton(self); button.setDefaultAction(actions[name])
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)

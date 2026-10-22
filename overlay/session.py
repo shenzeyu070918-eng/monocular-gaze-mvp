@@ -39,6 +39,13 @@ class OverlaySession:
         self._coarse_mode_text='';self._autocal_text_key=None;self._autocal_text='点击自动粗校准：关闭'
         self._autocal_error=None;self._autocal_reason=None
         self._active_c_radius=None
+        self._demo_active=False
+        self.calibration_completed=None
+
+    def set_demo_active(self,active):
+        # Same ownership rule as other interactive windows, without enabling
+        # calibration's full-speed inference or altering its raw sample path.
+        self._demo_active=bool(active);self._sync_autocal_capture()
 
     def bind_clicks(self,*,start_task,exclude=None,own_handles=None,listener_factory=None):
         from .click_session import ClickSession
@@ -81,7 +88,7 @@ class OverlaySession:
         if self.autocal.error:raise RuntimeError(self.autocal.error)
 
     def _sync_autocal_capture(self):
-        self.autocal.set_frozen(self.active or not self._running)
+        self.autocal.set_frozen(self.active or self._demo_active or not self._running)
         try:
             if self._click_hub is not None:
                 self._click_hub.set_running(self._running)
@@ -273,7 +280,7 @@ class OverlaySession:
             self.cancel('recording_failed')
         if self.task is not None:
             self.task.advance(self.clock_ns());self._events();self.task_window.refresh()
-        self.profiles.poll(frozen=self.task is not None or self._pending_calibration is not None)
+        self.profiles.poll(frozen=self._demo_active or self.task is not None or self._pending_calibration is not None)
         self._sync_autocal_capture();self._sync_correction()
         if self.autocal.error and self.autocal.error!=self._autocal_error:
             self._autocal_error=self.autocal.error;self.notice(self.autocal.error,True)
@@ -289,6 +296,9 @@ class OverlaySession:
                                     pipeline='python',conditions_fingerprint=conditions_id(self.profiles.conditions),**self._calibration_metadata())
                 self.recording.end_task(saved['task_id'],'completed')
                 self.notice('九点档案已保存；'+self.radius_text,False)
+                if self.calibration_completed is not None:
+                    try:self.calibration_completed()
+                    except Exception as exc:self.notice('九点档案已保存；完成提示未显示：'+str(exc),False)
                 if self.clicks is not None:self.clicks.baseline_ready(self.profiles.profile)
             else:
                 self.recording.end_task(saved['task_id'],'profile_save_failed')

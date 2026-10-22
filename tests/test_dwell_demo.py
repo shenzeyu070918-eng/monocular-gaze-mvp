@@ -1,4 +1,5 @@
 import random
+import tempfile
 import unittest
 from dataclasses import replace
 import numpy as np
@@ -52,7 +53,7 @@ class DwellTests(unittest.TestCase):
         self.selector.feed((50,50),200_000_000,150_000_000)
         self.assertEqual(self.selector.progress,.1)
         self.selector.feed((50,50),150_000_000,700_000_000)
-        self.assertEqual(self.selector.progress,.1)
+        self.assertEqual(self.selector.progress,0.)
         self.selector.advance(1_101_000_000);self.assertIsNone(self.selector.current)
 
     def test_current_sticky_wins_overlap(self):
@@ -134,6 +135,33 @@ class DemoTests(unittest.TestCase):
             with self.assertRaises(ValueError):DemoSettings(**kw)
         self.assertEqual(load_settings(use_local=False).demo.hit_expand_ratio,.5)
         self.assertEqual(OverlaySettings().hotkeys['demo'],'Ctrl+Alt+D')
+
+    def test_demo_events_survive_recording_and_replay_with_numpy_clock(self):
+        from test_recorder import metadata
+        from gaze_core.config import RecordingSettings
+        from gaze_core.recorder import SessionRecorder
+        from tools.replay import read_session
+        run=self.make('game',practice=False)
+        self.select(run,run.target_id);run.close(1_500_000_000)
+        events=run.drain_events()
+        with tempfile.TemporaryDirectory() as directory:
+            recorder=SessionRecorder(metadata(),settings=RecordingSettings(directory,64,2))
+            for kind,event in events:
+                event['event_ns']=np.int64(event['event_ns']);self.assertTrue(recorder.emit(kind,**event))
+            recorder.close('demo-test');session=read_session(recorder.path)
+        replayed=[r for r in session.records if r['type'].startswith('demo_')]
+        self.assertEqual(len(replayed),len(events))
+        self.assertEqual(replayed[0]['target'],events[0][1]['target'])
+        self.assertEqual(replayed[0]['dwell_ms'],1000)
+        self.assertEqual(replayed[1]['action'],'undo');self.assertTrue(replayed[1]['false_activation'])
+        self.assertEqual(session.summary()['event_counts']['demo_selection'],2)
+
+    def test_last_second_game_undo_is_not_prematurely_confirmed(self):
+        run=self.make('game',practice=False,round_s=1.5)
+        self.select(run,run.target_id);run.advance(1_500_000_000)
+        self.assertEqual(run.phase,'finished');self.assertIsNotNone(run.pending)
+        run.close(1_700_000_000)
+        self.assertEqual(run.score,0);self.assertTrue(run.selections[0]['false_activation'])
 
 
 if __name__=='__main__':unittest.main()

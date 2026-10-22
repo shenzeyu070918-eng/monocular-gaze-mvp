@@ -35,7 +35,7 @@ class DwellSelector:
 
     def advance(self, now_ns):
         if self.last_capture is not None and now_ns-self.last_capture>self.stale_ns:
-            if self.loss_ns is None:self.loss_ns=self.last_capture+self.stale_ns
+            if self.loss_ns is None:self.loss_ns=self.last_capture
             self.previous_inside=False
         if ((self.loss_ns is not None and now_ns-self.loss_ns>self.options.loss_reset_ms*1e6)
                 or (self.leave_ns is not None and now_ns-self.leave_ns>self.options.leave_grace_ms*1e6)):

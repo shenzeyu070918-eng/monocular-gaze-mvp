@@ -183,7 +183,7 @@ class ControlsRuntimeTests(unittest.TestCase):
         cls.qt_app = QApplication.instance() or QApplication([])
         cls.qt_app.setQuitOnLastWindowClosed(False)
 
-    def exercise(self, scenario, *, heatmap=False,profile_seconds=None):
+    def exercise(self, scenario, *, heatmap=False,autocal=False,profile_seconds=None):
         clock = Clock()
         settings = load_settings(use_local=False)
         settings = replace(settings, geometry=replace(settings.geometry, width_cm=30., height_cm=20., measured=True))
@@ -210,6 +210,16 @@ class ControlsRuntimeTests(unittest.TestCase):
 
         def make_session(*args, **kwargs):
             context.session = Session(*args, **kwargs)
+            if autocal:
+                context.session.autocal=Mock(enabled=False,error=None)
+                context.session.autocal_text='点击自动粗校准：关闭'
+                context.session._active_group='A'
+                def enable_coarse(value):
+                    context.session.autocal.enabled=bool(value)
+                    context.session._active_group='C' if value else 'A'
+                    context.session.autocal_text='点击粗校准 · 已用 12 次点击 · 偏移 +0.60/+0.60 cm' if value else '点击自动粗校准：关闭'
+                    context.session.mode=context.session.autocal_text if value else '未校准'
+                context.session.set_autocal_enabled=enable_coarse
             if heatmap:
                 context.heatmap=Mock(enabled=False,viewing=False)
                 context.heat_state=dict(enabled=False,viewing=False,uncalibrated=False,error=None,label='热力图：关闭',
@@ -320,6 +330,23 @@ class ControlsRuntimeTests(unittest.TestCase):
             timer.timeout.emit();self.assertIn('热力图测试失败',c.panel.notice.text())
             self.assertFalse(c.actions['heatmap_toggle'].isChecked())
         self.exercise(scenario,heatmap=True)
+
+    def test_autocal_panel_and_tray_share_switch_and_show_C_check_label(self):
+        def scenario(c):
+            self.tick(c)
+            c.panel.resize(400,480);c.panel.show();self.qt_app.processEvents()
+            self.assertLessEqual(c.panel.height(),480)
+            self.assertGreater(c.panel.scroll.verticalScrollBar().maximum(),0)
+            self.assertFalse(c.actions['autocal'].isChecked())
+            self.assertIs(c.panel.buttons['autocal'].defaultAction(),c.actions['autocal'])
+            self.assertIn(c.actions['autocal'],c.menu.actions())
+            c.panel.buttons['autocal'].click();self.tick(c)
+            self.assertTrue(c.actions['autocal'].isChecked())
+            self.assertIn('已用 12',c.panel.autocal.text());self.assertIn('偏移',c.panel.mode.text())
+            self.assertIn('A/C',c.actions['check'].text())
+            c.actions['autocal'].trigger();self.tick(c)
+            self.assertFalse(c.actions['autocal'].isChecked());self.assertIn('A/B',c.actions['check'].text())
+        self.exercise(scenario,autocal=True)
 
     def test_profile_includes_heatmap_callbacks_and_actual_count_rate_without_config_substitution(self):
         from overlay.profiling import CallbackProfiler

@@ -53,6 +53,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         nonlocal closing,shutdown_requested
         closing=True;shutdown_requested=True;ring.clear()
         if heatmap is not None:heatmap.set_enabled(False)
+        if session is not None and hasattr(session,'set_running'):session.set_running(False)
         if session is not None:session.cancel('overlay_closed')
         pause_action.setEnabled(False)
         quit_action.setText('正在退出…')
@@ -73,6 +74,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         nonlocal paused_requested
         if shutdown_requested or screen_changed:return
         if session is not None:
+            if hasattr(session,'set_running'):session.set_running(False)
             session.cancel('camera_paused');session.recording.manual(False)
             session.buffer.clear();session.latest=None
         if heatmap is not None:heatmap.interrupt()
@@ -191,6 +193,13 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         actions.connect('reset',session.profiles.disable)
         actions.connect('record',manual_record)
         actions.connect('web',open_web)
+        def auto_calibrate(checked):
+            try:session.set_autocal_enabled(bool(checked))
+            except Exception as exc:
+                actions['autocal'].setChecked(False)
+                notice('点击自动粗校准未开启：'+str(exc),True)
+        if hasattr(session,'set_autocal_enabled'):actions.connect('autocal',auto_calibrate)
+        else:actions['autocal'].setEnabled(False)
         if heatmap is not None:
             def toggle_heatmap(checked):
                 if not session.set_heatmap_enabled(bool(checked)):
@@ -223,7 +232,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         state=heatmap.state()
         viewing=state['enabled'] and state['viewing'] and not shutdown_requested and not screen_changed
         if viewing and state['latest'] is not None:
-            window.set_heatmap(state['latest'],enabled=True,uncalibrated=state['uncalibrated']);heatmap_rendered=True
+            window.set_heatmap(state['latest'],enabled=True,uncalibrated=state['uncalibrated'],coarse_calibrated=state.get('coarse_calibrated',False));heatmap_rendered=True
         elif heatmap_rendered:
             window.set_heatmap(None,enabled=False);heatmap_rendered=False
         if controls is not None:
@@ -259,6 +268,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             quit_action.setText('重试退出')
         active=view.status=='running' and not paused_requested and not shutdown_requested and not screen_changed
         if session is not None:
+            if hasattr(session,'set_running'):session.set_running(active)
             if own_windows is not None:own_windows.refresh()
             session.tick(view)
             if session.display_revision!=display_revision:
@@ -297,10 +307,15 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         update(pause_action,'setEnabled',not shutdown_requested and not screen_changed and view.status not in {'starting','pausing','closing'})
         update(pause_action,'setText','恢复摄像头' if view.status in {'paused','error'} else '暂停摄像头')
         if controls is not None:
-            mode=session.profiles.mode
+            mode=getattr(session,'mode',session.profiles.mode)
             update(panel.mode,'setText',mode)
             update(controls.mode,'setText',mode)
             update(panel.radius,'setText',radius_text)
+            if hasattr(session,'autocal'):
+                update(panel.autocal,'setText',session.autocal_text)
+                if actions['autocal'].isChecked()!=session.autocal.enabled:actions['autocal'].setChecked(session.autocal.enabled)
+                update(actions['autocal'],'setEnabled',active and session.latest is not None and not session.active and not shutdown_requested)
+                update(actions['check'],'setText','精度核对（A/C）' if session._active_group=='C' else '精度核对（A/B）')
             click_active=clicks is not None and clicks.active
             ready=active and session.latest is not None and not session.active and not session.profiles.busy and not click_active
             for name in ('calibrate','check'):update(actions[name],'setEnabled',ready)

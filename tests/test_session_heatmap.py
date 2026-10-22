@@ -54,6 +54,18 @@ class SessionHeatmapTests(unittest.TestCase):
     def setUp(self):
         self.settings=replace(load_settings(use_local=False),heatmap=OPTIONS)
 
+    def test_C_timeline_uses_same_math_and_preserves_coarse_group_in_output(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'python.jsonl';rows=recording(path)
+            original=session_heatmap(path,self.settings)
+            for row in rows:
+                if row['type']=='calibration':row.update(group='C',error_radius_source='matching_C_check')
+            path.write_text(''.join(json.dumps(row)+'\n' for row in rows))
+            coarse=session_heatmap(path,self.settings)
+            np.testing.assert_array_equal(coarse['grid'],original['grid'])
+            self.assertEqual(coarse['regions'],original['regions']);self.assertTrue(coarse['coarse_calibrated'])
+            self.assertTrue(all(p['context']['group']=='C' for p in coarse['phases']))
+
     def test_fourteen_targets_checks_only_readonly_and_neighborhood_fractions(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'python.jsonl';recording(path)

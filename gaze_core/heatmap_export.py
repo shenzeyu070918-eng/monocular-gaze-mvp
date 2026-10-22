@@ -52,7 +52,8 @@ def export_heatmap(snapshot,*,directory=None):
     ax.tick_params(colors='white');bar=fig.colorbar(image,ax=ax,fraction=.045,pad=.04)
     bar.set_label(snapshot['unit'],color='white');bar.ax.tick_params(colors='white')
     uncalibrated=snapshot.get('uncalibrated',False)
-    title='屏幕区域热力图'+(' · 未校准' if uncalibrated else '')
+    coarse=snapshot.get('coarse_calibrated',False)
+    title='屏幕区域热力图'+(' · 未校准' if uncalibrated else ' · 粗校准' if coarse else '')
     fig.text(.08,.95,title,color='white',fontfamily=font,fontsize=16)
     fig.text(.08,.16,'热力图表示「看了屏幕的哪个区域」，不表示「看了什么内容」。\n窗口切换和滚动会让同一位置对应不同内容。',
              color='white',fontfamily=font,fontsize=11)
@@ -61,7 +62,7 @@ def export_heatmap(snapshot,*,directory=None):
     lines=['# 屏幕区域热力图','',NOTICE,'',f"网格：{snapshot['unit']}；区域统计：累计、不衰减。",'',
            '核尺度统一为 sigma = 圆环误差半径；具体阶段及来源见 regions.json。',
            f'显示按当前最大热量归一化；低于其{threshold:.0%}完全透明，从阈值到2倍阈值用smoothstep平滑恢复正常透明度，黄色至红色，不透明度上限{opacity:g}。网格数值不受显示阈值影响。',
-           '状态：'+('未校准' if uncalibrated else 'B 九点校准；匹配与历史对齐方式见 JSON。' if snapshot['fixation_count'] else '没有可用的校准注视段；原因见 JSON。'),'',
+           '状态：'+('未校准' if uncalibrated else 'C 点击粗校准（可能含历史 B 阶段）；各阶段见 JSON。' if coarse else 'B 九点校准；匹配与历史对齐方式见 JSON。' if snapshot['fixation_count'] else '没有可用的校准注视段；原因见 JSON。'),'',
            '## 边缘容差与屏幕外时长','',
            '中心到屏幕最近点的距离不超过同源核尺度1 sigma时，仅在热图/区域统计中夹回边缘；超过才排除。原始坐标和注视检测不夹回。',
            '以下时长累计、不衰减；夹回时长已计入有效注视，不能重复相加。','',

@@ -17,6 +17,7 @@ class HeatmapWorker:
         self._error=None;self._exporting=False;self._export_file=None;self._latest=None
         self._stream=None;self._version=0;self._image=None;self._last_badge=None;self._processed=0
         self._contains_uncalibrated=False
+        self._contains_coarse=False
         self._kernel_text=kernel_description(None)
         self.thread=threading.Thread(target=self._run,name='gaze-heatmap',daemon=True);self.thread.start()
 
@@ -78,12 +79,14 @@ class HeatmapWorker:
         latest=self._latest
         uncalibrated=self.context is None or not self.context['calibrated'] or self._contains_uncalibrated
         label='热力图：'+('开启（后台累加）' if self.enabled else '关闭')
+        coarse=(self.context is not None and self.context['phase'].get('group')=='C') or self._contains_coarse
         if self.enabled:label+=' · '+('正在查看' if self.viewing else '未查看')
         if self.enabled and uncalibrated:label+=' · 未校准'
+        elif self.enabled and coarse:label+=' · 粗校准'
         if self._error:label+=' · '+self._error
         if self._exporting:label+=' · 正在导出'
         elif self._export_file:label+=' · 已导出 '+self._export_file
-        return dict(enabled=self.enabled,viewing=self.viewing,uncalibrated=uncalibrated,error=self._error,label=label,
+        return dict(enabled=self.enabled,viewing=self.viewing,uncalibrated=uncalibrated,coarse_calibrated=coarse,error=self._error,label=label,
                     exporting=self._exporting,export_file=self._export_file,latest=latest,processed=self._processed,
                     has_session=self._stream is not None,kernel_text=self._kernel_text)
 
@@ -91,16 +94,18 @@ class HeatmapWorker:
         self._stream=HeatmapStream(self.settings.heatmap,self.settings.fixation,self.screen_size,decay=True,start_ns=start_ns)
         if self.context is not None:self._stream.configure(self.context)
         self._contains_uncalibrated=False
+        self._contains_coarse=False
 
     def _publish(self,now_ns):
         if self._stream is None:return
         snapshot=self._stream.snapshot(now_ns)
         rgba=rgba_grid(snapshot['grid'],self.settings.heatmap.max_opacity,self.settings.heatmap.alpha_threshold)
         self._contains_uncalibrated=any(p['context'].get('group')=='A' for p in snapshot['phases'])
-        badge=self.context is None or not self.context['calibrated'] or self._contains_uncalibrated
+        coarse=(self.context is not None and self.context['phase'].get('group')=='C') or self._contains_coarse
+        badge=(self.context is None or not self.context['calibrated'] or self._contains_uncalibrated,coarse)
         if self._image is None or not np.array_equal(rgba,self._image) or badge!=self._last_badge:
             self._version+=1;self._image=rgba;rgba.setflags(write=False);self._last_badge=badge
-        self._latest=dict(version=self._version,rgba=self._image,uncalibrated=badge)
+        self._latest=dict(version=self._version,rgba=self._image,uncalibrated=badge[0],coarse_calibrated=coarse)
 
     def _run(self):
         running=False;next_update=0
@@ -136,6 +141,7 @@ class HeatmapWorker:
                             uncalibrated=(self.context is None or not self.context['calibrated'] or
                                           any(p['context'].get('group')=='A' for p in snapshot['phases']))
                             snapshot.update(source='live_accumulator',uncalibrated=uncalibrated,
+                                            coarse_calibrated=(self.context is not None and self.context['phase'].get('group')=='C') or any(p['context'].get('group')=='C' for p in snapshot['phases']),
                                             notice=NOTICE,screen=dict(width_px=self.screen_size[0],height_px=self.screen_size[1]))
                             self._export_file=str(self.exporter(snapshot,directory=command[1]))
                         finally:self._exporting=False
@@ -148,6 +154,7 @@ class HeatmapWorker:
                     self._stream.expire(now)
                     phases=self._stream.accumulator.phases
                     if phases and phases[-1]['context'].get('group')=='A':self._contains_uncalibrated=True
+                    if phases and phases[-1]['context'].get('group')=='C':self._contains_coarse=True
                 if self.viewing and self.enabled and not self.closed and now>=next_update:
                     self._publish(now);next_update=now+round(1e9/self.settings.heatmap.view_update_hz)
             except Exception as exc:

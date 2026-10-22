@@ -164,6 +164,8 @@ class HeatmapSettings:
     display_mode: str = 'on_demand'
     view_update_hz: float = 1.0
     alpha_threshold: float = .15
+    render_scale: float = .5  # Fraction of full logical screen, independent of Retina DPR.
+    dither_strength: float = .5  # Peak-to-peak alpha quantization levels; 0 disables.
     half_life_s: float = 60.0
     max_opacity: float = .4
     queue_size: int = 256
@@ -183,6 +185,8 @@ class HeatmapSettings:
         if self.view_update_hz>5:raise ValueError('heatmap.view_update_hz 不得超过 5')
         if self.display_mode not in ('on_demand','continuous'):raise ValueError('heatmap.display_mode 必须为 on_demand / continuous')
         if not 0<=finite(self.alpha_threshold,'heatmap.alpha_threshold')<1:raise ValueError('heatmap.alpha_threshold 必须在 [0,1)')
+        if not 0<finite(self.render_scale,'heatmap.render_scale')<=1:raise ValueError('heatmap.render_scale 必须在 (0,1]')
+        if not 0<=finite(self.dither_strength,'heatmap.dither_strength')<=1:raise ValueError('heatmap.dither_strength 必须在 [0,1]，单位为透明度量化级')
         if self.max_opacity>.4:raise ValueError('heatmap.max_opacity 不得超过 0.4')
         if self.regions is not None:
             if not isinstance(self.regions,(list,tuple)) or not self.regions:raise ValueError('heatmap.regions 必须为非空矩形数组或 null')
@@ -222,6 +226,8 @@ class OverlaySettings:
     profile_name: str = 'builtin'
     profile_poll_s: float = 1.0
     tray_check_delay_ms: int = 500
+    screen_debounce_ms: int = 300
+    screen_retry_count: int = 3
     web_url: str = 'http://127.0.0.1:8765'
     panel_on_start: str = 'auto'
     calibration_redo_cm: float = 2.0
@@ -233,7 +239,8 @@ class OverlaySettings:
         for key in ('radius_cm','fallback_radius_px','opacity','fade_ms','stale_ms','stroke_px','idle_after_s','idle_fps'):
             finite(getattr(self,key),'overlay.'+key,positive=True)
         if self.opacity>1:raise ValueError('overlay.opacity 必须在 (0,1]')
-        for key in ('refresh_ms','label_font_px','label_inset_px','diagnostic_size_px','task_radius_px','tray_check_delay_ms'):
+        if type(self.screen_retry_count) is not int or self.screen_retry_count<0:raise ValueError('overlay.screen_retry_count 必须为非负整数')
+        for key in ('refresh_ms','label_font_px','label_inset_px','diagnostic_size_px','task_radius_px','tray_check_delay_ms','screen_debounce_ms'):
             if type(getattr(self,key)) is not int or getattr(self,key)<=0:raise ValueError('overlay.'+key+' 必须为正整数')
         for key in ('label_bottom_inset_px','label_padding_px'):
             if type(getattr(self,key)) is not int or getattr(self,key)<0:raise ValueError('overlay.'+key+' 必须为非负整数')

@@ -46,7 +46,6 @@ def main(argv=None):
         from PySide6.QtCore import QTimer
         from PySide6.QtWidgets import QApplication,QMenu,QSystemTrayIcon,QMessageBox
         from gaze_core.config import load_settings,print_configuration
-        from .mapping import ScreenRect
         from .window import OverlayWindow
         from .actions import OverlayActions,TrayFallback,panel_at_start,panel_on_tray_failure
         from .panel import ControlPanel
@@ -63,11 +62,13 @@ def main(argv=None):
         tray_available=QSystemTrayIcon.isSystemTrayAvailable()
         if not tray_available:
             print('系统托盘不可用，将使用控制面板。',flush=True)
-        screen=platforms.builtin_screen(app.screens())
-        rect=screen.geometry()  # Full logical screen, including menu/taskbar area.
-        logical=ScreenRect(rect.x(),rect.y(),rect.width(),rect.height(),screen.devicePixelRatio())
+        from .screens import startup_screen
+        selection=startup_screen(app,delay_ms=settings.overlay.screen_debounce_ms,retry_count=settings.overlay.screen_retry_count)
+        screen=selection.qscreen;logical=selection.rect
+        rect=screen.geometry()
         print(f'内置屏逻辑范围：{logical}；个人档案仅在实际 Python 相机条件匹配后加载。',flush=True)
         window=OverlayWindow(logical,settings.overlay,native_configure=platforms.configure_window,diagnostic=args.diagnostic)
+        window.screen_selection=selection
         tray=QSystemTrayIcon(make_tray_icon(settings.overlay.color),app)
         actions=OverlayActions(app);panel=ControlPanel(actions);finished=False
         menu=QMenu();mode=menu.addAction('未校准 · Python 管线');mode.setEnabled(False)

@@ -11,7 +11,7 @@ class OverlayWindow(QWidget):
     def __init__(self, screen, options, *, native_configure=None, diagnostic=False, clock=time.monotonic):
         super().__init__(None,Qt.WindowType.FramelessWindowHint|Qt.WindowType.Tool|
                          Qt.WindowType.WindowStaysOnTopHint|Qt.WindowType.WindowTransparentForInput|
-                         Qt.WindowType.WindowDoesNotAcceptFocus)
+                         Qt.WindowType.WindowDoesNotAcceptFocus|Qt.WindowType.NoDropShadowWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
@@ -40,6 +40,17 @@ class OverlayWindow(QWidget):
         # Call outside a Qt virtual callback so failures abort startup visibly.
         self.winId()
         if self.native_configure:self.native_configure(self)
+
+    def attach_screen(self,selection):
+        self.screen_selection=selection;self.rect_info=selection.rect
+        if selection.qscreen is not None and self.windowHandle() is not None:self.windowHandle().setScreen(selection.qscreen)
+        rect=selection.rect;self.setGeometry(rect.x,rect.y,rect.width,rect.height)
+        if self.native_configure:self.native_configure(self)
+
+    def change_screen(self,selection):
+        self.set_heatmap(None,enabled=False);self.position=None;self.opacity=0.
+        self._label_layout_key=None;self.attach_screen(selection)
+        self.update()
 
     def _ring_bounds(self):
         if self.position is None:return QRectF()
@@ -142,7 +153,10 @@ class OverlayWindow(QWidget):
             self._heatmap_enabled=False;self._heatmap_key=None
             # Hide once. Hidden accumulation must not copy images, invalidate
             # window regions or add any future heatmap repaint requests.
-            if was_visible:self.update()
+            if was_visible:
+                self.update()
+                from .platforms import invalidate_shadow
+                invalidate_shadow(self)
             return was_visible
         key=(None if latest is None else latest['version'],bool(enabled),bool(uncalibrated),bool(coarse_calibrated))
         if key==self._heatmap_key:return False
@@ -150,11 +164,15 @@ class OverlayWindow(QWidget):
         self._heatmap_enabled=bool(enabled);self._heatmap_uncalibrated=bool(uncalibrated)
         self._heatmap_coarse=bool(coarse_calibrated)
         if latest is not None and (self._heatmap_image is None or getattr(self,'_heatmap_version',None)!=latest['version']):
-            rgba=latest['rgba'];height,width=rgba.shape[:2]
-            # Own the small image. The worker never mutates a published buffer.
-            self._heatmap_image=QImage(rgba.data,width,height,rgba.strides[0],QImage.Format.Format_RGBA8888).convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+            if 'image' in latest:self._heatmap_image=QImage(latest['image'])
+            else:
+                rgba=latest['rgba'];height,width=rgba.shape[:2]
+                self._heatmap_image=QImage(rgba.data,width,height,rgba.strides[0],QImage.Format.Format_RGBA8888).convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
             self._heatmap_version=latest['version']
         if old_enabled or self._heatmap_enabled:self.update()
+        if not old_enabled and self._heatmap_enabled:
+            from .platforms import invalidate_shadow
+            invalidate_shadow(self)
         return True
 
     def _paint_heatmap(self,painter):

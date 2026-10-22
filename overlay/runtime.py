@@ -6,6 +6,7 @@ from PySide6.QtCore import QObject,QEvent,QTimer
 from PySide6.QtWidgets import QMessageBox,QSystemTrayIcon
 from .controller import OverlayController
 from .state import RingState
+from .screens import BuiltinScreen,ScreenMonitor,SCREEN_CHANGED
 
 
 def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,permission_check,*,controls=None,profile_seconds=None):
@@ -20,6 +21,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
     paused_requested=False;session=None;display_revision=0;restore_visible=True;hotkeys=None
     painted=None;radius_key=object();radii=None;ui_values={}
     clicks=None;own_windows=None;heatmap=None;heat_timer=None;heat_error=None;heatmap_rendered=False
+    pending_screen=None;screen_error=None;screen_mismatch_seen=False;detached_visible=None
 
     def update(widget,method,value):
         key=(widget,method)
@@ -36,7 +38,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
 
     def restore():
         ring.clear()
-        if not shutdown_requested:
+        if not shutdown_requested and not screen_changed:
             window.setVisible(restore_visible)
             if controls is not None:controls.panel.present()
 
@@ -85,21 +87,41 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         controller.request('paused' if paused_requested else 'running')
     pause_action.triggered.connect(pause_or_resume)
 
-    def changed(*_):
-        nonlocal screen_changed
-        if screen_changed:return
-        screen_changed=True;ring.clear();controller.request('paused')
+    def changed(kind,selection,error):
+        nonlocal screen_changed,pending_screen,screen_error,paused_requested,restore_visible,detached_visible
+        if shutdown_requested:return
+        if kind=='unchanged' and not screen_changed:
+            # Qt can replace a QScreen object while its native identity and
+            # geometry stay fixed. Reattach without resetting any samples.
+            try:
+                if controls is not None:controls.screen=selection.qscreen
+                if session is not None and hasattr(session,'refresh_screen_mapping'):session.refresh_screen_mapping(selection.rect)
+                window.attach_screen(selection)
+                if detached_visible is not None:window.setVisible(detached_visible);detached_visible=None
+                return
+            except Exception as exc:
+                selection=None;error='屏幕坐标适配失败：'+str(exc)
+        restore_visible=restore_visible if screen_changed else (window.isVisible() if detached_visible is None else detached_visible)
+        detached_visible=None
+        screen_changed=True;screen_error=error;pending_screen=selection
+        paused_requested=True;ring.clear();window.hide()
+        if session is not None and hasattr(session,'set_running'):session.set_running(False)
+        controller.request('paused')
         if heatmap is not None:heatmap.set_enabled(False)
         if session is not None:
             session.cancel('screen_changed');session.profiles.disable();session.recording.manual(False)
-        window.set_status('未校准 · 屏幕变化，请重新启动',force=True)
-        pause_action.setEnabled(False)
-        print('屏幕配置变化：已暂停，请退出并在单块内置屏下重新启动。',file=sys.stderr)
-        tray.showMessage('屏幕配置变化','已暂停摄像头，请退出并重新启动。',QSystemTrayIcon.MessageIcon.Warning)
-    screen_signals=[app.screenAdded,app.screenRemoved]
-    for screen in app.screens():
-        screen_signals.extend((screen.geometryChanged,screen.logicalDotsPerInchChanged))
-    for event_signal in screen_signals:event_signal.connect(changed)
+        text=error or SCREEN_CHANGED
+        window.set_status(text,force=True)
+        update(pause_action,'setEnabled',False)
+        notice(text+'；已暂停摄像头。'+('请恢复内置屏后再继续。' if selection is None else '暂停完成后可恢复并重新校准，无需重启。'),True)
+        tray.showMessage('屏幕配置变化',text,QSystemTrayIcon.MessageIcon.Warning)
+    initial=getattr(window,'screen_selection',BuiltinScreen(getattr(controls,'screen',None),window.rect_info,'startup'))
+    def detach():
+        nonlocal detached_visible
+        if detached_visible is None:detached_visible=window.isVisible()
+        window.hide()  # Qt must not migrate a visible gaze overlay onto an external primary.
+    screen_monitor=ScreenMonitor(app,initial,changed,delay_ms=settings.overlay.screen_debounce_ms,
+                                 retry_count=settings.overlay.screen_retry_count,on_detach=detach)
 
     if controls is not None:
         from PySide6.QtCore import QUrl
@@ -249,11 +271,19 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             heat_error=state['error'];notice(state['error'],True)
 
     def tick():
-        nonlocal last_error,error_box,closing,display_revision,painted,radius_key,radii
+        nonlocal last_error,error_box,closing,display_revision,painted,radius_key,radii,pending_screen,screen_changed,screen_mismatch_seen
         view=controller.snapshot();now=time.perf_counter_ns()
         if controller.closed.is_set():
             if controls is not None:controls.panel.hide()
             timer.stop();window.hide();tray.hide();app.quit();return
+        if screen_changed and pending_screen is not None and view.status=='paused':
+            selected=pending_screen;pending_screen=None
+            window.change_screen(selected)
+            if controls is not None:controls.screen=selected.qscreen
+            if session is not None:session.change_screen(selected.rect)
+            screen_changed=False;ring.clear();painted=None;radius_key=object()
+            window.setVisible(restore_visible)
+            notice(SCREEN_CHANGED+'；旧热图已清空。请恢复摄像头后重新校准。',True)
         if view.error and view.error!=last_error:
             last_error=view.error
             window.set_status('未校准 · 采集失败，请查看提示',force=True)
@@ -271,6 +301,9 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             if hasattr(session,'set_running'):session.set_running(active)
             if own_windows is not None:own_windows.refresh()
             session.tick(view)
+            mismatch=getattr(session.profiles,'screen_mismatch',False)
+            if mismatch and not screen_mismatch_seen:notice(SCREEN_CHANGED,True)
+            screen_mismatch_seen=bool(mismatch)
             if session.display_revision!=display_revision:
                 display_revision=session.display_revision;ring.clear()
         eligible=session is None or (view.result is not None and view.result.captured_ns>=session.matrix_since_ns
@@ -294,11 +327,12 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
                 label='未校准 · '+({'starting':'正在启动摄像头/模型','paused':'已暂停','pausing':'正在暂停',
                                       'closing':'正在退出','error':'采集失败，请查看提示'}.get(view.status,'等待画面'))
                 label_kind='immediate'
-            if screen_changed:label='未校准 · 屏幕变化，请重新启动';label_kind='immediate'
+            if screen_changed:label=screen_error or SCREEN_CHANGED;label_kind='immediate'
             if active and view.idle:label='未校准 · 无人脸，降低读取频率';label_kind='transient'
             if session is not None:
                 label=label.replace('未校准',short_mode,1)
                 if display.tracking:label=short_mode+' · Python 摄像头 · '+radius_text
+                if getattr(session.profiles,'screen_mismatch',False):label=SCREEN_CHANGED;label_kind='immediate'
             position=None if display.position is None else window.rect_info.local(display.position)
             if radius_key!=radius:
                 radius_key=radius;radii=window.rect_info.radii(radius,settings.geometry,settings.overlay.fallback_radius_px)
@@ -309,6 +343,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         if controls is not None:
             mode=getattr(session,'mode',session.profiles.mode)
             update(panel.mode,'setText',mode)
+            if getattr(session.profiles,'screen_mismatch',False):update(panel.notice,'setText',SCREEN_CHANGED)
             update(controls.mode,'setText',mode)
             update(panel.radius,'setText',radius_text)
             if hasattr(session,'autocal'):
@@ -377,6 +412,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
                         heatmap_enabled=heatmap is not None and heatmap.enabled,heatmap_viewing=heatmap is not None and heatmap.viewing,
                         heatmap_display_mode=settings.heatmap.display_mode,heatmap_update_hz=settings.heatmap.view_update_hz,
                         heatmap_background_update_hz=settings.heatmap.update_hz,heatmap_alpha_threshold=settings.heatmap.alpha_threshold,
+                        heatmap_render=None if heatmap is None else {key:heatmap.state().get(key) for key in ('render_log','last_render')},
                         profile_window_inference=dict(predictions=count,seconds=elapsed,fps=rate,
                                       definition='剖析窗口内实际推理完成数/单调时钟秒，含无效结果；不是配置上限或摄像头采集 fps。'))
         profiler=CallbackProfiler(profile_seconds,ready=ready,context=context)
@@ -411,6 +447,4 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             controller.thread.join(settings.camera.startup_timeout_s+settings.camera.stop_timeout_s+settings.recording.close_timeout_s)
         app.removeEventFilter(gate)
         timer.timeout.disconnect(timer_tick)
-        for event_signal in screen_signals:
-            try:event_signal.disconnect(changed)
-            except (RuntimeError,TypeError):pass
+        screen_monitor.close()

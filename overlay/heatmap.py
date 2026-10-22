@@ -3,11 +3,12 @@ import queue
 import threading
 import time
 import numpy as np
-from gaze_core.heatmap import HeatmapStream,rgba_grid,UNCALIBRATED,NOTICE,kernel_description
+from gaze_core.heatmap import HeatmapStream,UNCALIBRATED,NOTICE,kernel_description
+from gaze_core.heatmap_render import render_heatmap,RenderLog
 
 
 class HeatmapWorker:
-    def __init__(self,settings,screen,*,clock_ns=time.perf_counter_ns,exporter=None):
+    def __init__(self,settings,screen,*,clock_ns=time.perf_counter_ns,exporter=None,render_log=None):
         self.settings=settings;self.screen_size=(screen.width,screen.height);self.clock_ns=clock_ns
         if exporter is None:
             from gaze_core.heatmap_export import export_heatmap
@@ -19,6 +20,7 @@ class HeatmapWorker:
         self._contains_uncalibrated=False
         self._contains_coarse=False
         self._kernel_text=kernel_description(None)
+        self._render_log=render_log or RenderLog();self._qt_image=None
         self.thread=threading.Thread(target=self._run,name='gaze-heatmap',daemon=True);self.thread.start()
 
     def _put(self,command):
@@ -65,6 +67,11 @@ class HeatmapWorker:
 
     def interrupt(self):return self._put(('interrupt',)) if not self.closed else False
 
+    def change_screen(self,screen):
+        self.enabled=self.viewing=False;self.context=None;self._latest=None
+        self.screen_size=(screen.width,screen.height)
+        return self._put(('screen',self.screen_size))
+
     def clear(self):
         self._error=None;return self._put(('clear',self.clock_ns()))
 
@@ -88,7 +95,8 @@ class HeatmapWorker:
         elif self._export_file:label+=' · 已导出 '+self._export_file
         return dict(enabled=self.enabled,viewing=self.viewing,uncalibrated=uncalibrated,coarse_calibrated=coarse,error=self._error,label=label,
                     exporting=self._exporting,export_file=self._export_file,latest=latest,processed=self._processed,
-                    has_session=self._stream is not None,kernel_text=self._kernel_text)
+                    has_session=self._stream is not None,kernel_text=self._kernel_text,
+                    render_log=None if self._render_log.path is None else str(self._render_log.path),last_render=self._render_log.last)
 
     def _new(self,start_ns):
         self._stream=HeatmapStream(self.settings.heatmap,self.settings.fixation,self.screen_size,decay=True,start_ns=start_ns)
@@ -98,14 +106,23 @@ class HeatmapWorker:
 
     def _publish(self,now_ns):
         if self._stream is None:return
+        started=time.perf_counter_ns()
         snapshot=self._stream.snapshot(now_ns)
-        rgba=rgba_grid(snapshot['grid'],self.settings.heatmap.max_opacity,self.settings.heatmap.alpha_threshold)
+        options=self.settings.heatmap
+        rgba=render_heatmap(snapshot['grid'],self.screen_size,max_opacity=options.max_opacity,
+                            alpha_threshold=options.alpha_threshold,render_scale=options.render_scale,dither_strength=options.dither_strength)
         self._contains_uncalibrated=any(p['context'].get('group')=='A' for p in snapshot['phases'])
         coarse=(self.context is not None and self.context['phase'].get('group')=='C') or self._contains_coarse
         badge=(self.context is None or not self.context['calibrated'] or self._contains_uncalibrated,coarse)
         if self._image is None or not np.array_equal(rgba,self._image) or badge!=self._last_badge:
             self._version+=1;self._image=rgba;rgba.setflags(write=False);self._last_badge=badge
-        self._latest=dict(version=self._version,rgba=self._image,uncalibrated=badge[0],coarse_calibrated=coarse)
+            # Expensive alpha conversion and ownership copy belong to the
+            # render worker; the GUI receives an implicitly shared QImage.
+            from PySide6.QtGui import QImage
+            height,width=rgba.shape[:2]
+            self._qt_image=QImage(rgba.data,width,height,rgba.strides[0],QImage.Format.Format_RGBA8888).convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+        self._render_log.record((time.perf_counter_ns()-started)/1e6,rgba,options)
+        self._latest=dict(version=self._version,rgba=self._image,image=self._qt_image,uncalibrated=badge[0],coarse_calibrated=coarse)
 
     def _run(self):
         running=False;next_update=0
@@ -122,6 +139,11 @@ class HeatmapWorker:
                     kind=command[0]
                     if kind=='configure':
                         if self._stream is not None:self._stream.configure(command[1])
+                    elif kind=='screen':
+                        running=False;self._stream=None;self._image=self._qt_image=None
+                        self._contains_uncalibrated=self._contains_coarse=False
+                        self._version+=1;self._last_badge=None
+                        self._kernel_text=kernel_description(None)
                     elif kind=='enable':
                         running=command[1]
                         if self._stream is None:self._new(command[2])
@@ -163,6 +185,7 @@ class HeatmapWorker:
             finally:
                 if fence is not None:fence.set()
         if self._stream is not None:self._stream.interrupt()
+        self._render_log.close()
 
     def close(self):
         if self.closed and not self.thread.is_alive():return

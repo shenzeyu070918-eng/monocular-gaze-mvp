@@ -147,7 +147,8 @@ class HeatmapAccumulator:
                     phases=deepcopy(self.phases),ongoing_fixation=preview is not None,
                     current_context=deepcopy(phase),current_kernel=deepcopy(scale),notice=NOTICE,
                     visualization=dict(palette='transparent_yellow_red',normalization='current_grid_max',
-                                       alpha_threshold=self.options.alpha_threshold,max_opacity=self.options.max_opacity))
+                                       alpha_threshold=self.options.alpha_threshold,max_opacity=self.options.max_opacity,
+                                       render_scale=self.options.render_scale,dither_strength=self.options.dither_strength))
 
 
 class HeatmapStream:
@@ -211,7 +212,7 @@ def kernel_description(scale):
     return '核尺度 sigma = '+value+' · 来源：'+source
 
 
-def rgba_grid(grid,max_opacity,alpha_threshold=.15):
+def rgba_grid(grid,max_opacity,alpha_threshold=.15,*,dither_strength=0.):
     """Relative density -> transparent yellow/red. No dark or cool low end.
 
     Only display normalization changes; numeric duration/decay stays untouched.
@@ -221,6 +222,8 @@ def rgba_grid(grid,max_opacity,alpha_threshold=.15):
     """
     opacity=finite(max_opacity,'max_opacity',positive=True)
     threshold=finite(alpha_threshold,'alpha_threshold')
+    dither=finite(dither_strength,'dither_strength')
+    if not 0<=dither<=1:raise ValueError('dither_strength 必须在 [0,1]')
     if opacity>.4 or not 0<=threshold<1:raise ValueError('热图不透明度不得超过0.4，透明阈值必须在[0,1)')
     grid=np.asarray(grid,float);peak=float(grid.max()) if grid.size else 0.
     if not np.isfinite(grid).all() or (grid<0).any():raise ValueError('热图必须是非负有限数值')
@@ -234,5 +237,17 @@ def rgba_grid(grid,max_opacity,alpha_threshold=.15):
         fade=progress*progress*(3-2*progress)
     rgba=np.empty((*grid.shape,4),np.uint8)
     rgba[...,0]=255;rgba[...,1]=np.rint(255*(1-strength)).astype(np.uint8);rgba[...,2]=0
-    rgba[...,3]=np.floor(255*opacity*strength*fade).astype(np.uint8)
+    alpha=255*opacity*strength*fade
+    if dither:
+        # Fixed 8x8 Bayer tile, centred at zero. A full strength unit spans
+        # one alpha LSB peak-to-peak, never one unit of normalized opacity.
+        tile=np.array([[0,48,12,60,3,51,15,63],[32,16,44,28,35,19,47,31],
+                       [8,56,4,52,11,59,7,55],[40,24,36,20,43,27,39,23],
+                       [2,50,14,62,1,49,13,61],[34,18,46,30,33,17,45,29],
+                       [10,58,6,54,9,57,5,53],[42,26,38,22,41,25,37,21]],float)
+        noise=((tile+.5)/64-.5)*dither
+        alpha=alpha+noise[np.arange(grid.shape[0])[:,None]%8,np.arange(grid.shape[1])[None,:]%8]
+    # Thresholded cells remain exactly transparent; dithering cannot exceed
+    # max_opacity, turn a zero field visible, or perturb stored durations.
+    rgba[...,3]=np.where(value<=threshold,0,np.floor(np.clip(alpha,0,255*opacity))).astype(np.uint8)
     return rgba

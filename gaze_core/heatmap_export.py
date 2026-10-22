@@ -8,7 +8,7 @@ import tempfile
 import uuid
 import numpy as np
 from .config import ROOT
-from .heatmap import NOTICE
+from .heatmap import NOTICE,rgba_grid
 
 
 def export_heatmap(snapshot,*,directory=None):
@@ -36,7 +36,16 @@ def export_heatmap(snapshot,*,directory=None):
     font=next((name for name in ('PingFang SC','Microsoft YaHei','Noto Sans CJK SC','Arial Unicode MS') if name in available),'DejaVu Sans')
     fig=Figure(figsize=(10,7),facecolor='#111827');FigureCanvasAgg(fig)
     ax=fig.add_axes((.08,.25,.78,.65));ax.set_facecolor('#111827')
-    image=ax.imshow(grid,extent=(0,1,1,0),cmap='magma',interpolation='bilinear',aspect='auto',vmin=0)
+    from matplotlib.colors import ListedColormap,Normalize
+    from matplotlib.cm import ScalarMappable
+    visual=snapshot.get('visualization',{})
+    threshold=visual.get('alpha_threshold',.15);opacity=visual.get('max_opacity',.4)
+    # Same warm, transparent scale as the live layer. No dark low-end overlay.
+    colors=rgba_grid(np.linspace(0,1,256).reshape(1,-1),opacity,threshold)[0]/255
+    cmap=ListedColormap(colors);peak=float(grid.max())
+    norm=Normalize(vmin=0,vmax=peak if peak>0 else 1)
+    ax.imshow(rgba_grid(grid,opacity,threshold),extent=(0,1,1,0),interpolation='bilinear',aspect='auto')
+    image=ScalarMappable(norm=norm,cmap=cmap)
     for region in snapshot['regions']['regions']:
         from matplotlib.patches import Rectangle
         a,b,c,d=region['rect'];ax.add_patch(Rectangle((a,b),c-a,d-b,fill=False,edgecolor='#cbd5e1',linewidth=.6))
@@ -51,6 +60,7 @@ def export_heatmap(snapshot,*,directory=None):
     fig.savefig(directory/'heatmap.png',dpi=150,facecolor=fig.get_facecolor())
     lines=['# 屏幕区域热力图','',NOTICE,'',f"网格：{snapshot['unit']}；区域统计：累计、不衰减。",'',
            '核尺度统一为 sigma = 圆环误差半径；具体阶段及来源见 regions.json。',
+           f'显示按当前最大热量归一化；低于其{threshold:.0%}完全透明，黄色至红色，不透明度上限{opacity:g}。网格数值不受显示阈值影响。',
            '状态：'+('未校准' if uncalibrated else 'B 九点校准；匹配与历史对齐方式见 JSON。' if snapshot['fixation_count'] else '没有可用的校准注视段；原因见 JSON。'),'',
            '## 边缘容差与屏幕外时长','',
            '中心到屏幕最近点的距离不超过同源核尺度1 sigma时，仅在热图/区域统计中夹回边缘；超过才排除。原始坐标和注视检测不夹回。',

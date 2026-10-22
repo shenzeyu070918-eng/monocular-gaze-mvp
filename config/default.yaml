@@ -95,6 +95,11 @@ display:
 
 # M3a: no personal profiles; radii are visual settings, NOT measured accuracy.
 overlay:
+  presentation: false
+  presentation_stroke_px: 6
+  presentation_color: '#FFD166'
+  presentation_label_font_px: 26
+  calibration_notice_s: 3
   screen_debounce_ms: 300  # Coalesce projector topology signals; never query displays in the 16ms tick.
   screen_retry_count: 3    # Allow Qt/AppKit/Quartz topology snapshots to settle before reporting unavailable.
   radius_cm: 2.0  # Illustrative fallback only; M3b will use a matching B check.
@@ -129,6 +134,7 @@ overlay:
     panel: Ctrl+Alt+O
     heatmap_toggle: Ctrl+Alt+H
     heatmap_view: Ctrl+Alt+V
+    demo: Ctrl+Alt+D
 
 # M5: offset only, no nine-point fine tuning. Sampling thresholds remain M4's.
 autocal:
@@ -161,3 +167,30 @@ heatmap:
   queue_size: 256
   regions: null  # Default 3x3; or [{id: left, rect: [0, 0, 0.5, 1]}, ...], no overlaps.
   target_neighborhood_sigma: 1.0  # Target validation radius in multiples of the SAME sigma.
+
+# M8: display coordinates only; calibration/evaluation continue using raw data.
+demo:
+  dwell_ms: 1000
+  leave_grace_ms: 150
+  cooldown_ms: 800
+  loss_reset_ms: 400
+  hit_expand_ratio: 0.5  # 0 = off; only expands the accumulating button, not its drawing.
+  practice: true
+  labels: ['我想喝水', '我不舒服', '请叫护士', '开灯', '是', '否']
+  round_s: 60
+  undo_ms: 1000
+  feedback_ms: 2000
+  flash_ms: 350
+  speech_timeout_ms: 15000
+  button_font_px: 48  # Logical pixels, >= 40. No DPR multiplication.
+  heading_font_px: 36
+  progress_px: 10
+  min_button_px: 160  # Floor; each side is also >= 3 x corresponding error radius.
+  padding_px: 32
+  header_px: 120
+  footer_px: 65
+  background: '#101B30'
+  button_color: '#EDF3FF'
+  text_color: '#112444'
+  progress_color: '#FFCA55'
+  feedback_color: '#FFCA55'

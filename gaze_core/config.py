@@ -302,7 +302,7 @@ class AutocalSettings:
         for key in ('min_clicks','max_clicks','min_occupied_cells','queue_size'):
             value=getattr(self,key)
             if type(value) is not int or value<1:raise ValueError('autocal.'+key+' 必须为正整数')
-        if self.min_clicks<5 or self.max_clicks<self.min_clicks or self.min_occupied_cells>9:
+        if self.min_clicks<5 or self.max_clicks<self.min_clicks or not 3<=self.min_occupied_cells<=9:
             raise ValueError('autocal 点击数/覆盖范围无效')
         for key in ('frame_history_s','pending_timeout_s','close_timeout_s'):
             finite(getattr(self,key),'autocal.'+key,positive=True)

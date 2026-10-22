@@ -156,6 +156,49 @@ class DisplaySettings:
 
 
 @dataclass(frozen=True)
+class HeatmapSettings:
+    enabled: bool = False
+    allow_uncalibrated: bool = False
+    grid_width: int = 160
+    update_hz: float = 4.0  # Background idle checks, independent of viewing.
+    display_mode: str = 'on_demand'
+    view_update_hz: float = 1.0
+    alpha_threshold: float = .15
+    half_life_s: float = 60.0
+    max_opacity: float = .4
+    queue_size: int = 256
+    regions: object = None  # None means a non-overlapping 3 x 3 partition.
+    target_neighborhood_sigma: float = 1.0
+
+    def __post_init__(self):
+        from .devices import finite
+        for key in ('enabled','allow_uncalibrated'):
+            if type(getattr(self,key)) is not bool:raise ValueError('heatmap.'+key+' 必须为布尔值')
+        for key in ('grid_width','queue_size'):
+            if type(getattr(self,key)) is not int or getattr(self,key)<1:raise ValueError('heatmap.'+key+' 必须为正整数')
+        if self.grid_width>1024:raise ValueError('heatmap.grid_width 不得超过 1024')
+        for key in ('update_hz','view_update_hz','half_life_s','max_opacity','target_neighborhood_sigma'):
+            finite(getattr(self,key),'heatmap.'+key,positive=True)
+        if self.update_hz>5:raise ValueError('heatmap.update_hz 不得超过 5')
+        if self.view_update_hz>5:raise ValueError('heatmap.view_update_hz 不得超过 5')
+        if self.display_mode not in ('on_demand','continuous'):raise ValueError('heatmap.display_mode 必须为 on_demand / continuous')
+        if not 0<=finite(self.alpha_threshold,'heatmap.alpha_threshold')<1:raise ValueError('heatmap.alpha_threshold 必须在 [0,1)')
+        if self.max_opacity>.4:raise ValueError('heatmap.max_opacity 不得超过 0.4')
+        if self.regions is not None:
+            if not isinstance(self.regions,(list,tuple)) or not self.regions:raise ValueError('heatmap.regions 必须为非空矩形数组或 null')
+            names=set();rects=[]
+            for item in self.regions:
+                if not isinstance(item,dict) or set(item)!={'id','rect'} or not isinstance(item['id'],str) or not item['id'] or item['id'] in names:
+                    raise ValueError('每个区域需要唯一 id 和 rect')
+                names.add(item['id']);rect=item['rect']
+                if not isinstance(rect,(list,tuple)) or len(rect)!=4:raise ValueError('rect 为 [left, top, right, bottom]')
+                x0,y0,x1,y1=[finite(v,'rect') for v in rect]
+                if not (0<=x0<x1<=1 and 0<=y0<y1<=1):raise ValueError('区域必须在归一化屏幕内且面积为正')
+                if any(max(x0,a)<min(x1,c) and max(y0,b)<min(y1,d) for a,b,c,d in rects):raise ValueError('热力图区域不得重叠')
+                rects.append((x0,y0,x1,y1))
+
+
+@dataclass(frozen=True)
 class OverlaySettings:
     radius_cm: float = 2.0
     fallback_radius_px: float = 28.0
@@ -182,7 +225,7 @@ class OverlaySettings:
     web_url: str = 'http://127.0.0.1:8765'
     panel_on_start: str = 'auto'
     calibration_redo_cm: float = 2.0
-    hotkeys: dict = field(default_factory=lambda: dict(toggle='Ctrl+Alt+G', pause='Ctrl+Alt+P', calibrate='Ctrl+Alt+C', panel='Ctrl+Alt+O'))
+    hotkeys: dict = field(default_factory=lambda: dict(toggle='Ctrl+Alt+G', pause='Ctrl+Alt+P', calibrate='Ctrl+Alt+C', panel='Ctrl+Alt+O', heatmap_toggle='Ctrl+Alt+H',heatmap_view='Ctrl+Alt+V'))
 
     def __post_init__(self):
         import re
@@ -207,8 +250,8 @@ class OverlaySettings:
         if self.panel_on_start not in ('auto','always','never'):
             raise ValueError('overlay.panel_on_start 必须为 auto / always / never')
         finite(self.calibration_redo_cm,'overlay.calibration_redo_cm',positive=True)
-        if not isinstance(self.hotkeys,dict) or set(self.hotkeys)!={'toggle','pause','calibrate','panel'} or any(not isinstance(v,str) for v in self.hotkeys.values()):
-            raise ValueError('overlay.hotkeys 必须包含 toggle / pause / calibrate / panel 字符串；空字符串禁用该项')
+        if not isinstance(self.hotkeys,dict) or not {'toggle','pause','calibrate','panel'}<=set(self.hotkeys) or set(self.hotkeys)-{'toggle','pause','calibrate','panel','heatmap_toggle','heatmap_view'} or any(not isinstance(v,str) for v in self.hotkeys.values()):
+            raise ValueError('overlay.hotkeys 必须包含 toggle / pause / calibrate / panel，可加 heatmap_toggle / heatmap_view；空字符串禁用该项')
         from urllib.parse import urlsplit
         url=urlsplit(self.web_url)
         if url.scheme!='http' or url.hostname not in {'127.0.0.1','localhost','::1'}:
@@ -254,6 +297,7 @@ class Settings:
     display: DisplaySettings = DisplaySettings()
     overlay: OverlaySettings = OverlaySettings()
     click_session: ClickSessionSettings = ClickSessionSettings()
+    heatmap: HeatmapSettings = HeatmapSettings()
 
 
 def select_device(requested, cuda_available, mps_available=False):
@@ -312,7 +356,7 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
         note(override, str(local))
         sources.append(str(local))
     required = {'inference', 'camera', 'geometry', 'recording', 'jump'}
-    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay', 'click_session'}:
+    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay', 'click_session', 'heatmap'}:
         raise ValueError('配置必须包含 inference、camera、geometry、recording、jump 五部分')
     settings = Settings(InferenceSettings(**data['inference']), CameraSettings(**data['camera']),
                         ScreenGeometry(**data['geometry']), RecordingSettings(**data['recording']), JumpSettings(**data['jump']),
@@ -324,7 +368,8 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
                        offline_filter=OfflineFilterSettings(**data.get('offline_filter', {})),
                        display=DisplaySettings(**data.get('display', {})),
                        overlay=OverlaySettings(**data.get('overlay', {})),
-                       click_session=ClickSessionSettings(**data.get('click_session', {})))
+                       click_session=ClickSessionSettings(**data.get('click_session', {})),
+                       heatmap=HeatmapSettings(**data.get('heatmap', {})))
     i, c, g = settings.inference, settings.camera, settings.geometry
     # Validate the request separately from actual device availability.
     if i.device not in {'auto', 'cpu', 'cuda', 'mps'}:
@@ -432,7 +477,7 @@ def configuration_info(settings):
     from dataclasses import asdict
     return {'files': list(settings.config_sources), 'keys': dict(settings.key_sources or {}),
             'device_file': settings.device_file, 'camera': asdict(settings.camera), 'geometry': asdict(settings.geometry), 'filter': asdict(settings.filter),
-            'fixation': asdict(settings.fixation), 'offline_filter': asdict(settings.offline_filter),
+            'fixation': asdict(settings.fixation), 'offline_filter': asdict(settings.offline_filter), 'heatmap': asdict(settings.heatmap),
             'inference':dict(device=settings.inference.device,num_threads=settings.inference.num_threads,max_fps=settings.inference.max_fps)}
 
 

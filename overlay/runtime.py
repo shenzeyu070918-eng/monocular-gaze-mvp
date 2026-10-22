@@ -2,7 +2,7 @@
 import signal
 import sys
 import time
-from PySide6.QtCore import QObject,QEvent
+from PySide6.QtCore import QObject,QEvent,QTimer
 from PySide6.QtWidgets import QMessageBox,QSystemTrayIcon
 from .controller import OverlayController
 from .state import RingState
@@ -19,7 +19,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
     closing=False;shutdown_requested=False;screen_changed=False;last_error=None;error_box=None
     paused_requested=False;session=None;display_revision=0;restore_visible=True;hotkeys=None
     painted=None;radius_key=object();radii=None;ui_values={}
-    clicks=None;own_windows=None
+    clicks=None;own_windows=None;heatmap=None;heat_timer=None;heat_error=None;heatmap_rendered=False
 
     def update(widget,method,value):
         key=(widget,method)
@@ -46,11 +46,13 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
                                results=controls.panel.results.setPlainText)
         controller=OverlayController(settings,result_sink=session.sink,shutdown=session.close)
         session.controller=controller
+        heatmap=getattr(session,'heatmap',None)
     else:controller=OverlayController(settings)
 
     def begin_close():
         nonlocal closing,shutdown_requested
         closing=True;shutdown_requested=True;ring.clear()
+        if heatmap is not None:heatmap.set_enabled(False)
         if session is not None:session.cancel('overlay_closed')
         pause_action.setEnabled(False)
         quit_action.setText('正在退出…')
@@ -73,6 +75,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         if session is not None:
             session.cancel('camera_paused');session.recording.manual(False)
             session.buffer.clear();session.latest=None
+        if heatmap is not None:heatmap.interrupt()
         view=controller.snapshot()
         paused_requested=not paused_requested if view.status not in {'paused','error'} else False
         ring.clear()
@@ -84,6 +87,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         nonlocal screen_changed
         if screen_changed:return
         screen_changed=True;ring.clear();controller.request('paused')
+        if heatmap is not None:heatmap.set_enabled(False)
         if session is not None:
             session.cancel('screen_changed');session.profiles.disable();session.recording.manual(False)
         window.set_status('未校准 · 屏幕变化，请重新启动',force=True)
@@ -187,8 +191,22 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         actions.connect('reset',session.profiles.disable)
         actions.connect('record',manual_record)
         actions.connect('web',open_web)
+        if heatmap is not None:
+            def toggle_heatmap(checked):
+                if not session.set_heatmap_enabled(bool(checked)):
+                    actions['heatmap_toggle'].setChecked(False)
+                    notice(heatmap.state()['error'] or '热力图未开启',True)
+                heatmap_update()
+            actions.connect('heatmap_toggle',toggle_heatmap)
+            def view_heatmap(checked):
+                if not session.set_heatmap_viewing(bool(checked)):
+                    actions['heatmap_view'].setChecked(False)
+                    notice(heatmap.state()['error'] or '热力图暂不能查看',True)
+                heatmap_update()  # Hide immediately; first fresh image arrives at view rate.
+            actions.connect('heatmap_view',view_heatmap)
+            actions.connect('heatmap_clear',lambda:heatmap.clear())
+            actions.connect('heatmap_export',lambda:heatmap.export())
         from .hotkeys import Hotkeys
-        from PySide6.QtCore import QTimer
         # Carbon and WM_HOTKEY execute on the Qt thread. Queue actions outside
         # native callbacks so modal UI and shutdown cannot reenter Carbon.
         def dispatch_hotkey(name):
@@ -198,6 +216,28 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         print('系统热键（不申请输入监控）：\n'+hotkeys.text(),file=sys.stderr)
         failures=[v for v in hotkeys.status.values() if v.startswith('注册失败')]
         if failures:notice('系统热键部分注册失败：'+'；'.join(failures),True)
+
+    def heatmap_update():
+        nonlocal heat_error,heatmap_rendered
+        if heatmap is None:return
+        state=heatmap.state()
+        viewing=state['enabled'] and state['viewing'] and not shutdown_requested and not screen_changed
+        if viewing and state['latest'] is not None:
+            window.set_heatmap(state['latest'],enabled=True,uncalibrated=state['uncalibrated']);heatmap_rendered=True
+        elif heatmap_rendered:
+            window.set_heatmap(None,enabled=False);heatmap_rendered=False
+        if controls is not None:
+            update(panel.heatmap,'setText',state['label'])
+            update(panel.heatmap_sigma,'setText',state['kernel_text'])
+            update(panel.heatmap,'setStyleSheet','color: #b42318' if state['error'] else '')
+            if actions['heatmap_toggle'].isChecked()!=state['enabled']:actions['heatmap_toggle'].setChecked(state['enabled'])
+            if actions['heatmap_view'].isChecked()!=state['viewing']:actions['heatmap_view'].setChecked(state['viewing'])
+            update(actions['heatmap_view'],'setText','隐藏热力图' if state['viewing'] else '查看热力图')
+            update(actions['heatmap_view'],'setEnabled',state['enabled'] and not shutdown_requested and not screen_changed)
+            for name in ('heatmap_toggle','heatmap_clear'):update(actions[name],'setEnabled',not shutdown_requested and not screen_changed)
+            update(actions['heatmap_export'],'setEnabled',state['has_session'] and not state['exporting'] and not shutdown_requested)
+        if state['error'] and state['error']!=heat_error:
+            heat_error=state['error'];notice(state['error'],True)
 
     def tick():
         nonlocal last_error,error_box,closing,display_revision,painted,radius_key,radii
@@ -213,6 +253,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             error_box=QMessageBox(QMessageBox.Icon.Warning,'悬浮层已停止',view.error)
             error_box.open()
             if session is not None:session.cancel('prediction_error')
+            if heatmap is not None:heatmap.interrupt()
         if closing and view.status=='error':
             closing=False
             quit_action.setText('重试退出')
@@ -293,34 +334,54 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
                 for name in ('clicks','click_session','abort_click_session'):update(actions[name],'setEnabled',False)
             update(actions['web'],'setEnabled',not shutdown_requested and not session.active)
             update(actions['toggle'],'setEnabled',not session.active and not shutdown_requested)
-    profiler=None;timer_tick=tick;profiled_label=None
+    profiler=None;timer_tick=tick;profiled_label=None;heatmap_callback=heatmap_update;original_paint=window._paint_heatmap
+    profile_origin=None
     if profile_seconds is not None:
         from .profiling import CallbackProfiler
         def ready():
+            nonlocal profile_origin
             snapshot=controller.snapshot()
-            return snapshot.status=='running' and snapshot.result is not None and (session is None or
+            result=snapshot.status=='running' and snapshot.result is not None and (session is None or
                    (session.profiles.conditions is not None and not session.profiles.busy))
+            if result:profile_origin=(time.perf_counter_ns(),(snapshot.report or {}).get('predicted_frames'))
+            return result
         def context():
             import platform
             from dataclasses import asdict
             snapshot=controller.snapshot();report=snapshot.report or {}
+            elapsed=None if profile_origin is None else (time.perf_counter_ns()-profile_origin[0])/1e9
+            count=None if profile_origin is None or profile_origin[1] is None or report.get('predicted_frames') is None else report['predicted_frames']-profile_origin[1]
+            rate=count/elapsed if count is not None and count>=0 and elapsed is not None and elapsed>0 else None
             return dict(system=platform.platform(),python=platform.python_version(),
                         inference=dict(device=settings.inference.device,num_threads=settings.inference.num_threads,max_fps=settings.inference.max_fps),
                         actual_device=report.get('device'),actual_resolution=report.get('actual_resolution'),
                         measurement_source=report.get('measurement_source','live_camera'),
                         predicted_frames=report.get('predicted_frames'),valid_predictions=report.get('valid_predictions'),
                         camera=asdict(settings.camera),refresh_ms=settings.overlay.refresh_ms,
-                        profile_loaded=session is not None and session.profiles.profile is not None)
+                        profile_loaded=session is not None and session.profiles.profile is not None,
+                        heatmap_enabled=heatmap is not None and heatmap.enabled,heatmap_viewing=heatmap is not None and heatmap.viewing,
+                        heatmap_display_mode=settings.heatmap.display_mode,heatmap_update_hz=settings.heatmap.view_update_hz,
+                        heatmap_background_update_hz=settings.heatmap.update_hz,heatmap_alpha_threshold=settings.heatmap.alpha_threshold,
+                        profile_window_inference=dict(predictions=count,seconds=elapsed,fps=rate,
+                                      definition='剖析窗口内实际推理完成数/单调时钟秒，含无效结果；不是配置上限或摄像头采集 fps。'))
         profiler=CallbackProfiler(profile_seconds,ready=ready,context=context)
         timer_tick=profiler.wrap(tick,'tick')
         profiled_label=profiler.wrap(window._refresh_label,'label')
         window._label_timer.timeout.disconnect(window._refresh_label)
         window._label_timer.timeout.connect(profiled_label)
+        heatmap_callback=profiler.wrap(heatmap_update,'heatmap_update')
+        window._paint_heatmap=profiler.wrap(original_paint,'heatmap_paint')
+    if heatmap is not None:
+        heat_timer=QTimer();heat_timer.setInterval(round(1000/settings.heatmap.view_update_hz))
+        heat_timer.timeout.connect(heatmap_callback);heat_timer.start()
+        heatmap_update()
     timer.timeout.connect(timer_tick)
     try:
         controller.request('running')
         return app.exec()
     finally:
+        if heat_timer is not None:heat_timer.stop()
+        window._paint_heatmap=original_paint
         if profiler is not None:
             profiler.finish()
             window._label_timer.timeout.disconnect(profiled_label)

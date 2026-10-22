@@ -17,7 +17,7 @@ class OverlaySession:
         self.notice,self.restore,self.results=notice,restore,results
         self.clock_ns=clock_ns;self.controller=None
         self.buffer=NumericResultBuffer(settings.recording.queue_size)
-        self.profiles=ProfileManager(settings,screen,on_matrix=self._matrix,directory=profile_directory)
+        self.profiles=ProfileManager(settings,screen,on_matrix=lambda _:self._sync_correction(),directory=profile_directory)
         self.recording=recording_factory(settings,metadata_factory=self.metadata)
         self.latest=None;self._metadata_snapshot=None;self.task=None;self.task_window=None
         self._radius_text_revision=None;self._radius_text=None
@@ -30,14 +30,79 @@ class OverlaySession:
         from .heatmap import HeatmapWorker
         self.heatmap=HeatmapWorker(settings,screen,clock_ns=clock_ns)
         self._matrix_revision=0;self._heatmap_start_pending=settings.heatmap.enabled
+        from .autocalibration import AutocalManager
+        self.autocal=AutocalManager(settings,name=self.profiles.name,directory=profile_directory,clock_ns=clock_ns,
+                                   validate_device=self.profiles.validate_device,device_signature=self.profiles.device_signature)
+        self._click_hub=None;self._running=True;self._autocal_rate=None
+        self._correction_cursor=None;self._active_group='A';self._active_matrix=None
+        self._active_id='none';self._active_count=0;self._applied_signature=None;self._radius_signature=None
+        self._coarse_mode_text='';self._autocal_text_key=None;self._autocal_text='点击自动粗校准：关闭'
+        self._autocal_error=None;self._autocal_reason=None
+        self._active_c_radius=None
 
     def bind_clicks(self,*,start_task,exclude=None,own_handles=None,listener_factory=None):
         from .click_session import ClickSession
+        from .click_hub import ClickHub
+        self._click_hub=ClickHub(self.settings,self.screen,self.recording,self.autocal,
+                                exclude=exclude,own_handles=own_handles,listener_factory=listener_factory)
         self.clicks=ClickSession(self.settings,self.screen,self.recording,self.profiles,start_task=start_task,
                                 set_rate=self.controller.set_click_session_rate,notice=self.notice,
-                                listener_factory=listener_factory,exclude=exclude,clock_ns=self.clock_ns,
+                                listener_factory=lambda *a,**k:self._click_hub.recording_listener,exclude=exclude,clock_ns=self.clock_ns,
                                 own_handles=own_handles,cancel_task=self.cancel)
         return self.clicks
+
+    def set_running(self,running):
+        self._running=bool(running)
+        self._sync_autocal_capture()
+
+    def set_autocal_enabled(self,enabled):
+        self.autocal.set_enabled(enabled)
+        self._sync_autocal_capture();self._sync_correction()
+        if self.autocal.error and self.autocal.error!=self._autocal_error:
+            self._autocal_error=self.autocal.error;self.notice(self.autocal.error,True)
+        if self.autocal.error:raise RuntimeError(self.autocal.error)
+
+    def _sync_autocal_capture(self):
+        self.autocal.set_frozen(self.active or not self._running)
+        try:
+            if self._click_hub is not None:
+                self._click_hub.set_running(self._running)
+                error=self._click_hub.listener.status().get('error')
+                if error and self.autocal.enabled:raise RuntimeError(error)
+        except Exception as exc:
+            self.autocal.enabled=False;self.autocal.error='自动粗校准鼠标采集失败：'+str(exc);self.autocal.revision+=1
+            self.notice(self.autocal.error,True)
+        rate=self.autocal.enabled and not self.autocal.frozen and self.autocal.conditions is not None
+        if rate!=self._autocal_rate:
+            self._autocal_rate=rate
+            if self.controller is not None and hasattr(self.controller,'set_autocal_rate'):
+                self.controller.set_autocal_rate(rate,max_fps=self.settings.autocal.inference_limit(self.settings.inference))
+
+    def _sync_correction(self):
+        cursor=(self.profiles.revision,self.autocal.revision,self.autocal.enabled)
+        if cursor==self._correction_cursor:return
+        if self.profiles.conditions is not None and self.autocal.conditions!=self.profiles.conditions:
+            self.autocal.configure(self.profiles.conditions)
+            cursor=(self.profiles.revision,self.autocal.revision,self.autocal.enabled)
+        self._correction_cursor=cursor
+        coarse,coarse_id,coarse_matrix,coarse_radius=self.autocal.candidate()
+        if self.profiles.profile is not None:
+            group,matrix,ident,count='B',self.profiles.matrix,self.profiles.calibration_id,0
+        elif self.autocal.enabled and coarse is not None:
+            group,matrix,ident,count='C',coarse_matrix,coarse_id,coarse['sample_count']
+        else:group,matrix,ident,count='A',None,'none',0
+        self._active_group,self._active_matrix,self._active_id,self._active_count=group,matrix,ident,count
+        self._active_c_radius=coarse_radius if group=='C' else None
+        if group=='C':
+            x,y=coarse['offset_norm'];geometry=self.settings.geometry
+            self._coarse_mode_text=f'点击粗校准 · 已用 {count} 次点击 · 偏移 {x*geometry.width_cm:+.2f}/{y*geometry.height_cm:+.2f} cm'
+        signature=(group,ident,None if matrix is None else tuple(tuple(row) for row in matrix))
+        radius=self.radius
+        radius_signature=(signature,radius)
+        if signature!=self._applied_signature:
+            self._applied_signature=signature;self._radius_signature=radius_signature;self._matrix(matrix)
+        elif radius_signature!=self._radius_signature:
+            self._radius_signature=radius_signature;self._configure_heatmap();self.record_calibration()
 
     def _task_inference(self,active):
         if active==self._inference_task_active:return
@@ -53,27 +118,27 @@ class OverlaySession:
 
     def record_calibration(self):
         if not self.recording.status()['active']:return
-        self.recording.emit('calibration',action='applied' if self.profiles.matrix is not None else 'reset',
-                            matrix=self.profiles.matrix,group='B' if self.profiles.matrix is not None else 'A',
-                            calibration_id=self.profiles.calibration_id,coordinate_system='full_screen_normalized',pipeline='python',
+        self.recording.emit('calibration',action='applied' if self._active_matrix is not None else 'reset',
+                            matrix=self._active_matrix,group=self._active_group,
+                            calibration_id=self._active_id,coordinate_system='full_screen_normalized',pipeline='python',
                             **self._calibration_metadata())
 
     def _calibration_metadata(self):
-        radius=self.profiles.radius
+        radius=self.radius
         measured=self.settings.geometry.measured
         return dict(matrix_revision=self._matrix_revision,
-                    calibration_matched=self.profiles.profile is not None and self.profiles.profile.get('pipeline')=='python',
+                    calibration_matched=self._active_group=='C' or (self.profiles.profile is not None and self.profiles.profile.get('pipeline')=='python'),
                     error_radius_cm=(radius if radius is not None else self.settings.overlay.radius_cm) if measured else None,
-                    error_radius_source='matching_B_check' if measured and radius is not None else 'configured_cm' if measured else 'configured_logical_pixels')
+                    error_radius_source=('matching_C_check' if self._active_group=='C' else 'matching_B_check') if measured and radius is not None else 'configured_cm' if measured else 'configured_logical_pixels')
 
     def _configure_heatmap(self):
         from gaze_core.heatmap import kernel_scale
         meta=self._calibration_metadata();profile=self.profiles.profile
-        calibrated=profile is not None and profile.get('pipeline')=='python'
-        phase=dict(calibration_id=self.profiles.calibration_id,group='B' if calibrated else 'A',
-                   matrix_revision=self._matrix_revision,calibrated=calibrated,matrix=deepcopy(self.profiles.matrix),
+        calibrated=self._active_group=='C' or (profile is not None and profile.get('pipeline')=='python')
+        phase=dict(calibration_id=self._active_id,group=self._active_group if calibrated else 'A',
+                   matrix_revision=self._matrix_revision,calibrated=calibrated,matrix=deepcopy(self._active_matrix),
                    conditions_fingerprint=conditions_id(self.profiles.conditions) if self.profiles.conditions is not None else None)
-        self.heatmap.configure(dict(matrix=deepcopy(self.profiles.matrix),revision=self._matrix_revision,calibrated=calibrated,
+        self.heatmap.configure(dict(matrix=deepcopy(self._active_matrix),revision=self._matrix_revision,calibrated=calibrated,
                               geometry=self.settings.geometry,phase=phase,
                               kernel=kernel_scale(self.settings.geometry,(self.screen.width,self.screen.height),
                                       meta['error_radius_cm'] or self.settings.overlay.radius_cm,
@@ -92,6 +157,7 @@ class OverlaySession:
         self.buffer.push(prediction)
         if self.clicks is not None:self.clicks.observe(prediction)
         self.heatmap.observe(prediction)
+        self.autocal.observe(prediction)
 
     def metadata(self):
         snapshot=self._metadata_snapshot
@@ -114,21 +180,42 @@ class OverlaySession:
 
     @property
     def short_mode(self):
+        if self._active_group=='C':return self._coarse_mode_text
         if self.profiles.profile is None:return '未校准'
         return '九点（web 手动）' if self.profiles.profile.get('pipeline')=='web' else '九点'
 
     @property
-    def radius(self):return self.profiles.radius
+    def mode(self):return self.short_mode if self._active_group=='C' else self.profiles.mode
+
+    @property
+    def autocal_text(self):
+        key=(self.autocal.revision,self.autocal.enabled,self._active_group)
+        if key==self._autocal_text_key:return self._autocal_text
+        self._autocal_text_key=key;state=self.autocal.state()
+        text='点击自动粗校准：'+('开启' if state['enabled'] else '关闭')
+        if state['enabled']:
+            text+=f' · 本轮有效 {state["accepted"]} · 剔除 {state["rejected"]} · 待处理 {state["pending"]}'
+            if self._active_group=='B':text+=' · 九点优先，粗校准待命'
+            if state['profile'] is not None:
+                x,y=state['offset_cm'];text+=f' · 已用 {state["used_count"]} 次点击 · 偏移 {x:+.2f}/{y:+.2f} cm（右/下为正）'
+            elif state['fit_error']:text+=' · '+state['fit_error']
+            else:text+=f' · 等待至少 {self.settings.autocal.min_clicks} 次有效点击及 {self.settings.autocal.min_occupied_cells} 个网格 · '+state['reason']
+        if state['error']:text+=' · '+state['error']
+        self._autocal_text=text;return text
+
+    @property
+    def radius(self):return self._active_c_radius if self._active_group=='C' else self.profiles.radius
 
     @property
     def radius_text(self):
-        if self._radius_text_revision==self.profiles.revision:return self._radius_text
+        revision=(self.profiles.revision,self._active_group,self._active_id,self.radius)
+        if self._radius_text_revision==revision:return self._radius_text
         radius=self.radius
-        if radius is not None:text=f'半径来源：最近匹配 B 核对平均误差 {radius:.3f} cm'
+        if radius is not None:text=f'半径来源：最近匹配 {self._active_group} 核对平均误差 {radius:.3f} cm'
         elif self.settings.geometry.measured:
             text=f'半径来源：配置示意值 {self.settings.overlay.radius_cm:g} cm（非实测精度）'
         else:text=f'半径来源：配置示意值 {self.settings.overlay.fallback_radius_px:g} 逻辑像素（尺寸未实测）'
-        self._radius_text_revision=self.profiles.revision;self._radius_text=text
+        self._radius_text_revision=revision;self._radius_text=text
         return text
 
     def _events(self):
@@ -142,6 +229,7 @@ class OverlaySession:
             camera=prediction.data.get('camera')
             if camera is not None:
                 changed=self.profiles.observe(camera)
+                if changed:self.autocal.configure(self.profiles.conditions)
                 if changed and (self.active or (self.clicks is not None and self.clicks.active)):self.cancel('conditions_changed')
                 self.latest=prediction
                 # Session metadata needs camera conditions and device identity,
@@ -168,6 +256,11 @@ class OverlaySession:
         if self.task is not None:
             self.task.advance(self.clock_ns());self._events();self.task_window.refresh()
         self.profiles.poll(frozen=self.task is not None or self._pending_calibration is not None)
+        self._sync_autocal_capture();self._sync_correction()
+        if self.autocal.error and self.autocal.error!=self._autocal_error:
+            self._autocal_error=self.autocal.error;self.notice(self.autocal.error,True)
+        if self.autocal.enabled and self.autocal.reason!=self._autocal_reason:
+            self._autocal_reason=self.autocal.reason;self.notice(self.autocal.reason,False)
         if self._saving is not None and not self.profiles.busy:
             saved=self._saving;self._saving=None
             if self.profiles.profile is not None and self.profiles.calibration_id==saved['calibration_id'] and not self.profiles.last_error:
@@ -201,8 +294,10 @@ class OverlaySession:
             from .task_window import TaskWindow
             window_factory=TaskWindow
         self._window_factory,self._qscreen=window_factory,qscreen
-        runner=TaskRunner(kind,self.settings,matrix=self.profiles.matrix,calibration_id=self.profiles.calibration_id,clock_ns=self.clock_ns,
-                          screen_size=(self.screen.width,self.screen.height))
+        self.autocal.set_frozen(True);self._sync_correction()
+        if self._click_hub is not None:self._click_hub.sync()
+        runner=TaskRunner(kind,self.settings,matrix=self._active_matrix,calibration_id=self._active_id,clock_ns=self.clock_ns,
+                          screen_size=(self.screen.width,self.screen.height),corrected_group='C' if self._active_group=='C' else 'B')
         window=window_factory(runner,qscreen,self.settings.overlay,clock_ns=self.clock_ns)
         if not self.recording.begin_task(runner.task_id):
             window.close();window.deleteLater()
@@ -275,9 +370,12 @@ class OverlaySession:
                                 sample_selection=result['sample_selection'],sampling=result['sampling'],
                                 conditions_fingerprint=conditions_id(self.profiles.conditions))
             self.results(summary_text(result['summary'],result['estimated_distance_cm_median']))
-            group=result['summary']['groups'].get('B',{}).get('all',{})
-            if group.get('complete') and group.get('mean_cm') is not None:self.profiles.save_check(result)
-            else:self.notice('核对已完成；无完整、实测尺寸的 B 组结果，保留原半径来源',False)
+            corrected='C' if 'C' in result['summary']['groups'] else 'B'
+            group=result['summary']['groups'].get(corrected,{}).get('all',{})
+            if group.get('complete') and group.get('mean_cm') is not None:
+                if corrected=='C':self.autocal.save_check(result)
+                else:self.profiles.save_check(result)
+            else:self.notice(f'核对已完成；无完整、实测尺寸的 {corrected} 组结果，保留原半径来源',False)
             self.recording.end_task(result['task_id'],'completed')
             if self.clicks is not None:self.clicks.completed_check(result)
         self._dispose()
@@ -327,4 +425,6 @@ class OverlaySession:
         # Called by the lifecycle worker only after the camera/sink have drained.
         self._task_inference(False)
         if self.clicks is not None:self.clicks.close()
+        if self._click_hub is not None:self._click_hub.close()
+        self.autocal.close()
         self.heatmap.close();self.recording.close();self.profiles.close()

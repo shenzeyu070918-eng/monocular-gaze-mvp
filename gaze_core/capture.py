@@ -32,9 +32,10 @@ def numeric_prediction(prediction):
     """Copy the recorder whitelist before crossing a worker/UI boundary."""
     from .recorder import RESULT_FIELDS, validate_payload, number
     data = prediction.data
-    if set(data)-RESULT_FIELDS-{'landmarks', 'display'}:
+    numeric_fields=RESULT_FIELDS|{'matrix_revision'}
+    if set(data)-numeric_fields-{'landmarks', 'display'}:
         raise ValueError('推理结果含非数值字段，拒绝转交。')
-    numeric = {key: value for key, value in data.items() if key in RESULT_FIELDS}
+    numeric = {key: value for key, value in data.items() if key in numeric_fields}
     validate_payload('frame', dict(numeric, capture_ns=prediction.captured_ns,
                                   inference_completed_ns=prediction.completed_ns,
                                   frame_id=prediction.sequence), 'python')
@@ -420,10 +421,11 @@ class CameraPipeline:
             return
         try:
             from .recorder import RESULT_FIELDS, validate_payload
-            if set(data)-RESULT_FIELDS-{'landmarks'}:
+            numeric_fields=RESULT_FIELDS|{'matrix_revision'}
+            if set(data)-numeric_fields-{'landmarks'}:
                 raise ValueError('推理结果含非数值录制字段，拒绝缓存。')
             numeric = {key: (list(value) if isinstance(value, (list, tuple)) else value)
-                       for key, value in data.items() if key in RESULT_FIELDS}
+                       for key, value in data.items() if key in numeric_fields}
             timing = {'capture_ns': frame.captured_ns,
                       'inference_completed_ns': completed_ns, 'frame_id': frame.sequence}
             validate_payload('frame', {**numeric, **timing}, 'python')
@@ -602,12 +604,16 @@ class CameraPipeline:
                 last_started_ns = started_ns
                 data = engine.predict(frame.image, self.settings.geometry, self.settings.camera.grayscale)
                 completed_ns = self._clock_ns()
-                self._record_prediction(frame, completed_ns, data)
-                self._queue_result(Prediction(frame.sequence, frame.captured_ns, completed_ns, data))
                 if self._display_pipeline is not None:
                     with self._condition:
                         matrix_kwargs = {'matrix': self._display_matrix} if self._display_matrix_set else {}
                         matrix_revision = self._display_matrix_revision
+                    # The raw numeric sink and display share the exact selected
+                    # transform revision, even if the UI changes it mid-frame.
+                    data=dict(data,matrix_revision=matrix_revision)
+                self._record_prediction(frame, completed_ns, data)
+                self._queue_result(Prediction(frame.sequence, frame.captured_ns, completed_ns, data))
+                if self._display_pipeline is not None:
                     display=self._display_pipeline.process(data,source='python',capture_ns=frame.captured_ns,
                                                            geometry=self.settings.geometry, **matrix_kwargs)
                     data=dict(data,display=dict(display,matrix_revision=matrix_revision))

@@ -1,7 +1,7 @@
 """Rendering only. All positions are already logical pixels; never camera data."""
 import time
 from PySide6.QtCore import Qt,QRectF,QTimer,QEvent
-from PySide6.QtGui import QColor,QPainter,QPen,QFont,QFontMetrics,QRegion
+from PySide6.QtGui import QColor,QPainter,QPen,QFont,QFontMetrics,QRegion,QImage
 from PySide6.QtWidgets import QWidget
 from .mapping import ScreenRect
 from .label import LabelVisibility
@@ -22,6 +22,7 @@ class OverlayWindow(QWidget):
         self.native_configure=native_configure
         self.diagnostic=diagnostic
         self.position=None;self.radii=(options.fallback_radius_px,)*2;self.opacity=0.
+        self._heatmap_image=None;self._heatmap_key=None;self._heatmap_enabled=False;self._heatmap_uncalibrated=False
         self.label='未校准 · 窗口诊断（无摄像头）' if diagnostic else '未校准 · 正在启动'
         font=QFont();font.setPixelSize(options.label_font_px);self.setFont(font)
         self._label_metrics=QFontMetrics(font)
@@ -107,6 +108,7 @@ class OverlayWindow(QWidget):
     def paintEvent(self,event):
         painter=QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._paint_heatmap(painter)  # ALWAYS below the gaze ring and status text.
         painter.setFont(self.font())
         if self._label_opacity>0:
             painter.save();painter.setOpacity(self._label_opacity)
@@ -132,3 +134,31 @@ class OverlayWindow(QWidget):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             x,y=self.position;rx,ry=self.radii
             painter.drawEllipse(QRectF(x-rx,y-ry,rx*2,ry*2))
+
+    def set_heatmap(self,latest,*,enabled,uncalibrated=False):
+        key=(None if latest is None else latest['version'],bool(enabled),bool(uncalibrated))
+        if key==self._heatmap_key:return False
+        old_enabled=self._heatmap_enabled;self._heatmap_key=key
+        self._heatmap_enabled=bool(enabled);self._heatmap_uncalibrated=bool(uncalibrated)
+        if latest is not None and (self._heatmap_image is None or getattr(self,'_heatmap_version',None)!=latest['version']):
+            rgba=latest['rgba'];height,width=rgba.shape[:2]
+            # Own the small image. The worker never mutates a published buffer.
+            self._heatmap_image=QImage(rgba.data,width,height,rgba.strides[0],QImage.Format.Format_RGBA8888).copy()
+            self._heatmap_version=latest['version']
+        if old_enabled or self._heatmap_enabled:self.update()
+        return True
+
+    def _paint_heatmap(self,painter):
+        if not self._heatmap_enabled:return
+        from gaze_core.heatmap import NOTICE
+        painter.save();painter.setOpacity(1.)
+        if self._heatmap_image is not None:
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            painter.drawImage(QRectF(self.rect()),self._heatmap_image)
+        footer=QRectF(12,max(0,self.height()-52),max(1,self.width()-24),40)
+        painter.fillRect(footer,QColor(20,25,35,190))
+        painter.setPen(QColor('white'))
+        font=painter.font();font.setPixelSize(11);painter.setFont(font)
+        painter.drawText(footer,Qt.AlignmentFlag.AlignCenter|Qt.TextFlag.TextWordWrap,
+                         ('未校准 · ' if self._heatmap_uncalibrated else '')+NOTICE)
+        painter.restore()

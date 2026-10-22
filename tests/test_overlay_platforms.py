@@ -25,6 +25,16 @@ class NativeAdapterTests(unittest.TestCase):
         objc.objc_object.assert_called_once_with(c_void_p=123)
         native.setCollectionBehavior_.assert_called_once_with(7)
         native.setIgnoresMouseEvents_.assert_called_once_with(True)
+        native.setHasShadow_.assert_called_once_with(False)
+
+    def test_invalidate_shadow_only_uses_configured_overlay_window_on_mac(self):
+        native=Mock();widget=SimpleNamespace(_overlay_native_window=native)
+        with patch.object(platforms.sys,'platform','darwin'):
+            platforms.invalidate_shadow(widget)
+            platforms.invalidate_shadow(SimpleNamespace())
+        native.invalidateShadow.assert_called_once_with()
+        with patch.object(platforms.sys,'platform','win32'):platforms.invalidate_shadow(widget)
+        native.invalidateShadow.assert_called_once_with()
 
     def test_permission_preflight_denied_or_unknown_never_starts_capture(self):
         device=Mock();av=SimpleNamespace(AVCaptureDevice=device,AVMediaTypeVideo='video')

@@ -142,6 +142,32 @@ class OverlaySessionTests(unittest.TestCase):
                                camera=deepcopy(self.camera),origin_m=[0.,.1,.5],distance_cm=distance,
                                inference_ms=np.float64(1)))
 
+    def test_screen_change_while_paused_resets_context_and_recalibrates_without_recreating_pipeline(self):
+        self.load_coarse();self.assertEqual(self.session._active_group,'C')
+        runner=self.start('calibrate');self.fill_task(runner);self.finish_io()
+        self.assertEqual(self.session._active_group,'B')
+        resized=ScreenRect(0,0,1200,800,1.)
+        self.session.change_screen(resized)
+        self.assertIs(self.session.controller,self.controller)
+        self.assertIsNone(self.session.latest);self.assertIsNone(self.session.profiles.conditions)
+        self.assertIsNone(self.session.autocal.profile);self.assertEqual(self.session._active_group,'A')
+        self.assertFalse(self.session.heatmap.enabled);self.assertTrue(self.session.profiles.screen_mismatch)
+        self.now+=1_000_000_000;self.session.set_running(True)
+        self.session.sink(self.prediction(self.now,[.4,.6]));self.session.tick(self.view);self.finish_io()
+        self.assertEqual(self.session.profiles.conditions['screen']['width_px'],1200)
+        self.assertEqual(self.session.metadata()['screen']['width_px'],1200)
+        self.assertEqual(self.session._active_group,'A')
+        runner=self.start('calibrate');self.fill_task(runner);self.finish_io()
+        self.assertEqual(self.session._active_group,'B');self.assertFalse(self.session.profiles.screen_mismatch)
+
+    def test_unchanged_geometry_mapping_refresh_preserves_correction_and_conditions(self):
+        self.load_coarse();matrix=deepcopy(self.session._active_matrix)
+        conditions=deepcopy(self.session.profiles.conditions);revision=self.session.display_revision
+        updated=replace(self.screen,cocoa_top=1400)
+        self.session.refresh_screen_mapping(updated)
+        self.assertEqual(self.session.screen,updated);self.assertEqual(self.session.profiles.conditions,conditions)
+        self.assertEqual(self.session._active_matrix,matrix);self.assertEqual(self.session.display_revision,revision)
+
     def test_repeated_metadata_uses_snapshot_without_copying_volatile_report_counts(self):
         from overlay.session import deepcopy as real_copy
         original=self.session._metadata_snapshot

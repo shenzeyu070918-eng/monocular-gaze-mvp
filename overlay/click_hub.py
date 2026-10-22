@@ -39,6 +39,14 @@ class ClickHub:
     def set_running(self,running):
         self.running=bool(running);self.sync()
 
+    def change_screen_mapping(self,screen):
+        # Rebuild only the native coordinate adapter, retaining owners and
+        # sampling/model state when logical built-in geometry is unchanged.
+        wanted=self._wanted
+        if wanted:self.listener.stop()
+        self._wanted=False;self.listener.screen=screen
+        self.sync()
+
     def sync(self):
         wanted=not self.closed and self.running and (self.recording_owner or (
             self.autocal.enabled and not self.autocal.frozen and self.autocal.conditions is not None))

@@ -42,6 +42,7 @@ class ProfileManager:
         self._camera_snapshot=None;self._radius=None
         self._mode_text='未校准';self._mode_refresh_at=None
         self._device_fingerprint=device_fingerprint(settings.device_profile)
+        self.screen_mismatch=False
 
     @property
     def busy(self):return self._pending is not None
@@ -71,6 +72,7 @@ class ProfileManager:
         # check once per activation, rather than on every GUI timer callback.
         radius=radius_from_profile(profile,self.conditions) if profile is not None and profile.get('pipeline')=='python' else None
         self.profile=profile;self.reason=reason;self.revision+=1
+        if profile is not None:self.screen_mismatch=False
         self._radius=radius;self._mode_refresh_at=None
         key=None if profile is None else (profile.get('matrix_id'),profile['calibration_id'],tuple(tuple(r) for r in profile['matrix']))
         if key!=self._matrix_key:
@@ -107,6 +109,9 @@ class ProfileManager:
                     self.poll();return
             except Exception as exc:
                 self.last_error=str(exc)
+                if kind=='load' and ('screen.' in str(exc) or '屏幕' in str(exc)):
+                    from .screens import SCREEN_CHANGED
+                    self.screen_mismatch=True;self.last_error=SCREEN_CHANGED+'；'+str(exc)
                 if kind=='load':self._activate(None,'档案未加载：'+str(exc))
                 else:self.reason='档案操作失败：'+str(exc);self.revision+=1
             else:
@@ -135,6 +140,13 @@ class ProfileManager:
 
     def device_signature(self):
         return _stamp(self.device_path) if self.device_path is not None else None
+
+    def change_screen(self,screen):
+        from .screens import SCREEN_CHANGED
+        self.screen=screen;self._camera_snapshot=None;self.conditions=None
+        if self._pending is not None:self._pending[1].cancel()
+        self._pending=None;self._signature=object();self._next_poll=0.;self._suppressed=False
+        self.screen_mismatch=True;self._activate(None,SCREEN_CHANGED)
 
     def validate_device(self):
         if self.device_path is not None and device_fingerprint(load_device(self.device_path))!=self._device_fingerprint:

@@ -1,6 +1,4 @@
 """Small native window/permission adapter. No keyboard or mouse monitoring."""
-import json
-import subprocess
 import sys
 
 
@@ -13,28 +11,8 @@ def prepare_application():
 
 
 def builtin_screen(screens):
-    if len(screens)!=1:
-        raise RuntimeError('M3a 仅支持单块内置屏；请断开外接显示器后重试。')
-    if sys.platform=='darwin':
-        from AppKit import NSScreen
-        from Quartz import CGDisplayIsBuiltin
-        native=list(NSScreen.screens())
-        if len(native)!=1 or not CGDisplayIsBuiltin(native[0].deviceDescription()['NSScreenNumber']):
-            raise RuntimeError('未找到唯一启用的内置屏；M3a 不支持外接显示器。')
-    elif sys.platform=='win32':
-        command=('Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorConnectionParams | '
-                 'Where-Object Active | Select-Object -ExpandProperty VideoOutputTechnology | ConvertTo-Json -Compress')
-        try:
-            result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',command],
-                                  capture_output=True,text=True,timeout=8,check=True,
-                                  creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-            outputs=json.loads(result.stdout)
-            outputs=outputs if isinstance(outputs,list) else [outputs]
-            if len(outputs)!=1 or outputs[0] not in (6,11,13,0x80000000,-2147483648):
-                raise ValueError('不是单块内置屏')
-        except (OSError,ValueError,subprocess.SubprocessError) as exc:
-            raise RuntimeError('无法确认内置屏；M3a 不支持外接屏或无法识别的屏幕连接。') from exc
-    return screens[0]
+    from .screens import select_builtin
+    return select_builtin(screens).qscreen
 
 
 def configure_window(widget):

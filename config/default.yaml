@@ -136,7 +136,7 @@ heatmap:
   update_hz: 4.0  # Background idle/gap checks only; legacy setting, never a redraw rate.
   display_mode: on_demand  # Accumulate without drawing; continuous shows on enable.
   view_update_hz: 1.0  # Viewing rate for BOTH modes; no heatmap repaint while hidden.
-  alpha_threshold: 0.15  # Below 15% of the current maximum: completely transparent.
+  alpha_threshold: 0.15  # Below threshold: transparent; threshold..2*threshold: smoothstep alpha fade.
   half_life_s: 60.0
   max_opacity: 0.4  # Hard ceiling; the gaze ring is painted above the heatmap.
   queue_size: 256

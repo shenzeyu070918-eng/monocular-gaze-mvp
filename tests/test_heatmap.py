@@ -192,5 +192,35 @@ class HeatmapTests(unittest.TestCase):
         self.assertTrue(np.all(rgba_grid(grid*0,.4,.15)[...,3]==0))
         self.assertTrue(np.all(rgba_grid(grid,.4,.6)[0,:6,3]==0))
 
+    def test_alpha_smoothstep_midpoint_and_join_preserve_normal_opacity_above_band(self):
+        # threshold=.2: halfway through the fade band, smoothstep=.5.
+        # Normal opacity there is .4 * (.3-.2)/(1-.2) = .05.
+        grid=np.array([[.19,.2,.3,.4,.6,1.]],dtype=np.float64)
+        alpha=rgba_grid(grid,.4,.2)[0,:,3]
+        self.assertEqual(int(alpha[2]),6)  # floor(255 * .05 * .5), not the old 12.
+        np.testing.assert_array_equal(alpha[:2],[0,0])
+        normal=np.floor(255*.4*np.clip((grid-.2)/.8,0,1)).astype(np.uint8)
+        np.testing.assert_array_equal(alpha[3:],normal[0,3:])
+
+    def test_alpha_is_continuous_to_byte_precision_and_monotone_near_thresholds(self):
+        for threshold in (np.float64(.15),.2,.6):
+            with self.subTest(threshold=threshold):
+                samples=np.linspace(max(0,threshold-.01),min(1,2*threshold+.01),4001)
+                # Include the real peak, so each sample retains its normalized value.
+                alpha=rgba_grid(np.append(samples,1).reshape(1,-1),.4,threshold)[0,:-1,3].astype(int)
+                self.assertTrue(np.all(alpha[samples<=threshold]==0))
+                self.assertTrue(np.all(np.diff(alpha)>=0))
+                # 8-bit output necessarily has 1/255 steps; neither join jumps.
+                self.assertLessEqual(int(np.diff(alpha).max()),1)
+                joins=[threshold]+([2*threshold] if 2*threshold<1 else [])
+                for join in joins:
+                    values=np.array([[join-1e-6,join,join+1e-6,1.]])
+                    nearby=rgba_grid(values,.4,threshold)[0,:3,3].astype(int)
+                    self.assertLessEqual(int(nearby.max()-nearby.min()),1)
+        # A zero threshold has no transition interval and must not divide by zero.
+        values=np.array([[0,.1,.5,1.]])
+        with np.errstate(divide='raise',invalid='raise'):
+            np.testing.assert_array_equal(rgba_grid(values,.4,0)[...,3],np.floor(102*values).astype(np.uint8))
+
 
 if __name__=='__main__':unittest.main()

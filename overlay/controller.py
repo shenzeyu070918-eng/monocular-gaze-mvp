@@ -31,6 +31,7 @@ class OverlayController:
         self._report=None;self._matrix=None;self._matrix_revision=0;self._clear_numeric=False
         self._task_active=False;self._task_revision=0
         self._click_rate=(False,None);self._click_revision=0
+        self._autocal_rate=(False,None)
         self.closed=threading.Event()
         self.thread=threading.Thread(target=self._worker,name='overlay-control',daemon=True)
         self.thread.start()
@@ -44,6 +45,8 @@ class OverlayController:
                 self._task_active=False;self._task_revision+=1
             if action in {'paused','closed'} and self._click_rate[0]:
                 self._click_rate=(False,None);self._click_revision+=1
+            if action in {'paused','closed'} and self._autocal_rate[0]:
+                self._autocal_rate=(False,None);self._click_revision+=1
             self._wanted=action;self._revision+=1;self._error=None;self._latest=None
             self._condition.notify_all()
 
@@ -83,6 +86,19 @@ class OverlayController:
             if value==self._click_rate:return
             self._click_rate=value;self._click_revision+=1;self._condition.notify_all()
 
+    def set_autocal_rate(self,active,*,max_fps=None):
+        from gaze_core.devices import finite
+        if type(active) is not bool:raise ValueError('自动粗校准状态必须为布尔值')
+        if max_fps is not None:finite(max_fps,'autocal.max_fps',positive=True)
+        with self._condition:
+            value=(active,max_fps) if active else (False,None)
+            if self.closed.is_set() or self._wanted=='closed' or value==self._autocal_rate:return
+            self._autocal_rate=value;self._click_revision+=1;self._condition.notify_all()
+
+    def _effective_click_rate(self):
+        rates=[value for active,value in (self._click_rate,self._autocal_rate) if active]
+        return (False,None) if not rates else (True,None if None in rates else max(rates))
+
     def _set(self,status,**values):
         with self._condition:
             self._status=status
@@ -99,7 +115,7 @@ class OverlayController:
                 with self._condition:task_active,revision_task=self._task_active,self._task_revision
                 if pipeline is not None and revision_task!=task_revision:
                     pipeline.set_task_active(task_active);task_revision=revision_task
-                with self._condition:click_rate,revision_click=self._click_rate,self._click_revision
+                with self._condition:click_rate,revision_click=self._effective_click_rate(),self._click_revision
                 if pipeline is not None and revision_click!=click_revision:
                     pipeline.set_click_session_rate(click_rate[0],max_fps=click_rate[1]);click_revision=revision_click
                 if wanted=='closed':
@@ -119,7 +135,7 @@ class OverlayController:
                         pipeline=self._factory()
                         with self._condition:task_active,revision_task=self._task_active,self._task_revision
                         pipeline.set_task_active(task_active);task_revision=revision_task
-                        with self._condition:click_rate,revision_click=self._click_rate,self._click_revision
+                        with self._condition:click_rate,revision_click=self._effective_click_rate(),self._click_revision
                         if click_rate[0]:pipeline.set_click_session_rate(True,max_fps=click_rate[1])
                         click_revision=revision_click
                     with self._condition:matrix,revision_matrix=self._matrix,self._matrix_revision
@@ -147,8 +163,9 @@ class OverlayController:
                 with self._condition:
                     if self._task_active:
                         self._task_active=False;self._task_revision+=1
-                    click_was_active=self._click_rate[0]
+                    click_was_active=self._click_rate[0] or self._autocal_rate[0]
                     self._click_rate=(False,None);self._click_revision+=1
+                    self._autocal_rate=(False,None)
                 if pipeline is not None and wanted!='closed':
                     try:
                         pipeline.set_task_active(False)

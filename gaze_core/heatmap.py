@@ -204,7 +204,8 @@ def kernel_description(scale):
     if scale is None:return '核尺度 sigma：等待相机条件'
     if scale['sigma_cm'] is not None:
         value=f"{scale['sigma_cm']:.3f} cm"
-        source='最近匹配 B 核对平均误差' if scale['source']=='matching_B_check' else '配置示意值（非实测精度）'
+        source=('最近匹配 C 粗校准核对平均误差' if scale['source']=='matching_C_check' else
+                '最近匹配 B 核对平均误差' if scale['source']=='matching_B_check' else '配置示意值（非实测精度）')
     else:
         value=f"{scale['sigma_px']:.3f} 逻辑像素";source='配置示意值（屏幕未实测）'
     return '核尺度 sigma = '+value+' · 来源：'+source

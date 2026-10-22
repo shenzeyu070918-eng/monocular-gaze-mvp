@@ -160,6 +160,54 @@ class OverlaySessionTests(unittest.TestCase):
         self.assertIsNot(self.session._metadata_snapshot,original)
         self.assertEqual(self.session.metadata()['inference_device'],'mps')
 
+    def load_coarse(self):
+        from gaze_core.profiles import save_click_profile
+        import threading
+        saved=save_click_profile([.02,.03],name='builtin',count=12,conditions=self.session.profiles.conditions,
+                                directory=self.directory.name)
+        self.now+=2_000_000_000
+        self.session.set_autocal_enabled(True)
+        done=threading.Event();self.session.autocal._put(('barrier',done));self.assertTrue(done.wait(3))
+        self.session.tick(self.view)
+        self.assertEqual(self.session._active_group,'C')
+        return saved
+
+    def test_click_offset_check_is_C_uses_raw_and_keeps_minimal_profile_unchanged(self):
+        self.load_coarse();matrix=deepcopy(self.session._active_matrix)
+        self.assertIn('点击粗校准',self.session.short_mode)
+        self.assertIn('12 次点击',self.session.short_mode)
+        coarse=Path(self.directory.name)/'builtin.click_offset.json';before=coarse.read_bytes()
+        runner=self.start('evaluate');self.assertTrue(self.session.autocal.frozen)
+        with patch('overlay.tasks.fit_affine',side_effect=AssertionError('C核对不得拟合')):
+            frames=self.fill_task(runner,offset=(.12,-.17))
+        expected=evaluate(frames,runner.targets,self.settings.geometry,matrix)
+        expected['groups']['C']=expected['groups'].pop('B')
+        self.assertEqual(runner.result['summary'],expected)
+        self.finish_io()
+        event=next(r for r in self.session.recording.events if r['type']=='evaluation_summary')
+        self.assertEqual(set(event['summary']['groups']),{'A','C'})
+        self.assertEqual(self.session.radius,expected['groups']['C']['all']['mean_cm'])
+        self.assertIn('最近匹配 C',self.session.radius_text)
+        self.assertEqual(self.session.heatmap.context['phase']['group'],'C')
+        self.assertEqual(self.session.heatmap.context['kernel']['source'],'matching_C_check')
+        self.assertEqual(coarse.read_bytes(),before)
+        self.assertFalse(self.path.exists())
+
+    def test_nine_point_has_priority_and_disabling_it_activates_only_matching_coarse(self):
+        self.load_coarse();coarse_matrix=deepcopy(self.session._active_matrix)
+        runner=self.start('calibrate');self.fill_task(runner);self.finish_io()
+        self.assertEqual(self.session._active_group,'B')
+        self.assertEqual(self.controller.matrices[-1],self.session.profiles.matrix)
+        self.session.profiles.disable();self.session.tick(self.view)
+        self.assertEqual(self.session._active_group,'C');self.assertEqual(self.controller.matrices[-1],coarse_matrix)
+        self.session.set_autocal_enabled(False)
+        self.assertEqual(self.session._active_group,'A');self.assertIsNone(self.controller.matrices[-1])
+        self.session.set_autocal_enabled(True);self.session.tick(self.view)
+        self.assertEqual(self.session._active_group,'C')
+        changed=self.prediction(self.now+1,[.5,.5]);changed.data['camera']['camera_index']=2
+        self.session.sink(changed);self.now+=2;self.session.tick(self.view)
+        self.assertEqual(self.session._active_group,'A');self.assertIsNone(self.session.autocal.profile)
+
 
     def finish_io(self):
         for _ in range(30):
@@ -209,7 +257,7 @@ class OverlaySessionTests(unittest.TestCase):
         flow=self.session.bind_clicks(start_task=self.start,listener_factory=Listener)
         flow.begin()
         self.assertEqual(flow.state,'baseline')
-        self.assertFalse(flow.listener.active)
+        self.assertFalse(flow.listener.status()['active'])
         self.fill_task(self.session.task);self.finish_io()
         self.assertEqual(flow.state,'collecting')
         self.assertEqual(flow.baseline['calibration_id'],self.session.profiles.calibration_id)
@@ -219,7 +267,7 @@ class OverlaySessionTests(unittest.TestCase):
             self.session.sink(self.prediction(self.now,[.5,.5] if i%2 else None))
             self.session.tick(self.view)
         flow.end_collection()
-        self.assertFalse(flow.listener.active)
+        self.assertFalse(flow.listener.status()['active'])
         self.assertEqual(self.controller.click_rates[-1],(False,None))
         runner=flow.begin_check()
         self.fill_task(runner);self.finish_io()

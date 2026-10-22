@@ -23,6 +23,7 @@ class OverlayWindow(QWidget):
         self.diagnostic=diagnostic
         self.position=None;self.radii=(options.fallback_radius_px,)*2;self.opacity=0.
         self._heatmap_image=None;self._heatmap_key=None;self._heatmap_enabled=False;self._heatmap_uncalibrated=False
+        self._heatmap_coarse=False
         self.label='未校准 · 窗口诊断（无摄像头）' if diagnostic else '未校准 · 正在启动'
         font=QFont();font.setPixelSize(options.label_font_px);self.setFont(font)
         self._label_metrics=QFontMetrics(font)
@@ -135,7 +136,7 @@ class OverlayWindow(QWidget):
             x,y=self.position;rx,ry=self.radii
             painter.drawEllipse(QRectF(x-rx,y-ry,rx*2,ry*2))
 
-    def set_heatmap(self,latest,*,enabled,uncalibrated=False):
+    def set_heatmap(self,latest,*,enabled,uncalibrated=False,coarse_calibrated=False):
         if not enabled:
             was_visible=self._heatmap_enabled
             self._heatmap_enabled=False;self._heatmap_key=None
@@ -143,10 +144,11 @@ class OverlayWindow(QWidget):
             # window regions or add any future heatmap repaint requests.
             if was_visible:self.update()
             return was_visible
-        key=(None if latest is None else latest['version'],bool(enabled),bool(uncalibrated))
+        key=(None if latest is None else latest['version'],bool(enabled),bool(uncalibrated),bool(coarse_calibrated))
         if key==self._heatmap_key:return False
         old_enabled=self._heatmap_enabled;self._heatmap_key=key
         self._heatmap_enabled=bool(enabled);self._heatmap_uncalibrated=bool(uncalibrated)
+        self._heatmap_coarse=bool(coarse_calibrated)
         if latest is not None and (self._heatmap_image is None or getattr(self,'_heatmap_version',None)!=latest['version']):
             rgba=latest['rgba'];height,width=rgba.shape[:2]
             # Own the small image. The worker never mutates a published buffer.
@@ -169,5 +171,5 @@ class OverlayWindow(QWidget):
         painter.setPen(QColor('white'))
         font=painter.font();font.setPixelSize(11);painter.setFont(font)
         painter.drawText(footer,Qt.AlignmentFlag.AlignCenter|Qt.TextFlag.TextWordWrap,
-                         ('未校准 · ' if self._heatmap_uncalibrated else '')+NOTICE)
+                         ('未校准 · ' if self._heatmap_uncalibrated else '粗校准 · ' if self._heatmap_coarse else '')+NOTICE)
         painter.restore()

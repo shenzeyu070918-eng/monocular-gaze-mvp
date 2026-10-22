@@ -36,7 +36,7 @@ class CalibrationTimeline:
             prior=[r for r in self.events if r.get('event_ns',r['server_ns'])<=frame['capture_ns']]
             if not prior:return None,'missing_calibration_event'
             event=prior[-1];source='legacy_event_time'
-        if event.get('action')!='applied' or event.get('group')!='B' or event.get('matrix') is None:return None,'uncalibrated'
+        if event.get('action')!='applied' or event.get('group') not in {'B','C'} or event.get('matrix') is None:return None,'uncalibrated'
         if event.get('pipeline') not in (None,'python'):return None,'web_calibration'
         if event.get('calibration_matched') is False:return None,'unmatched_calibration'
         if event.get('coordinate_system')!='full_screen_normalized':return None,'unknown_calibration_coordinates'
@@ -111,7 +111,7 @@ def session_heatmap(path,settings,*,task_id=None):
                 radius=event.get('error_radius_cm') or settings.overlay.radius_cm
                 scale=kernel_scale(geometry,screen_size,radius,settings.overlay.fallback_radius_px,event.get('error_radius_source','configured_cm'))
                 phase=dict(calibration_id=event['calibration_id'],matrix_revision=event.get('matrix_revision'),matrix=event['matrix'],
-                           conditions_fingerprint=event.get('conditions_fingerprint'),group='B',alignment=source)
+                           conditions_fingerprint=event.get('conditions_fingerprint'),group=event['group'],alignment=source)
             alignment[source]+=1
             t=(row['capture_ns']-start_ns)/1e9
             if last is not None and (t<=last or (t-last)*1000>settings.fixation.max_gap_ms):
@@ -143,5 +143,6 @@ def session_heatmap(path,settings,*,task_id=None):
                   session_id=header['session_id'],screen=screen,targets=target_rows,skipped=dict(skipped),alignment=dict(alignment),
                   smoothing=dict(smoothing),fallback_frames=fallback,warnings=list(session.warnings),
                   completed_checks=[r['task_id'] for r in checks],notice=NOTICE,
+                  coarse_calibrated=any(p['context'].get('group')=='C' for p in result['phases']),
                   target_note='目标只用于热量占比验收，不参与拟合、滤波或注视检测。附近圆/椭圆可能重叠，各目标占比不能相加。')
     return result

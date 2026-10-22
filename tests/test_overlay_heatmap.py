@@ -73,6 +73,18 @@ class HeatmapWorkerTests(unittest.TestCase):
         worker.clear();self.fence(worker);worker.export();self.fence(worker)
         self.assertEqual(self.exported[-1][0]['grid'].sum(),0.)
 
+    def test_click_coarse_calibration_is_allowed_labelled_and_exported_as_C(self):
+        value=deepcopy(context());value['phase']['group']='C';value['kernel']['source']='matching_C_check'
+        worker=self.worker();worker.configure(value);self.assertTrue(worker.set_enabled(True))
+        for t in (0,.07,.14):self.feed(worker,t)
+        self.now=150_000_000;self.fence(worker)
+        self.assertIn('粗校准',worker.state()['label']);self.assertFalse(worker.state()['uncalibrated'])
+        self.assertIn('匹配 C',worker.state()['kernel_text'])
+        worker.export();self.fence(worker)
+        snapshot=self.exported[-1][0]
+        self.assertTrue(snapshot['coarse_calibrated']);self.assertFalse(snapshot['uncalibrated'])
+        self.assertAlmostEqual(snapshot['regions']['total_fixation_s'],.14)
+
     def test_no_new_data_same_clock_does_not_republish_and_pause_does_not_bridge(self):
         worker=self.worker();worker.configure(context());worker.set_enabled(True)
         for t in (0,.07,.14):self.feed(worker,t)

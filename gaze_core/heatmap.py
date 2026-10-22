@@ -215,6 +215,8 @@ def rgba_grid(grid,max_opacity,alpha_threshold=.15):
 
     Only display normalization changes; numeric duration/decay stays untouched.
     Uniform scaling of an entire grid keeps relative colors unchanged.
+    Between threshold and 2*threshold a smoothstep envelope fades alpha into
+    its normal linear value, with zero envelope slope at both joins.
     """
     opacity=finite(max_opacity,'max_opacity',positive=True)
     threshold=finite(alpha_threshold,'alpha_threshold')
@@ -223,7 +225,13 @@ def rgba_grid(grid,max_opacity,alpha_threshold=.15):
     if not np.isfinite(grid).all() or (grid<0).any():raise ValueError('热图必须是非负有限数值')
     value=np.zeros_like(grid) if peak<=0 else np.clip(grid/peak,0,1)
     strength=np.clip((value-threshold)/(1-threshold),0,1)
+    # Keep the existing color/opacity scale above the fade band. Only alpha
+    # gets the envelope; threshold=0 has no band and needs no division.
+    fade=1.
+    if threshold>0:
+        progress=np.clip((value-threshold)/threshold,0,1)
+        fade=progress*progress*(3-2*progress)
     rgba=np.empty((*grid.shape,4),np.uint8)
     rgba[...,0]=255;rgba[...,1]=np.rint(255*(1-strength)).astype(np.uint8);rgba[...,2]=0
-    rgba[...,3]=np.floor(255*opacity*strength).astype(np.uint8)
+    rgba[...,3]=np.floor(255*opacity*strength*fade).astype(np.uint8)
     return rgba

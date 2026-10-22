@@ -178,6 +178,7 @@ class SessionHeatmapTests(unittest.TestCase):
             report=(output/'report.md').read_text();self.assertIn('不表示「看了什么内容」',report);self.assertIn('旧录制缺矩阵版本号',report)
             self.assertIn('边缘容差内夹回的时长',report);self.assertIn('真正屏幕外的时长',report)
             self.assertIn('25%完全透明',report);self.assertIn('黄色至红色',report)
+            self.assertIn('阈值到2倍阈值用smoothstep',report)
             with self.assertRaises(FileExistsError):export_heatmap(result,directory=destination)
             with self.assertRaisesRegex(ValueError,'data/heatmaps'):export_heatmap(result,directory=path)
             before=path.read_bytes()

@@ -4,7 +4,7 @@ from dataclasses import replace
 import unittest
 import numpy as np
 from gaze_core.config import HeatmapSettings,ScreenGeometry,FixationSettings,load_settings
-from gaze_core.heatmap import HeatmapAccumulator,HeatmapStream,RegionStatistics,kernel_scale,rgba_grid
+from gaze_core.heatmap import HeatmapAccumulator,HeatmapStream,RegionStatistics,kernel_scale,rgba_grid,heatmap_position
 
 GEOMETRY=ScreenGeometry(width_cm=30,height_cm=20,measured=True,top_cm=0.,focal_scale=1.)
 OPTIONS=HeatmapSettings(grid_width=60)
@@ -40,7 +40,7 @@ class HeatmapTests(unittest.TestCase):
         self.assertEqual(logical['sigma_px'],28.);self.assertIsNone(logical['sigma_cm'])
         self.assertAlmostEqual(logical['sigma_x'],28/1200)
 
-    def test_mass_conservation_edges_numpy_and_outside_is_not_clamped(self):
+    def test_mass_conservation_edges_numpy_and_far_outside_is_not_clamped(self):
         acc=HeatmapAccumulator(OPTIONS,(1200,800))
         for i,p in enumerate(((0,0),(1,1),(.5,.5))):acc.add(segment(i,i+.75,np.array(p)),SCALE)
         acc.add(segment(3,5,(-.1,.5)),SCALE)
@@ -48,6 +48,62 @@ class HeatmapTests(unittest.TestCase):
         self.assertAlmostEqual(snap['grid'].sum(),2.25);self.assertAlmostEqual(snap['regions']['total_fixation_s'],2.25)
         self.assertEqual(snap['outside_s'],2);self.assertEqual(snap['fixation_count'],3)
         self.assertEqual(acc.total.shape,(40,60))
+
+    def test_shared_edge_projection_sigma_boundary_corners_numpy_and_logical_units(self):
+        for point,expected in (([-SCALE['sigma_x'],.5],[0.,.5]),([1+SCALE['sigma_x'],.5],[1.,.5]),
+                               ([.5,-SCALE['sigma_y']],[.5,0.]),([.5,1+SCALE['sigma_y']],[.5,1.]),
+                               ([-.6*SCALE['sigma_x'],-.6*SCALE['sigma_y']],[0.,0.])):
+            with self.subTest(point=point):
+                raw=np.array(point,dtype=np.float64);original=raw.copy()
+                projected,status=heatmap_position(raw,SCALE)
+                self.assertEqual(projected,expected);self.assertEqual(status,'edge_clamped')
+                np.testing.assert_array_equal(raw,original)
+        for point in ((-1.01*SCALE['sigma_x'],.5),(-.8*SCALE['sigma_x'],-.8*SCALE['sigma_y'])):
+            self.assertEqual(heatmap_position(point,SCALE),(None,'outside'))
+        self.assertEqual(heatmap_position([1.,0.],SCALE),([1.,0.],'inside'))
+        logical=kernel_scale(replace(GEOMETRY,measured=False),(1200,800),999.,28.,'configured_cm')
+        self.assertEqual(heatmap_position([.5,-28/800],logical),([.5,0.],'edge_clamped'))
+        self.assertEqual(heatmap_position([.5,-29/800],logical),(None,'outside'))
+
+    def test_clamped_duration_counts_in_mass_and_regions_but_far_outside_remains_separate(self):
+        acc=HeatmapAccumulator(OPTIONS,(1200,800))
+        for start,end,point in ((0,1,(.5,-.05)),(1,3,(1.03,.5)),(3,6,(.5,.5)),(6,10,(-.1,.5))):
+            acc.add(segment(start,end,point),SCALE)
+        snap=acc.snapshot(10);rows={row['id']:row for row in snap['regions']['regions']}
+        self.assertAlmostEqual(snap['grid'].sum(),6.)
+        self.assertEqual(snap['edge_clamped_s'],3.);self.assertEqual(snap['outside_s'],4.)
+        self.assertEqual(snap['regions']['total_fixation_s'],6.)
+        self.assertEqual(rows['1-2']['dwell_s'],1.);self.assertEqual(rows['2-3']['dwell_s'],2.)
+        np.testing.assert_array_equal(acc.kernel([.5,-.05],SCALE),acc.kernel([.5,0.],SCALE))
+        self.assertEqual(snap['regions']['total_fixation_s']+snap['outside_s'],10.)
+
+    def test_clamped_preview_replacement_and_decay_do_not_double_count_duration(self):
+        acc=HeatmapAccumulator(OPTIONS,(1200,800),decay=True)
+        preview=segment(0,1,(.5,-.05))
+        for _ in range(10):
+            snap=acc.snapshot(1,preview=preview,scale=SCALE)
+            self.assertEqual(snap['edge_clamped_s'],1.);self.assertEqual(snap['outside_s'],0.)
+            self.assertEqual(snap['regions']['total_fixation_s'],1.)
+        self.assertEqual(acc.edge_clamped_s,0.)
+        acc.add(preview,SCALE);first=acc.snapshot(1);later=acc.snapshot(61)
+        self.assertEqual(later['edge_clamped_s'],1.)
+        np.testing.assert_allclose(snap['grid'],first['grid'])
+        self.assertAlmostEqual(later['grid'].sum(),first['grid'].sum()/2)
+        far=acc.snapshot(61,preview=segment(60,61,(.5,-.2)),scale=SCALE)
+        self.assertEqual(far['outside_s'],1.);self.assertEqual(far['edge_clamped_s'],1.)
+
+    def test_live_stream_projects_only_after_detection_preserving_raw_outside_position(self):
+        stream=HeatmapStream(OPTIONS,FixationSettings(),(1200,800),decay=False)
+        stream.configure(context());raw=[np.float64(-.03),np.float64(.5)]
+        data=dict(raw=raw,valid=True,status='tracking',matrix_revision=1)
+        for t in (0,.07,.14):stream.feed(data,round(t*1e9))
+        self.assertAlmostEqual(stream.preview['center'][0],-.03)
+        snap=stream.snapshot(150_000_000)
+        self.assertAlmostEqual(snap['edge_clamped_s'],.14);self.assertEqual(snap['outside_s'],0.)
+        self.assertEqual(data['raw'],raw);self.assertEqual(raw[0],-.03)
+        stream.interrupt();final=stream.snapshot(160_000_000)
+        self.assertAlmostEqual(final['edge_clamped_s'],.14)
+        self.assertAlmostEqual(final['regions']['total_fixation_s'],.14)
 
     def test_decay_half_life_and_interval_weight_uses_capture_time(self):
         acc=HeatmapAccumulator(OPTIONS,(1200,800),decay=True)

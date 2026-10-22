@@ -81,6 +81,27 @@ class SessionHeatmapTests(unittest.TestCase):
             self.assertEqual(before['regions'],after['regions'])
             self.assertNotEqual(before['targets'][0]['whole_heat_fraction'],after['targets'][0]['whole_heat_fraction'])
 
+    def test_offline_near_edge_counts_dwell_and_target_heat_while_far_outside_is_excluded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'python.jsonl';rows=recording(path)
+            for row in rows:
+                if row['type']=='target':
+                    if row.get('target_id')=='point-0':row['target']=[.5,.05]
+                    elif row.get('target_id')=='point-1':row['target']=[.5,.05]
+                elif row['type']=='frame':
+                    if 1_000_000_000<=row['capture_ns']<2_500_000_000:row['raw']=[.5,-.04]
+                    elif 2_500_000_000<=row['capture_ns']<4_000_000_000:row['raw']=[.5,-.3]
+            path.write_text(''.join(json.dumps(r)+'\n' for r in rows));before=path.read_bytes()
+            result=session_heatmap(path,self.settings)
+            self.assertGreater(result['edge_clamped_s'],1.);self.assertGreater(result['outside_s'],1.)
+            first,second=result['targets'][:2]
+            self.assertGreater(first['during_target_fixation_s'],1.)
+            self.assertGreater(first['during_target_heat_fraction'],0.)
+            self.assertEqual(second['during_target_fixation_s'],0.)
+            self.assertIsNone(second['during_target_heat_fraction'])
+            self.assertAlmostEqual(result['grid'].sum(),result['regions']['total_fixation_s'])
+            self.assertEqual(path.read_bytes(),before)
+
     def test_legacy_alignment_uncalibrated_and_missing_check_are_explicit(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'python.jsonl';recording(path,versioned=False)
@@ -148,9 +169,11 @@ class SessionHeatmapTests(unittest.TestCase):
             output=export_heatmap(result,directory=destination)
             self.assertGreater((output/'heatmap.png').stat().st_size,1000)
             meta=json.loads((output/'regions.json').read_text());self.assertEqual(len(meta['targets']),14)
+            self.assertIn('edge_clamped_s',meta);self.assertIn('outside_s',meta)
             with (output/'grid.csv').open() as stream:
                 self.assertAlmostEqual(sum(float(r['seconds_per_cell']) for r in csv.DictReader(stream)),result['grid'].sum())
             report=(output/'report.md').read_text();self.assertIn('不表示「看了什么内容」',report);self.assertIn('旧录制缺矩阵版本号',report)
+            self.assertIn('边缘容差内夹回的时长',report);self.assertIn('真正屏幕外的时长',report)
             with self.assertRaises(FileExistsError):export_heatmap(result,directory=destination)
             with self.assertRaisesRegex(ValueError,'data/heatmaps'):export_heatmap(result,directory=path)
             before=path.read_bytes()

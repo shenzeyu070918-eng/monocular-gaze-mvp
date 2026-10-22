@@ -16,6 +16,7 @@ from gaze_core.config import OverlaySettings,load_settings
 from gaze_core.capture import Prediction
 from overlay.controller import ControllerView
 from overlay.mapping import ScreenRect
+from overlay.screens import BuiltinScreen,logical_rect
 from overlay.state import RingState
 from overlay.window import OverlayWindow
 
@@ -232,7 +233,7 @@ class QtAdapterTests(unittest.TestCase):
         try:
             for available,code in ((True,0),(False,0)):
                 with patch('overlay.platforms.prepare_application'),patch('overlay.platforms.configure_window'), \
-                     patch('overlay.platforms.builtin_screen',side_effect=lambda screens:screens[0]), \
+                     patch('overlay.screens.startup_screen',side_effect=lambda app,**kwargs:BuiltinScreen(app.screens()[0],logical_rect(app.screens()[0]),'fake')), \
                      patch.object(QSystemTrayIcon,'isSystemTrayAvailable',return_value=available), \
                      patch('gaze_core.capture.CameraPipeline',side_effect=AssertionError('camera must stay closed')), \
                      redirect_stdout(io.StringIO()) as output,redirect_stderr(io.StringIO()):

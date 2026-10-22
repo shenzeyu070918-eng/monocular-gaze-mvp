@@ -37,11 +37,15 @@ class MacMouseDown:
         self._handlers = []
         self.error = None
         screens = list(appkit.NSScreen.screens())
-        if len(screens) != 1:
-            raise RuntimeError('点击采集只支持唯一启用的内置屏，请断开外接显示器。')
-        frame = screens[0].frame()
-        self.primary_top = float(frame.origin.y + frame.size.height)
-        if (abs(frame.size.width - screen.width) > 1 or abs(frame.size.height - screen.height) > 1):
+        if not screens:raise RuntimeError('内置屏不可用，无法建立鼠标逻辑坐标。')
+        primary=screens[0].frame()
+        self.primary_top = screen.cocoa_top if screen.cocoa_top is not None else float(primary.origin.y+primary.size.height)
+        matches=[]
+        for native in screens:
+            frame=native.frame()
+            if (abs(frame.origin.x-screen.x)<=1 and abs(self.primary_top-frame.origin.y-frame.size.height-screen.y)<=1
+                    and abs(frame.size.width-screen.width)<=1 and abs(frame.size.height-screen.height)<=1):matches.append(native)
+        if len(matches)!=1:
             raise RuntimeError('AppKit 与内置屏逻辑尺寸不一致，拒绝记录点击坐标。')
 
     def start(self):

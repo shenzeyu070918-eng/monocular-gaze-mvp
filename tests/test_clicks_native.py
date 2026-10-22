@@ -26,7 +26,7 @@ def fake_windows():
     user_names = ('SetWindowsHookExW', 'UnhookWindowsHookEx', 'CallNextHookEx', 'GetMessageW',
                   'PeekMessageW', 'PostThreadMessageW', 'TranslateMessage', 'DispatchMessageW',
                   'SetThreadDpiAwarenessContext', 'EnumDisplayMonitors')
-    user_names += ('WindowFromPoint', 'GetAncestor')
+    user_names += ('WindowFromPoint', 'GetAncestor','GetMonitorInfoW')
     user = NS(**{name: Mock(return_value=1) for name in user_names})
     kernel = NS(**{name: Mock(return_value=1) for name in
                    ('GetTickCount64', 'GetCurrentThreadId', 'GetModuleHandleW', 'GetSystemTimeAdjustment')})
@@ -103,6 +103,17 @@ class MacMouseTests(unittest.TestCase):
         self.assertEqual(cocoa_to_logical((0, 982), 982), (0., 0.))
         self.assertEqual(cocoa_to_logical((1511, 1), 982), (1511., 981.))
 
+    def test_extended_external_primary_uses_desktop_flip_and_preserves_internal_origin(self):
+        kit=fake_mac()
+        external=NS(frame=lambda:NS(origin=NS(x=0,y=0),size=NS(width=200,height=100)))
+        internal=NS(frame=lambda:NS(origin=NS(x=-100,y=20),size=NS(width=100,height=80)))
+        kit.NSScreen.screens=lambda:[external,internal]
+        rows=[];mapper=Mock(map=Mock(return_value=callback_time(200)))
+        backend=MacMouseDown(ScreenRect(-100,0,100,80,2,cocoa_top=100),rows.append,appkit=kit,foundation=NS(),mapper=mapper)
+        backend.start();handler=kit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_.call_args.args[1]
+        handler(NS(locationInWindow=lambda:NS(x=-80,y=70),buttonNumber=lambda:0,timestamp=lambda:1.))
+        self.assertEqual((rows[0].x,rows[0].y),(-80.,30.));backend.stop()
+
 
 class WindowsMouseTests(unittest.TestCase):
     def backend(self, callback=None, *, physical_rect=(0, 0, 200, 160), screen=None, mapper=None):
@@ -172,7 +183,7 @@ class WindowsMouseTests(unittest.TestCase):
             callback(None, None, C.pointer(second), 0)
             return 1
         user.EnumDisplayMonitors.side_effect = enumerate_monitors
-        with self.assertRaisesRegex(RuntimeError, '唯一启用'):
+        with self.assertRaisesRegex(RuntimeError, '唯一对应'):
             WindowsMouseDown(ScreenRect(0, 0, 100, 80, 2.), Mock(), user32=user, kernel32=kernel)
         with self.assertRaisesRegex(RuntimeError, 'DPI 不一致'):
             self.backend(physical_rect=(0, 0, 1920, 1080))
@@ -184,6 +195,17 @@ class WindowsMouseTests(unittest.TestCase):
             self.assertEqual(physical_to_logical((300, 400), physical, screen), (10., 20.))
             self.assertEqual(physical_to_logical((300 + 99 * dpr, 400 + 79 * dpr), physical, screen), (109., 99.))
             self.assertIsNone(physical_to_logical((physical[2], 450), physical, screen))
+
+    def test_multiple_monitor_lookup_uses_resolved_device_name_not_size_or_primary(self):
+        user,kernel=fake_windows()
+        def enumerate_monitors(_,__,callback,___):
+            external=Rect(200,0,400,160);internal=Rect(0,0,200,160)
+            callback(2,None,C.pointer(external),0);callback(1,None,C.pointer(internal),0);return 1
+        def info(handle,pointer):
+            pointer._obj.szDevice=r'\\.\DISPLAY1' if handle==1 else r'\\.\DISPLAY2';return 1
+        user.EnumDisplayMonitors.side_effect=enumerate_monitors;user.GetMonitorInfoW.side_effect=info
+        backend=WindowsMouseDown(ScreenRect(0,0,100,80,2,native_name=r'\\.\DISPLAY1'),Mock(),user32=user,kernel32=kernel,mapper=Mock())
+        self.assertEqual(backend.physical_rect,(0,0,200,160))
 
     def test_clock_uses_measured_os_increment_not_millisecond_unit_as_precision(self):
         user, kernel = fake_windows()

@@ -165,15 +165,19 @@ class SessionHeatmapTests(unittest.TestCase):
         root=ROOT/'data/heatmaps';root.mkdir(parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(dir=root) as folder,tempfile.TemporaryDirectory() as inputs:
             path=Path(inputs)/'python.jsonl';recording(path,versioned=False)
-            result=session_heatmap(path,self.settings);destination=Path(folder)/'export'
+            settings=replace(self.settings,heatmap=replace(self.settings.heatmap,alpha_threshold=.25))
+            result=session_heatmap(path,settings);destination=Path(folder)/'export'
             output=export_heatmap(result,directory=destination)
             self.assertGreater((output/'heatmap.png').stat().st_size,1000)
             meta=json.loads((output/'regions.json').read_text());self.assertEqual(len(meta['targets']),14)
             self.assertIn('edge_clamped_s',meta);self.assertIn('outside_s',meta)
+            self.assertEqual(meta['visualization']['alpha_threshold'],.25)
+            self.assertEqual(meta['visualization']['palette'],'transparent_yellow_red')
             with (output/'grid.csv').open() as stream:
                 self.assertAlmostEqual(sum(float(r['seconds_per_cell']) for r in csv.DictReader(stream)),result['grid'].sum())
             report=(output/'report.md').read_text();self.assertIn('不表示「看了什么内容」',report);self.assertIn('旧录制缺矩阵版本号',report)
             self.assertIn('边缘容差内夹回的时长',report);self.assertIn('真正屏幕外的时长',report)
+            self.assertIn('25%完全透明',report);self.assertIn('黄色至红色',report)
             with self.assertRaises(FileExistsError):export_heatmap(result,directory=destination)
             with self.assertRaisesRegex(ValueError,'data/heatmaps'):export_heatmap(result,directory=path)
             before=path.read_bytes()

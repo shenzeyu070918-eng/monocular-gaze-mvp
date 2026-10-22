@@ -191,6 +191,7 @@ demo:
   footer_px: 65
   background: '#101B30'
   button_color: '#EDF3FF'
+  hole_color: '#294363'
   text_color: '#112444'
   progress_color: '#FFCA55'
   feedback_color: '#FFCA55'

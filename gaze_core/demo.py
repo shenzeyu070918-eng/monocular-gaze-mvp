@@ -2,7 +2,9 @@
 from math import ceil
 import random
 import uuid
+from numbers import Integral
 from .dwell import Button,DwellSelector
+from .devices import finite
 
 
 def button_layout(width,height,radii,options):
@@ -43,6 +45,7 @@ class DemoRun:
         self.feedback_until=0;self.flash_until=0;self.feedback_text='';self.speech_pending=False
         self.speech_failed=False;self.reason=None;self.events=[];self.pending=None
         self.selections=[];self.score=0;self.reactions=[];self.last_sequence=-1
+        self._reported=False
         self._configure()
 
     @property
@@ -93,7 +96,8 @@ class DemoRun:
             self.speech_pending=False
             self.phase='playing';self._configure()
         if self.app=='game' and self.started_ns is not None and self.phase=='playing' and now_ns-self.started_ns>=self.options.round_s*1e9:
-            self._confirm(now_ns);self.phase='finished';self._configure()
+            self.phase='finished';self._configure()
+        if self.phase=='finished' and not self._reported and self.pending is None:
             self._summary(now_ns,'completed')
 
     def feed(self, point,capture_ns,now_ns,*,valid=True,sequence=None):
@@ -137,6 +141,7 @@ class DemoRun:
         self.speech_pending=False;self.speech_failed=not success
 
     def _summary(self,now_ns,reason):
+        self._reported=True
         selections=[e for e in self.selections if e['stage']=='application' and e['target_id']!='next']
         self._event('demo_summary',event_ns=now_ns,reason=reason,completed=reason=='completed',
                     score=self.score,selection_count=len(selections),
@@ -153,9 +158,52 @@ class DemoRun:
         if self.pending is not None:
             # Unexpected interruption cannot certify a full undo observation window.
             if undo or now_ns-self.pending['event_ns']>self.options.undo_ms*1e6:self._confirm(now_ns,undo=undo)
-        if self.phase!='finished' or undo:self._summary(now_ns,reason)
+        if not self._reported or undo:self._summary(now_ns,reason)
         self.phase='closed';self.reason=reason;self._configure()
 
     def drain_events(self):
         result,self.events=self.events,[]
         return result
+
+
+def validate_demo_event(kind,fields):
+    """Only known target IDs and numeric results; never communication text."""
+    for key in ('run_id','selection_id'):
+        if key=='selection_id' and kind!='demo_selection':continue
+        value=fields.get(key)
+        if not isinstance(value,str) or len(value)!=32 or any(c not in '0123456789abcdef' for c in value):
+            raise ValueError('Demo '+key+' 必须为32位十六进制编号')
+    if fields.get('app') not in {'board','game'} or fields.get('group') not in {'B','C'}:raise ValueError('Demo 应用或分组无效')
+    event_ns=fields.get('event_ns')
+    if isinstance(event_ns,bool) or not isinstance(event_ns,Integral) or event_ns<0:raise ValueError('Demo event_ns 无效')
+    if kind=='demo_selection':
+        action=fields.get('action')
+        if action not in {'triggered','confirmed','undo'}:raise ValueError('Demo 动作无效')
+        required={'run_id','app','group','event_ns','selection_id','action','false_activation'}
+        if action=='triggered':required|={'target_id','target','stage','dwell_ms','selection_ms','reaction_ms','capture_ns','scored','hit_expand_ratio'}
+        if set(fields)!=required:raise ValueError('Demo 动作字段不完整或包含未允许的数据')
+        if action=='triggered':
+            if fields.get('target_id') not in {'0','1','2','3','4','5','practice','next'}:raise ValueError('Demo 目标无效')
+            if fields.get('stage') not in {'practice','application'}:raise ValueError('Demo 阶段无效')
+            point=fields.get('target')
+            if not isinstance(point,(list,tuple)) or len(point)!=2 or any(not 0<=finite(v,'target')<=1 for v in point):raise ValueError('Demo target 必须为屏幕归一化坐标')
+            for name in ('dwell_ms','selection_ms','hit_expand_ratio'):
+                if finite(fields.get(name),name)<0:raise ValueError('Demo 时长/比例必须非负')
+            value=fields.get('reaction_ms')
+            if value is not None and finite(value,'reaction_ms')<0:raise ValueError('Demo reaction_ms 无效')
+            capture=fields.get('capture_ns')
+            if isinstance(capture,bool) or not isinstance(capture,Integral) or not 0<=capture<=event_ns:raise ValueError('Demo capture_ns 无效')
+            if fields.get('false_activation') is not None or type(fields.get('scored')) is not bool:raise ValueError('Demo 触发尚待确认')
+        elif fields.get('false_activation') is not (action=='undo'):raise ValueError('Demo 确认/撤销标记无效')
+    else:
+        if fields.get('reason') not in {'completed','escape','window_closed','fullscreen_exited','camera_paused','prediction_error',
+                                      'screen_changed','conditions_changed','overlay_closed','recording_failed'}:
+            raise ValueError('Demo 结束原因无效')
+        if type(fields.get('completed')) is not bool:raise ValueError('Demo completed 无效')
+        for name in ('score','selection_count','false_activation_count','pending_count','reaction_count'):
+            value=fields.get(name)
+            if isinstance(value,bool) or not isinstance(value,Integral) or value<0:raise ValueError('Demo 计数无效')
+        for name in ('mean_reaction_ms','mean_selection_ms','elapsed_ms','hit_expand_ratio'):
+            value=fields.get(name)
+            if value is None and name.startswith('mean_'):continue
+            if finite(value,name)<0:raise ValueError('Demo 时长/比例无效')

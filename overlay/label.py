@@ -34,6 +34,11 @@ class LabelVisibility:
         self._pending = None
         self._shown_at = clock()
         self._recovery_fade = None
+        self._persistent = False
+
+    def set_persistent(self,value):
+        self._persistent=bool(value)
+        self._shown_at=self._clock();self._recovery_fade=None
 
     @property
     def text(self):
@@ -86,7 +91,7 @@ class LabelVisibility:
         return True
 
     def _opacity_at(self, now):
-        if self._diagnostic or self._autohide_s == 0:
+        if self._persistent or self._diagnostic or self._autohide_s == 0:
             return 1.0
         if self._recovery_fade is not None:
             started, opacity = self._recovery_fade

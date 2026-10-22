@@ -27,6 +27,9 @@ class OverlaySession:
         self.display_revision=0;self.matrix_since_ns=0
         self._inference_task_active=False
         self.clicks=None
+        from .heatmap import HeatmapWorker
+        self.heatmap=HeatmapWorker(settings,screen,clock_ns=clock_ns)
+        self._matrix_revision=0;self._heatmap_start_pending=settings.heatmap.enabled
 
     def bind_clicks(self,*,start_task,exclude=None,own_handles=None,listener_factory=None):
         from .click_session import ClickSession
@@ -43,20 +46,49 @@ class OverlaySession:
 
     def _matrix(self,matrix):
         self.matrix_since_ns=self.clock_ns();self.display_revision+=1
-        if self.controller is not None:self.controller.set_matrix(matrix)
+        revision=self.controller.set_matrix(matrix) if self.controller is not None else None
+        self._matrix_revision=revision if type(revision) is int else self.display_revision
+        self._configure_heatmap()
         if self._saving is None:self.record_calibration()
 
     def record_calibration(self):
         if not self.recording.status()['active']:return
         self.recording.emit('calibration',action='applied' if self.profiles.matrix is not None else 'reset',
                             matrix=self.profiles.matrix,group='B' if self.profiles.matrix is not None else 'A',
-                            calibration_id=self.profiles.calibration_id,coordinate_system='full_screen_normalized',pipeline='python')
+                            calibration_id=self.profiles.calibration_id,coordinate_system='full_screen_normalized',pipeline='python',
+                            **self._calibration_metadata())
+
+    def _calibration_metadata(self):
+        radius=self.profiles.radius
+        measured=self.settings.geometry.measured
+        return dict(matrix_revision=self._matrix_revision,
+                    calibration_matched=self.profiles.profile is not None and self.profiles.profile.get('pipeline')=='python',
+                    error_radius_cm=(radius if radius is not None else self.settings.overlay.radius_cm) if measured else None,
+                    error_radius_source='matching_B_check' if measured and radius is not None else 'configured_cm' if measured else 'configured_logical_pixels')
+
+    def _configure_heatmap(self):
+        from gaze_core.heatmap import kernel_scale
+        meta=self._calibration_metadata();profile=self.profiles.profile
+        calibrated=profile is not None and profile.get('pipeline')=='python'
+        phase=dict(calibration_id=self.profiles.calibration_id,group='B' if calibrated else 'A',
+                   matrix_revision=self._matrix_revision,calibrated=calibrated,matrix=deepcopy(self.profiles.matrix),
+                   conditions_fingerprint=conditions_id(self.profiles.conditions) if self.profiles.conditions is not None else None)
+        self.heatmap.configure(dict(matrix=deepcopy(self.profiles.matrix),revision=self._matrix_revision,calibrated=calibrated,
+                              geometry=self.settings.geometry,phase=phase,
+                              kernel=kernel_scale(self.settings.geometry,(self.screen.width,self.screen.height),
+                                      meta['error_radius_cm'] or self.settings.overlay.radius_cm,
+                                      self.settings.overlay.fallback_radius_px,meta['error_radius_source'])))
+
+    def set_heatmap_enabled(self,enabled):
+        self._heatmap_start_pending=False
+        return self.heatmap.set_enabled(enabled)
 
     def sink(self,prediction):
         # Both receive numeric copies; overflow is explicit and never waits.
         self.recording.record_prediction(prediction)
         self.buffer.push(prediction)
         if self.clicks is not None:self.clicks.observe(prediction)
+        self.heatmap.observe(prediction)
 
     def metadata(self):
         snapshot=self._metadata_snapshot
@@ -140,7 +172,7 @@ class OverlaySession:
                                     calibration_id=saved['calibration_id'],coordinate_system='full_screen_normalized',
                                     estimated_distance_cm_median=saved['estimated_distance_cm_median'],
                                     estimated_distance_sample_count=saved['estimated_distance_sample_count'],
-                                    pipeline='python',conditions_fingerprint=conditions_id(self.profiles.conditions))
+                                    pipeline='python',conditions_fingerprint=conditions_id(self.profiles.conditions),**self._calibration_metadata())
                 self.recording.end_task(saved['task_id'],'completed')
                 self.notice('九点档案已保存；'+self.radius_text,False)
                 if self.clicks is not None:self.clicks.baseline_ready(self.profiles.profile)
@@ -150,7 +182,13 @@ class OverlaySession:
                 if self.clicks is not None and self.clicks.active:self.clicks.abort('profile_save_failed')
         if self.profiles.revision!=self._revision:
             self._revision=self.profiles.revision
+            self._configure_heatmap()
+            # Radius-only profile updates do not change the matrix revision,
+            # but their scale provenance still belongs in numeric recordings.
+            self.record_calibration()
             self.notice(self.profiles.reason+'；'+self.radius_text,False)
+        if self._heatmap_start_pending and self.profiles.conditions is not None and not self.profiles.busy:
+            self._heatmap_start_pending=False;self.heatmap.set_enabled(True)
 
     def start(self,kind,qscreen,*,window_factory=None):
         if self.active or self.profiles.busy:raise ValueError('已有任务或档案操作进行中')
@@ -170,9 +208,7 @@ class OverlaySession:
         if hasattr(self.controller,'clear_numeric_error'):self.controller.clear_numeric_error()
         self.task,self.task_window=runner,window
         window.completed.connect(self._completed);window.cancelled.connect(self._cancelled)
-        self.recording.emit('calibration',action='applied' if self.profiles.matrix is not None else 'reset',
-                            matrix=self.profiles.matrix,group='B' if self.profiles.matrix is not None else 'A',
-                            calibration_id=self.profiles.calibration_id,coordinate_system='full_screen_normalized',pipeline='python')
+        self.record_calibration()
         try:
             self._task_inference(True)
             runner.begin();window.open()
@@ -288,4 +324,4 @@ class OverlaySession:
         # Called by the lifecycle worker only after the camera/sink have drained.
         self._task_inference(False)
         if self.clicks is not None:self.clicks.close()
-        self.recording.close();self.profiles.close()
+        self.heatmap.close();self.recording.close();self.profiles.close()

@@ -7,12 +7,13 @@ from dataclasses import replace
 import io
 import signal
 import threading
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
 from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction,QImage
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QMessageBox as QtMessageBox
 
 from gaze_core.capture import Prediction
@@ -62,6 +63,7 @@ class Recording:
 class Profiles:
     def __init__(self):
         self.profile = None
+        self.conditions = {}
         self.busy = False
         self.mode = '未校准'
         self.closed = False
@@ -158,7 +160,7 @@ class Controller:
 
     def snapshot(self):
         return ControllerView(self.status, self.error, self.result, False,
-                              dict(device='cpu', device_name='synthetic CPU'),self.matrix_revision)
+                              dict(device='cpu', device_name='synthetic CPU',predicted_frames=self.sequence),self.matrix_revision)
 
 
 class Application(QObject):
@@ -181,7 +183,7 @@ class ControlsRuntimeTests(unittest.TestCase):
         cls.qt_app = QApplication.instance() or QApplication([])
         cls.qt_app.setQuitOnLastWindowClosed(False)
 
-    def exercise(self, scenario):
+    def exercise(self, scenario, *, heatmap=False,profile_seconds=None):
         clock = Clock()
         settings = load_settings(use_local=False)
         settings = replace(settings, geometry=replace(settings.geometry, width_cm=30., height_cm=20., measured=True))
@@ -200,10 +202,25 @@ class ControlsRuntimeTests(unittest.TestCase):
                                   panel=panel, menu=menu, controls=controls, window=window,
                                   tray=tray, timer=timer)
         qt_errors = []
+        heat_timers=[]
+        class HeatTimer(QTimer):
+            def __init__(self):super().__init__();heat_timers.append(self)
+        context.heat_timers=heat_timers
         old_signal = signal.getsignal(signal.SIGINT)
 
         def make_session(*args, **kwargs):
             context.session = Session(*args, **kwargs)
+            if heatmap:
+                context.heatmap=Mock(enabled=False)
+                context.heat_state=dict(enabled=False,uncalibrated=False,error=None,label='热力图：关闭',
+                                        exporting=False,export_file=None,latest=None,processed=0)
+                context.heatmap.state.side_effect=lambda:dict(context.heat_state)
+                def enable(value):
+                    context.heat_state.update(enabled=value,label='热力图：'+('开启' if value else '关闭'))
+                    context.heatmap.enabled=value;return True
+                context.heatmap.set_enabled.side_effect=enable
+                context.session.heatmap=context.heatmap
+                context.session.set_heatmap_enabled=context.heatmap.set_enabled
             return context.session
 
         def make_controller(received_settings, *, result_sink, shutdown):
@@ -225,6 +242,7 @@ class ControlsRuntimeTests(unittest.TestCase):
                  patch('overlay.hotkeys.Hotkeys') as hotkeys, \
                  patch('overlay.runtime.OverlayController', side_effect=make_controller), \
                  patch('overlay.runtime.time.perf_counter_ns', side_effect=clock.ns), \
+                 patch('overlay.runtime.QTimer',HeatTimer), \
                  patch('PySide6.QtGui.QDesktopServices.openUrl', return_value=True) as open_web, \
                  patch('PySide6.QtWidgets.QFileDialog.getOpenFileName', return_value=('', '')) as select_web, \
                  patch('overlay.runtime.QMessageBox') as message_box, \
@@ -235,7 +253,7 @@ class ControlsRuntimeTests(unittest.TestCase):
                 hotkeys.return_value.status={}
                 message_box.StandardButton = QtMessageBox.StandardButton
                 self.assertEqual(run_camera_overlay(app, window, tray, actions['pause'], actions['quit'],
-                                                    timer, settings, lambda: None, controls=controls), 0)
+                                                    timer, settings, lambda: None, controls=controls,profile_seconds=profile_seconds), 0)
             self.assertFalse(qt_errors, qt_errors)
             self.assertTrue(context.controller.closed.is_set())
             self.assertTrue(context.session.closed)
@@ -257,6 +275,45 @@ class ControlsRuntimeTests(unittest.TestCase):
         if now is not None: context.clock.now = now
         if publish and context.controller.status == 'running': context.controller.publish()
         context.timer.timeout.emit()
+
+    def test_heatmap_runtime_binds_controls_low_rate_timer_and_preserves_existing_tasks(self):
+        def scenario(c):
+            self.assertEqual(len(c.heat_timers),1);timer=c.heat_timers[0]
+            self.assertEqual(timer.interval(),250)
+            c.actions['heatmap_toggle'].trigger();timer.timeout.emit()
+            self.assertTrue(c.actions['heatmap_toggle'].isChecked());self.assertIn('开启',c.panel.heatmap.text())
+            c.actions['heatmap_clear'].trigger();c.heatmap.clear.assert_called_once()
+            c.heat_state['latest']=dict(version=1,rgba=__import__('numpy').zeros((8,10,4),dtype='uint8'))
+            timer.timeout.emit();c.actions['heatmap_export'].trigger();c.heatmap.export.assert_called_once()
+            with patch.object(c.window,'set_heatmap',wraps=c.window.set_heatmap) as image:
+                for _ in range(20):self.tick(c,publish=False)
+                image.assert_not_called()  # The original tick never polls heatmap grids.
+            self.tick(c);c.actions['calibrate'].trigger()
+            self.assertEqual(c.session.start_calls,[('calibrate',c.controls.screen)])
+            c.session.cancel();self.tick(c);c.actions['pause'].trigger()
+            c.heatmap.interrupt.assert_called()
+            c.heat_state.update(enabled=False,error='热力图测试失败',label='热力图测试失败')
+            timer.timeout.emit();self.assertIn('热力图测试失败',c.panel.notice.text())
+            self.assertFalse(c.actions['heatmap_toggle'].isChecked())
+        self.exercise(scenario,heatmap=True)
+
+    def test_profile_includes_heatmap_callbacks_and_actual_count_rate_without_config_substitution(self):
+        from overlay.profiling import CallbackProfiler
+        profiles=[]
+        with tempfile.TemporaryDirectory() as directory:
+            def factory(*args,**kwargs):
+                value=CallbackProfiler(*args,**kwargs,directory=directory,stream=io.StringIO());profiles.append(value);return value
+            def scenario(c):
+                self.tick(c,1.)
+                c.heat_timers[0].timeout.emit()
+                c.window.show();self.qt_app.processEvents()
+                image=QImage(c.window.size(),QImage.Format.Format_ARGB32_Premultiplied);image.fill(0);c.window.render(image)
+                self.tick(c,2.)
+            with patch('overlay.profiling.CallbackProfiler',side_effect=factory):self.exercise(scenario,heatmap=True,profile_seconds=1.)
+            summary=profiles[0].summary
+            self.assertTrue({'tick','heatmap_update','heatmap_paint'}<=set(summary['callbacks']))
+            rate=summary['context']['profile_window_inference']
+            self.assertEqual(rate['predictions'],1);self.assertEqual(rate['seconds'],1.);self.assertEqual(rate['fps'],1.)
 
     def test_queued_panel_hotkey_fronts_hidden_and_visible_panel_each_time(self):
         from overlay.platforms import present_panel

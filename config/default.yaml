@@ -126,13 +126,17 @@ overlay:
     calibrate: Ctrl+Alt+C
     panel: Ctrl+Alt+O
     heatmap_toggle: Ctrl+Alt+H
+    heatmap_view: Ctrl+Alt+V
 
 # M6: screen regions only, never content. All heatmap work is off the GUI thread.
 heatmap:
   enabled: false
   allow_uncalibrated: false
   grid_width: 160  # Height follows the full logical screen aspect ratio.
-  update_hz: 4.0  # Try 2.0 if WindowServer CPU/GPU costs are high.
+  update_hz: 4.0  # Background idle/gap checks only; legacy setting, never a redraw rate.
+  display_mode: on_demand  # Accumulate without drawing; continuous shows on enable.
+  view_update_hz: 1.0  # Viewing rate for BOTH modes; no heatmap repaint while hidden.
+  alpha_threshold: 0.15  # Below 15% of the current maximum: completely transparent.
   half_life_s: 60.0
   max_opacity: 0.4  # Hard ceiling; the gaze ring is painted above the heatmap.
   queue_size: 256

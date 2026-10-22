@@ -160,7 +160,10 @@ class HeatmapSettings:
     enabled: bool = False
     allow_uncalibrated: bool = False
     grid_width: int = 160
-    update_hz: float = 4.0
+    update_hz: float = 4.0  # Background idle checks, independent of viewing.
+    display_mode: str = 'on_demand'
+    view_update_hz: float = 1.0
+    alpha_threshold: float = .15
     half_life_s: float = 60.0
     max_opacity: float = .4
     queue_size: int = 256
@@ -174,9 +177,12 @@ class HeatmapSettings:
         for key in ('grid_width','queue_size'):
             if type(getattr(self,key)) is not int or getattr(self,key)<1:raise ValueError('heatmap.'+key+' 必须为正整数')
         if self.grid_width>1024:raise ValueError('heatmap.grid_width 不得超过 1024')
-        for key in ('update_hz','half_life_s','max_opacity','target_neighborhood_sigma'):
+        for key in ('update_hz','view_update_hz','half_life_s','max_opacity','target_neighborhood_sigma'):
             finite(getattr(self,key),'heatmap.'+key,positive=True)
-        if self.update_hz>5:raise ValueError('heatmap.update_hz 不得超过 5；可降为 2')
+        if self.update_hz>5:raise ValueError('heatmap.update_hz 不得超过 5')
+        if self.view_update_hz>5:raise ValueError('heatmap.view_update_hz 不得超过 5')
+        if self.display_mode not in ('on_demand','continuous'):raise ValueError('heatmap.display_mode 必须为 on_demand / continuous')
+        if not 0<=finite(self.alpha_threshold,'heatmap.alpha_threshold')<1:raise ValueError('heatmap.alpha_threshold 必须在 [0,1)')
         if self.max_opacity>.4:raise ValueError('heatmap.max_opacity 不得超过 0.4')
         if self.regions is not None:
             if not isinstance(self.regions,(list,tuple)) or not self.regions:raise ValueError('heatmap.regions 必须为非空矩形数组或 null')
@@ -219,7 +225,7 @@ class OverlaySettings:
     web_url: str = 'http://127.0.0.1:8765'
     panel_on_start: str = 'auto'
     calibration_redo_cm: float = 2.0
-    hotkeys: dict = field(default_factory=lambda: dict(toggle='Ctrl+Alt+G', pause='Ctrl+Alt+P', calibrate='Ctrl+Alt+C', panel='Ctrl+Alt+O', heatmap_toggle='Ctrl+Alt+H'))
+    hotkeys: dict = field(default_factory=lambda: dict(toggle='Ctrl+Alt+G', pause='Ctrl+Alt+P', calibrate='Ctrl+Alt+C', panel='Ctrl+Alt+O', heatmap_toggle='Ctrl+Alt+H',heatmap_view='Ctrl+Alt+V'))
 
     def __post_init__(self):
         import re
@@ -244,8 +250,8 @@ class OverlaySettings:
         if self.panel_on_start not in ('auto','always','never'):
             raise ValueError('overlay.panel_on_start 必须为 auto / always / never')
         finite(self.calibration_redo_cm,'overlay.calibration_redo_cm',positive=True)
-        if not isinstance(self.hotkeys,dict) or not {'toggle','pause','calibrate','panel'}<=set(self.hotkeys) or set(self.hotkeys)-{'toggle','pause','calibrate','panel','heatmap_toggle'} or any(not isinstance(v,str) for v in self.hotkeys.values()):
-            raise ValueError('overlay.hotkeys 必须包含 toggle / pause / calibrate / panel，可加 heatmap_toggle；空字符串禁用该项')
+        if not isinstance(self.hotkeys,dict) or not {'toggle','pause','calibrate','panel'}<=set(self.hotkeys) or set(self.hotkeys)-{'toggle','pause','calibrate','panel','heatmap_toggle','heatmap_view'} or any(not isinstance(v,str) for v in self.hotkeys.values()):
+            raise ValueError('overlay.hotkeys 必须包含 toggle / pause / calibrate / panel，可加 heatmap_toggle / heatmap_view；空字符串禁用该项')
         from urllib.parse import urlsplit
         url=urlsplit(self.web_url)
         if url.scheme!='http' or url.hostname not in {'127.0.0.1','localhost','::1'}:

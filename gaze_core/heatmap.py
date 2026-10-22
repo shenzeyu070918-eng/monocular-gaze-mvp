@@ -145,7 +145,9 @@ class HeatmapAccumulator:
                     half_life_s=self.options.half_life_s if self.decay else None,
                     unit='decay_weighted_seconds_per_cell' if self.decay else 'seconds_per_cell',
                     phases=deepcopy(self.phases),ongoing_fixation=preview is not None,
-                    current_context=deepcopy(phase),current_kernel=deepcopy(scale),notice=NOTICE)
+                    current_context=deepcopy(phase),current_kernel=deepcopy(scale),notice=NOTICE,
+                    visualization=dict(palette='transparent_yellow_red',normalization='current_grid_max',
+                                       alpha_threshold=self.options.alpha_threshold,max_opacity=self.options.max_opacity))
 
 
 class HeatmapStream:
@@ -186,24 +188,42 @@ class HeatmapStream:
         self.preview=result['current_fixation']
         if result['velocity_basis']!='angular':self.fallback_frames+=1
 
-    def snapshot(self,now_ns):
+    def expire(self,now_ns):
         # No result can extend a fixation beyond its last actual capture.
         if self.last_ns is not None and (now_ns-self.last_ns)/1e6>self.detector.settings.max_gap_ms:self.interrupt()
+
+    def snapshot(self,now_ns):
+        self.expire(now_ns)
         result=self.accumulator.snapshot((now_ns-self.start_ns)/1e9,preview=self.preview,
                  scale=None if self.context is None else self.context['kernel'],phase=None if self.context is None else self.context['phase'])
         result.update(skipped=dict(self.skipped),fallback_frames=self.fallback_frames)
         return result
 
 
-def rgba_grid(grid,max_opacity):
-    """Only synthetic density -> RGBA; never accepts any desktop image."""
+def kernel_description(scale):
+    if scale is None:return '核尺度 sigma：等待相机条件'
+    if scale['sigma_cm'] is not None:
+        value=f"{scale['sigma_cm']:.3f} cm"
+        source='最近匹配 B 核对平均误差' if scale['source']=='matching_B_check' else '配置示意值（非实测精度）'
+    else:
+        value=f"{scale['sigma_px']:.3f} 逻辑像素";source='配置示意值（屏幕未实测）'
+    return '核尺度 sigma = '+value+' · 来源：'+source
+
+
+def rgba_grid(grid,max_opacity,alpha_threshold=.15):
+    """Relative density -> transparent yellow/red. No dark or cool low end.
+
+    Only display normalization changes; numeric duration/decay stays untouched.
+    Uniform scaling of an entire grid keeps relative colors unchanged.
+    """
+    opacity=finite(max_opacity,'max_opacity',positive=True)
+    threshold=finite(alpha_threshold,'alpha_threshold')
+    if opacity>.4 or not 0<=threshold<1:raise ValueError('热图不透明度不得超过0.4，透明阈值必须在[0,1)')
     grid=np.asarray(grid,float);peak=float(grid.max()) if grid.size else 0.
-    value=np.zeros_like(grid) if peak<=0 else np.sqrt(np.clip(grid/peak,0,1))
-    # Fixed cool-to-warm scale; alpha is absolute in duration so decay remains visible.
+    if not np.isfinite(grid).all() or (grid<0).any():raise ValueError('热图必须是非负有限数值')
+    value=np.zeros_like(grid) if peak<=0 else np.clip(grid/peak,0,1)
+    strength=np.clip((value-threshold)/(1-threshold),0,1)
     rgba=np.empty((*grid.shape,4),np.uint8)
-    rgba[...,0]=(255*value).astype(np.uint8);rgba[...,1]=(200*(1-value)+40).astype(np.uint8)
-    rgba[...,2]=(255*(1-value)).astype(np.uint8)
-    # Alpha uses grid mass in seconds, independent of instantaneous peak normalization.
-    opacity=max_opacity*(-np.expm1(-np.maximum(grid,0)*grid.size))
-    rgba[...,3]=np.minimum(255*max_opacity,255*opacity).astype(np.uint8)
+    rgba[...,0]=255;rgba[...,1]=np.rint(255*(1-strength)).astype(np.uint8);rgba[...,2]=0
+    rgba[...,3]=np.floor(255*opacity*strength).astype(np.uint8)
     return rgba

@@ -19,7 +19,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
     closing=False;shutdown_requested=False;screen_changed=False;last_error=None;error_box=None
     paused_requested=False;session=None;display_revision=0;restore_visible=True;hotkeys=None
     painted=None;radius_key=object();radii=None;ui_values={}
-    clicks=None;own_windows=None;heatmap=None;heat_timer=None;heat_error=None
+    clicks=None;own_windows=None;heatmap=None;heat_timer=None;heat_error=None;heatmap_rendered=False
 
     def update(widget,method,value):
         key=(widget,method)
@@ -196,7 +196,14 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
                 if not session.set_heatmap_enabled(bool(checked)):
                     actions['heatmap_toggle'].setChecked(False)
                     notice(heatmap.state()['error'] or '热力图未开启',True)
+                heatmap_update()
             actions.connect('heatmap_toggle',toggle_heatmap)
+            def view_heatmap(checked):
+                if not session.set_heatmap_viewing(bool(checked)):
+                    actions['heatmap_view'].setChecked(False)
+                    notice(heatmap.state()['error'] or '热力图暂不能查看',True)
+                heatmap_update()  # Hide immediately; first fresh image arrives at view rate.
+            actions.connect('heatmap_view',view_heatmap)
             actions.connect('heatmap_clear',lambda:heatmap.clear())
             actions.connect('heatmap_export',lambda:heatmap.export())
         from .hotkeys import Hotkeys
@@ -211,17 +218,24 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         if failures:notice('系统热键部分注册失败：'+'；'.join(failures),True)
 
     def heatmap_update():
-        nonlocal heat_error
+        nonlocal heat_error,heatmap_rendered
         if heatmap is None:return
         state=heatmap.state()
-        window.set_heatmap(state['latest'],enabled=state['enabled'] and not shutdown_requested and not screen_changed,
-                           uncalibrated=state['uncalibrated'])
+        viewing=state['enabled'] and state['viewing'] and not shutdown_requested and not screen_changed
+        if viewing and state['latest'] is not None:
+            window.set_heatmap(state['latest'],enabled=True,uncalibrated=state['uncalibrated']);heatmap_rendered=True
+        elif heatmap_rendered:
+            window.set_heatmap(None,enabled=False);heatmap_rendered=False
         if controls is not None:
             update(panel.heatmap,'setText',state['label'])
+            update(panel.heatmap_sigma,'setText',state['kernel_text'])
             update(panel.heatmap,'setStyleSheet','color: #b42318' if state['error'] else '')
             if actions['heatmap_toggle'].isChecked()!=state['enabled']:actions['heatmap_toggle'].setChecked(state['enabled'])
+            if actions['heatmap_view'].isChecked()!=state['viewing']:actions['heatmap_view'].setChecked(state['viewing'])
+            update(actions['heatmap_view'],'setText','隐藏热力图' if state['viewing'] else '查看热力图')
+            update(actions['heatmap_view'],'setEnabled',state['enabled'] and not shutdown_requested and not screen_changed)
             for name in ('heatmap_toggle','heatmap_clear'):update(actions[name],'setEnabled',not shutdown_requested and not screen_changed)
-            update(actions['heatmap_export'],'setEnabled',state['latest'] is not None and not state['exporting'] and not shutdown_requested)
+            update(actions['heatmap_export'],'setEnabled',state['has_session'] and not state['exporting'] and not shutdown_requested)
         if state['error'] and state['error']!=heat_error:
             heat_error=state['error'];notice(state['error'],True)
 
@@ -345,7 +359,9 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
                         predicted_frames=report.get('predicted_frames'),valid_predictions=report.get('valid_predictions'),
                         camera=asdict(settings.camera),refresh_ms=settings.overlay.refresh_ms,
                         profile_loaded=session is not None and session.profiles.profile is not None,
-                        heatmap_enabled=heatmap is not None and heatmap.enabled,heatmap_update_hz=settings.heatmap.update_hz,
+                        heatmap_enabled=heatmap is not None and heatmap.enabled,heatmap_viewing=heatmap is not None and heatmap.viewing,
+                        heatmap_display_mode=settings.heatmap.display_mode,heatmap_update_hz=settings.heatmap.view_update_hz,
+                        heatmap_background_update_hz=settings.heatmap.update_hz,heatmap_alpha_threshold=settings.heatmap.alpha_threshold,
                         profile_window_inference=dict(predictions=count,seconds=elapsed,fps=rate,
                                       definition='剖析窗口内实际推理完成数/单调时钟秒，含无效结果；不是配置上限或摄像头采集 fps。'))
         profiler=CallbackProfiler(profile_seconds,ready=ready,context=context)
@@ -356,7 +372,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         heatmap_callback=profiler.wrap(heatmap_update,'heatmap_update')
         window._paint_heatmap=profiler.wrap(original_paint,'heatmap_paint')
     if heatmap is not None:
-        heat_timer=QTimer();heat_timer.setInterval(round(1000/settings.heatmap.update_hz))
+        heat_timer=QTimer();heat_timer.setInterval(round(1000/settings.heatmap.view_update_hz))
         heat_timer.timeout.connect(heatmap_callback);heat_timer.start()
         heatmap_update()
     timer.timeout.connect(timer_tick)

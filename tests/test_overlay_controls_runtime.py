@@ -211,16 +211,22 @@ class ControlsRuntimeTests(unittest.TestCase):
         def make_session(*args, **kwargs):
             context.session = Session(*args, **kwargs)
             if heatmap:
-                context.heatmap=Mock(enabled=False)
-                context.heat_state=dict(enabled=False,uncalibrated=False,error=None,label='热力图：关闭',
-                                        exporting=False,export_file=None,latest=None,processed=0)
+                context.heatmap=Mock(enabled=False,viewing=False)
+                context.heat_state=dict(enabled=False,viewing=False,uncalibrated=False,error=None,label='热力图：关闭',
+                                        exporting=False,export_file=None,latest=None,processed=0,has_session=False,
+                                        kernel_text='核尺度 sigma = 2.000 cm · 来源：最近匹配 B 核对平均误差')
                 context.heatmap.state.side_effect=lambda:dict(context.heat_state)
                 def enable(value):
-                    context.heat_state.update(enabled=value,label='热力图：'+('开启' if value else '关闭'))
-                    context.heatmap.enabled=value;return True
+                    context.heat_state.update(enabled=value,viewing=False,has_session=True,
+                                              label='热力图：'+('开启（后台累加）' if value else '关闭'))
+                    context.heatmap.enabled=value;context.heatmap.viewing=False;return True
+                def view(value):
+                    context.heat_state['viewing']=value;context.heatmap.viewing=value;return True
                 context.heatmap.set_enabled.side_effect=enable
+                context.heatmap.set_viewing.side_effect=view
                 context.session.heatmap=context.heatmap
                 context.session.set_heatmap_enabled=context.heatmap.set_enabled
+                context.session.set_heatmap_viewing=context.heatmap.set_viewing
             return context.session
 
         def make_controller(received_settings, *, result_sink, shutdown):
@@ -279,12 +285,30 @@ class ControlsRuntimeTests(unittest.TestCase):
     def test_heatmap_runtime_binds_controls_low_rate_timer_and_preserves_existing_tasks(self):
         def scenario(c):
             self.assertEqual(len(c.heat_timers),1);timer=c.heat_timers[0]
-            self.assertEqual(timer.interval(),250)
+            self.assertEqual(timer.interval(),1000)
             c.actions['heatmap_toggle'].trigger();timer.timeout.emit()
             self.assertTrue(c.actions['heatmap_toggle'].isChecked());self.assertIn('开启',c.panel.heatmap.text())
+            self.assertFalse(c.actions['heatmap_view'].isChecked())
+            self.assertIn('2.000 cm',c.panel.heatmap_sigma.text())
+            self.assertIn('最近匹配 B',c.panel.heatmap_sigma.text())
             c.actions['heatmap_clear'].trigger();c.heatmap.clear.assert_called_once()
-            c.heat_state['latest']=dict(version=1,rgba=__import__('numpy').zeros((8,10,4),dtype='uint8'))
-            timer.timeout.emit();c.actions['heatmap_export'].trigger();c.heatmap.export.assert_called_once()
+            # Hidden accumulation exports even though it has never produced an image.
+            c.actions['heatmap_export'].trigger();c.heatmap.export.assert_called_once()
+            with patch.object(c.window,'set_heatmap',wraps=c.window.set_heatmap) as image, \
+                 patch.object(c.window,'update',wraps=c.window.update) as repaint:
+                for version in range(1,5):
+                    c.heat_state['latest']=dict(version=version,rgba=__import__('numpy').zeros((8,10,4),dtype='uint8'))
+                    timer.timeout.emit()
+                image.assert_not_called();repaint.assert_not_called()
+                c.hotkey_dispatch('heatmap_view');self.qt_app.processEvents()
+                self.assertTrue(c.actions['heatmap_view'].isChecked())
+                self.assertTrue(c.window._heatmap_enabled)
+                image.reset_mock();repaint.reset_mock()
+                c.actions['heatmap_view'].trigger()
+                self.assertEqual(image.call_count,1);self.assertEqual(repaint.call_count,1)
+                image.reset_mock();repaint.reset_mock()
+                for _ in range(4):timer.timeout.emit()
+                image.assert_not_called();repaint.assert_not_called()
             with patch.object(c.window,'set_heatmap',wraps=c.window.set_heatmap) as image:
                 for _ in range(20):self.tick(c,publish=False)
                 image.assert_not_called()  # The original tick never polls heatmap grids.
@@ -305,6 +329,9 @@ class ControlsRuntimeTests(unittest.TestCase):
                 value=CallbackProfiler(*args,**kwargs,directory=directory,stream=io.StringIO());profiles.append(value);return value
             def scenario(c):
                 self.tick(c,1.)
+                c.actions['heatmap_toggle'].trigger()
+                c.heat_state['latest']=dict(version=1,rgba=__import__('numpy').zeros((8,10,4),dtype='uint8'))
+                c.actions['heatmap_view'].trigger()
                 c.heat_timers[0].timeout.emit()
                 c.window.show();self.qt_app.processEvents()
                 image=QImage(c.window.size(),QImage.Format.Format_ARGB32_Premultiplied);image.fill(0);c.window.render(image)

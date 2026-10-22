@@ -36,6 +36,24 @@ def kernel_scale(geometry, screen_size, radius_cm, fallback_radius_px, source):
                 source='configured_logical_pixels',definition='sigma = illustrative_ring_radius_px')
 
 
+def heatmap_position(center,scale):
+    """Shared live/offline *heatmap-only* projection; never alter raw/I-VT data.
+
+    Distance to the nearest point of the screen rectangle is Euclidean in cm
+    (or logical pixels): hypot(dx/sigma_x, dy/sigma_y) <= 1. Thus a diagonal
+    corner error cannot pass merely because each individual axis is < sigma.
+    The tolerance is exactly the existing kernel's sigma, with no new radius.
+    """
+    x,y=[finite(v,'center') for v in center]
+    sx,sy=[finite(scale[k],k,positive=True) for k in ('sigma_x','sigma_y')]
+    nearest=[min(1.,max(0.,x)),min(1.,max(0.,y))]
+    distance=math.hypot((x-nearest[0])/sx,(y-nearest[1])/sy)
+    if distance==0:return nearest,'inside'
+    # Include the exact boundary despite floating point representation error.
+    if distance<=1 or math.isclose(distance,1.,rel_tol=1e-12,abs_tol=1e-12):return nearest,'edge_clamped'
+    return None,'outside'
+
+
 class RegionStatistics:
     def __init__(self,regions=None):
         self.regions=deepcopy(regions) if regions is not None else [
@@ -70,12 +88,13 @@ class HeatmapAccumulator:
         if height>4096:raise ValueError('热力图网格高度过大，请检查屏幕比例')
         self.x,self.y=np.meshgrid((np.arange(width)+.5)/width,(np.arange(height)+.5)/height)
         self.total=np.zeros((height,width),float);self.faded=self.total.copy();self.at_s=start_s
-        self.regions=RegionStatistics(options.regions);self.outside_s=0.;self.segment_count=0
+        self.regions=RegionStatistics(options.regions);self.outside_s=0.;self.edge_clamped_s=0.;self.segment_count=0
         self.phases=[];self._phase_key=None
 
     def kernel(self,center,scale):
-        x,y=[finite(v,'center') for v in center]
-        if not 0<=x<=1 or not 0<=y<=1:return None
+        point,_=heatmap_position(center,scale)
+        if point is None:return None
+        x,y=point
         # Normalize visible Gaussian mass: edge fixations retain their duration.
         exponent=-.5*(((self.x-x)/scale['sigma_x'])**2+((self.y-y)/scale['sigma_y'])**2)
         exponent-=exponent.max();weights=np.exp(exponent)
@@ -104,19 +123,24 @@ class HeatmapAccumulator:
         if kernel is None:
             self.outside_s+=end-start;self.regions.interrupt();return
         self.total+=kernel*(end-start);self.faded+=kernel*self._weight(segment,self.at_s)
-        self.regions.add(segment,self.start_s);self.segment_count+=1
+        point,placement=heatmap_position(segment['center'],scale)
+        if placement=='edge_clamped':self.edge_clamped_s+=end-start
+        self.regions.add(dict(segment,center=point),self.start_s);self.segment_count+=1
 
     def snapshot(self,now_s,*,preview=None,scale=None,phase=None):
         self._advance(now_s)
         grid=(self.faded if self.decay else self.total).copy();total=self.total.copy()
-        regions=self.regions;outside=self.outside_s;count=self.segment_count
+        regions=self.regions;outside=self.outside_s;clamped=self.edge_clamped_s;count=self.segment_count
         if preview is not None:
             kernel=self.kernel(preview['center'],scale)
             if kernel is not None:
                 grid+=kernel*self._weight(preview,self.at_s);total+=kernel*(preview['end_s']-preview['start_s'])
-                regions=deepcopy(regions);regions.add(preview,self.start_s);count+=1
+                point,placement=heatmap_position(preview['center'],scale)
+                regions=deepcopy(regions);regions.add(dict(preview,center=point),self.start_s);count+=1
+                if placement=='edge_clamped':clamped+=preview['end_s']-preview['start_s']
             else:outside+=preview['end_s']-preview['start_s']
-        return dict(grid=grid,total_grid=total,regions=regions.snapshot(),outside_s=outside,fixation_count=count,
+        return dict(grid=grid,total_grid=total,regions=regions.snapshot(),outside_s=outside,edge_clamped_s=clamped,fixation_count=count,
+                    edge_policy='中心到最近屏幕点的距离≤1 sigma时仅为热图夹回；超过1 sigma计outside_s。角落按厘米/逻辑像素欧氏距离判断。',
                     start_s=self.start_s,snapshot_s=self.at_s,decay=self.decay,
                     half_life_s=self.options.half_life_s if self.decay else None,
                     unit='decay_weighted_seconds_per_cell' if self.decay else 'seconds_per_cell',

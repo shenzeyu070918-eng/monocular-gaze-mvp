@@ -52,6 +52,13 @@ def export_heatmap(snapshot,*,directory=None):
     lines=['# 屏幕区域热力图','',NOTICE,'',f"网格：{snapshot['unit']}；区域统计：累计、不衰减。",'',
            '核尺度统一为 sigma = 圆环误差半径；具体阶段及来源见 regions.json。',
            '状态：'+('未校准' if uncalibrated else 'B 九点校准；匹配与历史对齐方式见 JSON。' if snapshot['fixation_count'] else '没有可用的校准注视段；原因见 JSON。'),'',
+           '## 边缘容差与屏幕外时长','',
+           '中心到屏幕最近点的距离不超过同源核尺度1 sigma时，仅在热图/区域统计中夹回边缘；超过才排除。原始坐标和注视检测不夹回。',
+           '以下时长累计、不衰减；夹回时长已计入有效注视，不能重复相加。','',
+           '| 分类 | 秒 |','|---|---:|',
+           f"| 边缘容差内夹回的时长（edge_clamped_s） | {snapshot.get('edge_clamped_s',0.):.6f} |",
+           f"| 真正屏幕外的时长（outside_s） | {snapshot['outside_s']:.6f} |",'',
+           '## 区域统计','',
            '| 区域 | 停留秒 | 占比 | 首次注视秒 | 进入次数 | 注视段数 |','|---|---:|---:|---:|---:|---:|']
     def f(v):return '不可用' if v is None else f'{v:.6f}'
     for row in snapshot['regions']['regions']:

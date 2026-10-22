@@ -1,4 +1,4 @@
-"""Offline, unfiltered click samples and seeded robust linear calibration.
+"""Shared unfiltered click samples and seeded robust linear calibration.
 
 This module knows nothing about windows, files, profiles or the display pipeline.
 Click targets are noisy training labels; independent check targets never enter fit.

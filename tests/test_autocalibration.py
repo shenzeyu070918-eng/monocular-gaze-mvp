@@ -31,7 +31,7 @@ class OnlineOffsetTests(unittest.TestCase):
         options=load_settings(use_local=False).autocal
         self.assertFalse(options.enabled);self.assertEqual(list(options.window_ms),[200,0])
         self.assertEqual(options.max_clicks,40)
-        for values in (dict(min_clicks=True),dict(max_clicks=2),dict(window_ms=[0,200]),dict(max_fps='mps'),dict(frame_history_s=.01)):
+        for values in (dict(min_clicks=True),dict(max_clicks=2),dict(min_occupied_cells=2),dict(window_ms=[0,200]),dict(max_fps='mps'),dict(frame_history_s=.01)):
             with self.subTest(values=values),self.assertRaises((ValueError,TypeError)):AutocalSettings(**values)
         inherited=AutocalSettings(max_fps='inference')
         self.assertEqual(inherited.inference_limit(load_settings(use_local=False).inference),15)
@@ -95,7 +95,37 @@ class OnlineOffsetTests(unittest.TestCase):
                     self.assertEqual(row['batch_accepted'],row['accepted'])
             self.assertEqual(result['scenarios']['b']['all']['training_frame_count'],len(trial.frames)//2)
             self.assertEqual(result['public_check']['frame_ids'],[r['frame_id'] for r in trial.check_frames])
+            self.assertEqual(result['scenarios']['a']['all']['mean_difference_vs_M4_original_all_cm'],0.)
             self.assertEqual(path.read_bytes(),before)
+
+    def test_default_decision_requires_both_counts_and_never_rounds_over_threshold(self):
+        from tools.replay_autocal import choose_defaults
+        from copy import deepcopy
+        base={key:{label:dict(C=dict(all=dict(mean_cm=2.,complete=True))) for label in ('all','recent_40')} for key in ('a','c')}
+        self.assertTrue(choose_defaults(base)['passed'])
+        base['c']['recent_40']['C']['all']['mean_cm']=2.151
+        self.assertFalse(choose_defaults(base)['passed'])
+        self.assertIsNone(choose_defaults(base)['max_fps'])
+        base['c']['recent_40']['C']['all']['mean_cm']=2.15
+        self.assertTrue(choose_defaults(base)['passed'])
+        base['c']['all']['C']['all']['complete']=False
+        self.assertFalse(choose_defaults(base)['passed'])
+
+    def test_unavailable_replay_is_reported_without_fabricated_C_or_fps(self):
+        from tools.replay_autocal import compare,save_report
+        from gaze_core.implicit_experiment import read_experiments
+        from test_implicit_experiment import recording
+        from unittest.mock import patch
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'synthetic.jsonl';recording(path)
+            trial=read_experiments(path)[0][0];trial.frames=[];trial.clicks=[]
+            result=compare(trial,small_settings(min_occupied_cells=3))
+            with patch('tools.replay_autocal.ROOT',Path(folder)):
+                report=save_report(result,Path(folder)/'data/empty')
+            self.assertIn('不可用',(report/'report.md').read_text())
+            self.assertFalse(result['decision']['passed'])
 
 
 if __name__=='__main__':unittest.main()

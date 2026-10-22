@@ -39,7 +39,7 @@ def simulate(trial,sampling,window,*,half=False,capacity=40):
     reference=None;error=None
     try:reference=fit_robust(selected,'offset',trial.geometry,sampling,seed=sampling.seed)
     except ValueError as exc:error=str(exc)
-    parity=(state['matrix'] is not None and reference is not None and summaries_match(state['matrix'],reference['matrix']))
+    parity=None if state['matrix'] is None or reference is None else summaries_match(state['matrix'],reference['matrix'])
     reference_score=None if reference is None else evaluate(trial.check_frames,trial.targets,trial.geometry,reference['matrix'])['groups']['B']
     offset_cm=None if state['offset_norm'] is None else [state['offset_norm'][0]*trial.geometry.width_cm,state['offset_norm'][1]*trial.geometry.height_cm]
     return dict(window_ms=list(window),downsample='alternate_capture_ns_sorted' if half else 'original',offset_cm=offset_cm,
@@ -50,25 +50,34 @@ def simulate(trial,sampling,window,*,half=False,capacity=40):
                 batch_accepted=batch['accepted_count'],batch_reasons=batch['primary_reason_counts'])
 
 
+def choose_defaults(rows):
+    differences={}
+    for label in ('all','recent_40'):
+        a=rows['a'][label]['C'];c=rows['c'][label]['C']
+        differences[label]=None if a is None or c is None or not a['all']['complete'] or not c['all']['complete'] or a['all']['mean_cm'] is None or c['all']['mean_cm'] is None else abs(c['all']['mean_cm']-a['all']['mean_cm'])
+    passed=all(v is not None and v<=.15 for v in differences.values())
+    return dict(rule='Both all and recent_40 must have abs(C_c.mean_cm-C_a.mean_cm) <= 0.15 cm; unavailable fails.',
+                threshold_cm=.15,differences_cm=differences,passed=passed,
+                window_ms=[300,0] if passed else [200,0],max_fps='inference' if passed else None)
+
+
 def compare(trial,sampling):
     rows={}
     for name,half,window in (('a',False,(200,0)),('b',True,(200,0)),('c',True,(300,0))):
         rows[name]={label:simulate(trial,sampling,window,half=half,capacity=capacity)
                     for label,capacity in (('all',max(10,len(trial.clicks))),('recent_40',40))}
-    differences={}
-    for label in ('all','recent_40'):
-        a=rows['a'][label]['C'];c=rows['c'][label]['C']
-        differences[label]=None if a is None or c is None or a['all']['mean_cm'] is None or c['all']['mean_cm'] is None else abs(c['all']['mean_cm']-a['all']['mean_cm'])
-    passed=all(v is not None and v<=.15 for v in differences.values())
+    reference=rows['a']['all']['C']
+    for scenarios in rows.values():
+        for row in scenarios.values():
+            row['mean_difference_vs_M4_original_all_cm']=(row['C']['all']['mean_cm']-reference['all']['mean_cm']
+                    if row['C'] is not None and reference is not None and row['C']['all']['mean_cm'] is not None and reference['all']['mean_cm'] is not None else None)
     return dict(input_file=trial.file,sha256=trial.digest,session_id=trial.session_id,
                 experiment_id=trial.experiment_id,conditions_fingerprint=trial.baseline.get('conditions_fingerprint'),
                 sampling=asdict(sampling),scenarios=rows,
                 baselines=evaluate(trial.check_frames,trial.targets,trial.geometry,trial.baseline['baseline_matrix']),
                 public_check=dict(task_id=trial.summary['task_id'],frame_ids=[f['frame_id'] for f in trial.check_frames],
                                   note='All six fits use the identical full original public check. Only training frames are thinned.'),
-                decision=dict(rule='Both all and recent_40 must have abs(C_c.mean_cm-C_a.mean_cm) <= 0.15 cm; unavailable fails.',
-                              threshold_cm=.15,differences_cm=differences,passed=passed,
-                              window_ms=[300,0] if passed else [200,0],max_fps='inference' if passed else None),
+                decision=choose_defaults(rows),
                 limitations='Single person, Mac, one historical session; no new live measurements, no test-set parameter scan beyond the predeclared comparison.')
 
 
@@ -81,12 +90,15 @@ def save_report(result,destination):
            '仅对训练帧按capture_ns排序隔帧丢弃；全部组合使用相同完整末尾核对。30/15为名义标签，实测帧率单列。','',
            '| 组合 | 口径 | 实际fps | 有效点击 | 使用内点 | 偏移cm x/y | C平均cm | C P90cm | 同样本一致 |',
            '|---|---|---:|---:|---:|---|---:|---:|---|']
+    def fmt(value,digits=9):return '不可用' if value is None else f'{value:.{digits}f}'
+    audits=[]
     for name,scenarios in result['scenarios'].items():
         for label,row in scenarios.items():
-            c=row['C'];score='不可用' if c is None else f"{c['all']['mean_cm']:.9f}"
-            p90='不可用' if c is None else f"{c['all']['p90_cm']:.9f}"
-            lines.append(f"| {name}: {row['window_ms']} | {label} | {row['actual_training_fps']:.6f} | {row['accepted']} | {row['used_count']} | {row['offset_cm']} | {score} | {p90} | {row['same_samples_match']} |")
-            lines+=['',f"{name}/{label} 剔除原因：`{row['reasons']}`；拟合状态：{row['fit_error']}。",'']
+            c=row['C'];score=fmt(None if c is None else c['all']['mean_cm'])
+            p90=fmt(None if c is None else c['all']['p90_cm'])
+            lines.append(f"| {name}: {row['window_ms']} | {label} | {fmt(row['actual_training_fps'],6)} | {row['accepted']} | {row['used_count']} | {row['offset_cm']} | {score} | {p90} | {row['same_samples_match']} |")
+            audits+=['',f"{name}/{label} 取样剔除原因：`{row['reasons']}`；滚动窗口候选{row['window_count']}，最终拟合离群{row['fit_outliers']}，内点{row['used_count']}；拟合状态：{row['fit_error']}。不足最少点击数时不提供C成绩。同样本相对M4批量offset的均值差：{fmt(row['mean_difference_vs_batch_cm'])} cm；相对M4原始全部点击的均值差：{fmt(row['mean_difference_vs_M4_original_all_cm'])} cm。",'']
+    lines+=audits
     lines+=['','## 预先固定的默认值判定','',result['decision']['rule'],'',
             json.dumps(result['decision'],ensure_ascii=False,indent=2),'',
             '有效点击、剔除及偏移包含个人数据，仅保留data/，不改输入录制或个人档案。','']

@@ -93,12 +93,14 @@ class OnlineOffset:
         return dict(seen=self.seen,accepted=self.accepted,reasons=dict(self.reasons),
                     rejected=self.seen-self.accepted-len(self.pending),pending=len(self.pending),
                     window_count=len(self.samples),used_count=0 if self.fit is None else self.fit['inlier_count'],
+                    fit_outliers=None if self.fit is None else self.fit['outlier_count'],
                     matrix=matrix,offset_norm=None if matrix is None else matrix[2],
                     occupied_cells=0 if self.fit is None else self.fit['inlier_coverage']['occupied_cells'],
                     fit_error=self.fit_error,revision=self.revision,updated_ns=self.updated_ns)
 
 
 def correction_matrix(offset):
-    values=np.asarray(offset,dtype=float)
+    from .devices import finite
+    values=np.asarray([finite(v,'offset_norm') for v in offset],dtype=float)
     if values.shape!=(2,) or not np.isfinite(values).all():raise ValueError('粗校准偏移必须为两个有限数值')
     return [[1.,0.],[0.,1.],values.tolist()]

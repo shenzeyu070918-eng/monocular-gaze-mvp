@@ -83,6 +83,9 @@ class OverlaySession:
         self._heatmap_start_pending=False
         return self.heatmap.set_enabled(enabled)
 
+    def set_heatmap_viewing(self,viewing):
+        return self.heatmap.set_viewing(viewing)
+
     def sink(self,prediction):
         # Both receive numeric copies; overflow is explicit and never waits.
         self.recording.record_prediction(prediction)

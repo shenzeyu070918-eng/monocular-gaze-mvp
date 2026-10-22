@@ -4,7 +4,7 @@ from dataclasses import replace
 import unittest
 import numpy as np
 from gaze_core.config import HeatmapSettings,ScreenGeometry,FixationSettings,load_settings
-from gaze_core.heatmap import HeatmapAccumulator,HeatmapStream,RegionStatistics,kernel_scale,rgba_grid,heatmap_position
+from gaze_core.heatmap import HeatmapAccumulator,HeatmapStream,RegionStatistics,kernel_scale,rgba_grid,heatmap_position,kernel_description
 
 GEOMETRY=ScreenGeometry(width_cm=30,height_cm=20,measured=True,top_cm=0.,focal_scale=1.)
 OPTIONS=HeatmapSettings(grid_width=60)
@@ -26,9 +26,13 @@ class HeatmapTests(unittest.TestCase):
         options=load_settings(use_local=False).heatmap
         self.assertEqual(options.half_life_s,60);self.assertEqual(options.max_opacity,.4)
         self.assertFalse(options.enabled);self.assertFalse(options.allow_uncalibrated)
+        self.assertEqual(options.display_mode,'on_demand');self.assertEqual(options.view_update_hz,1.)
+        self.assertEqual(options.alpha_threshold,.15)
         self.assertEqual(replace(options,update_hz=2).update_hz,2)
         for kwargs in (dict(max_opacity=.401),dict(max_opacity=float('nan')),dict(half_life_s=0),dict(grid_width=True),
-                       dict(update_hz=6),dict(queue_size=0),dict(allow_uncalibrated=1),
+                       dict(update_hz=6),dict(view_update_hz=0),dict(view_update_hz=6),dict(display_mode='other'),
+                       dict(alpha_threshold=-.1),dict(alpha_threshold=1),dict(alpha_threshold=True),dict(alpha_threshold=float('nan')),
+                       dict(queue_size=0),dict(allow_uncalibrated=1),
                        dict(regions=[dict(id='a',rect=[0,0,.7,1]),dict(id='b',rect=[.5,0,1,1])]),
                        dict(regions=[dict(id='a',rect=[0,0,1,1]),dict(id='a',rect=[0,0,1,1])])):
             with self.subTest(kwargs=kwargs),self.assertRaises(ValueError):HeatmapSettings(**kwargs)
@@ -39,6 +43,9 @@ class HeatmapTests(unittest.TestCase):
         logical=kernel_scale(replace(GEOMETRY,measured=False),(1200,800),999.,28.,'matching_B_check')
         self.assertEqual(logical['sigma_px'],28.);self.assertIsNone(logical['sigma_cm'])
         self.assertAlmostEqual(logical['sigma_x'],28/1200)
+        self.assertIn('2.000 cm',kernel_description(SCALE));self.assertIn('最近匹配 B 核对',kernel_description(SCALE))
+        self.assertIn('28.000 逻辑像素',kernel_description(logical));self.assertIn('配置示意值',kernel_description(logical))
+        self.assertIn('等待',kernel_description(None))
 
     def test_mass_conservation_edges_numpy_and_far_outside_is_not_clamped(self):
         acc=HeatmapAccumulator(OPTIONS,(1200,800))
@@ -171,12 +178,19 @@ class HeatmapTests(unittest.TestCase):
         self.assertAlmostEqual(snap['total_grid'].sum(),.14)
         self.assertFalse(snap['ongoing_fixation'])
 
-    def test_alpha_ceiling_and_decay_fades_instead_of_peak_renormalization(self):
-        grid=np.ones((5,5))*.01
-        first=rgba_grid(grid,.4);later=rgba_grid(grid/2,.4)
-        self.assertLessEqual(int(first[...,3].max()),102)
-        self.assertTrue(np.all(later[...,3]<first[...,3]))
-        self.assertTrue(np.all(rgba_grid(grid*0,.4)[...,3]==0))
+    def test_relative_alpha_threshold_warm_colors_and_ceiling_leave_numeric_data_unchanged(self):
+        grid=np.array([[0,.10,.149,.15,.2,.5,1.]],dtype=np.float64);before=grid.copy()
+        colors=rgba_grid(grid,.4,.15)
+        self.assertTrue(np.all(colors[0,:4,3]==0))
+        self.assertTrue(np.all(np.diff(colors[0,:,3].astype(int))>=0))
+        self.assertEqual(int(colors[...,3].max()),102)
+        self.assertTrue(np.all(colors[...,0]==255));self.assertTrue(np.all(colors[...,2]==0))
+        np.testing.assert_array_equal(colors[0,-1],[255,0,0,102])
+        self.assertGreater(int(colors[0,4,1]),200)  # yellow, no dark/cool low end
+        np.testing.assert_array_equal(rgba_grid(grid/2,.4,.15),colors)
+        np.testing.assert_array_equal(grid,before)
+        self.assertTrue(np.all(rgba_grid(grid*0,.4,.15)[...,3]==0))
+        self.assertTrue(np.all(rgba_grid(grid,.4,.6)[0,:6,3]==0))
 
 
 if __name__=='__main__':unittest.main()

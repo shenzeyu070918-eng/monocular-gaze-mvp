@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication
 
 from gaze_core.config import load_settings,OverlaySettings
 from gaze_core.capture import Prediction
-from gaze_core.heatmap import rgba_grid
+from gaze_core.heatmap_render import render_heatmap
 from overlay.heatmap import HeatmapWorker
 from overlay.mapping import ScreenRect
 from overlay.window import OverlayWindow
@@ -32,7 +32,7 @@ class HeatmapWorkerTests(unittest.TestCase):
 
     def worker(self,**kwargs):
         worker=HeatmapWorker(kwargs.pop('settings',self.settings),ScreenRect(0,0,1200,800),clock_ns=lambda:self.now,
-                             exporter=kwargs.pop('exporter',lambda snap,**kw:self.exported.append((snap,threading.current_thread().name)) or 'synthetic'),**kwargs)
+                             exporter=kwargs.pop('exporter',lambda snap,**kw:self.exported.append((snap,threading.current_thread().name)) or 'synthetic'),render_log=Mock(path=None,last=None),**kwargs)
         self.workers.append(worker);return worker
 
     def fence(self,worker):
@@ -132,10 +132,11 @@ class HeatmapWorkerTests(unittest.TestCase):
 
     def test_hidden_collection_does_not_snapshot_or_colorize_but_can_export(self):
         worker=self.worker();worker.configure(context());worker.set_enabled(True);self.fence(worker)
-        with patch('overlay.heatmap.rgba_grid',wraps=rgba_grid) as colors,patch.object(worker._stream,'snapshot',wraps=worker._stream.snapshot) as snapshot:
+        with patch('overlay.heatmap.render_heatmap',wraps=render_heatmap) as colors,patch.object(worker._stream,'snapshot',wraps=worker._stream.snapshot) as snapshot:
             for t in (0,.07,.14):self.feed(worker,t)
             self.now=150_000_000;self.fence(worker)
             colors.assert_not_called();snapshot.assert_not_called()
+            worker._render_log.record.assert_not_called()
             self.assertTrue(worker.enabled);self.assertFalse(worker.viewing)
             self.assertIsNone(worker.state()['latest'])
             self.assertIn('2.000 cm',worker.state()['kernel_text']);self.assertIn('最近匹配 B',worker.state()['kernel_text'])
@@ -148,7 +149,7 @@ class HeatmapWorkerTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 worker=self.worker(settings=replace(self.settings,heatmap=replace(OPTIONS,display_mode=mode)))
                 worker.configure(context())
-                with patch('overlay.heatmap.rgba_grid',wraps=rgba_grid) as colors:
+                with patch('overlay.heatmap.render_heatmap',wraps=render_heatmap) as colors:
                     self.now=0;worker.set_enabled(True);self.fence(worker)
                     self.assertEqual(worker.viewing,mode=='continuous')
                     self.assertEqual(colors.call_count,1 if mode=='continuous' else 0)

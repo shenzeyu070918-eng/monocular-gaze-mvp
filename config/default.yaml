@@ -95,6 +95,8 @@ display:
 
 # M3a: no personal profiles; radii are visual settings, NOT measured accuracy.
 overlay:
+  screen_debounce_ms: 300  # Coalesce projector topology signals; never query displays in the 16ms tick.
+  screen_retry_count: 3    # Allow Qt/AppKit/Quartz topology snapshots to settle before reporting unavailable.
   radius_cm: 2.0  # Illustrative fallback only; M3b will use a matching B check.
   fallback_radius_px: 28.0  # Logical pixels if physical screen size is not measured.
   opacity: 0.65
@@ -152,6 +154,8 @@ heatmap:
   display_mode: on_demand  # Accumulate without drawing; continuous shows on enable.
   view_update_hz: 1.0  # Viewing rate for BOTH modes; no heatmap repaint while hidden.
   alpha_threshold: 0.15  # Below threshold: transparent; threshold..2*threshold: smoothstep alpha fade.
+  render_scale: 0.5  # Interpolate FLOAT heat to half logical screen size before color/8-bit conversion.
+  dither_strength: 0.5  # Alpha LSB peak-to-peak (0 disables); subtle initial choice, Mac visual check pending.
   half_life_s: 60.0
   max_opacity: 0.4  # Hard ceiling; the gaze ring is painted above the heatmap.
   queue_size: 256

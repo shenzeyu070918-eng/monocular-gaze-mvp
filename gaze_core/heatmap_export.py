@@ -5,10 +5,12 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 import uuid
 import numpy as np
 from .config import ROOT
 from .heatmap import NOTICE,rgba_grid
+from .heatmap_render import render_heatmap
 
 
 def export_heatmap(snapshot,*,directory=None):
@@ -26,7 +28,6 @@ def export_heatmap(snapshot,*,directory=None):
     metadata={key:value for key,value in snapshot.items() if key not in ('grid','total_grid','rgba')}
     metadata.update(grid_width=width,grid_height=height,grid_sum=float(grid.sum()),
                     statistics_note='区域停留时间为累计、不衰减；网格单位见 unit。',notice=NOTICE)
-    (directory/'regions.json').write_text(json.dumps(metadata,ensure_ascii=False,indent=2,allow_nan=False)+'\n',encoding='utf-8')
     os.environ.setdefault('MPLCONFIGDIR',str(Path(tempfile.gettempdir())/'gaze-matplotlib'))
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -44,7 +45,14 @@ def export_heatmap(snapshot,*,directory=None):
     colors=rgba_grid(np.linspace(0,1,256).reshape(1,-1),opacity,threshold)[0]/255
     cmap=ListedColormap(colors);peak=float(grid.max())
     norm=Normalize(vmin=0,vmax=peak if peak>0 else 1)
-    ax.imshow(rgba_grid(grid,opacity,threshold),extent=(0,1,1,0),interpolation='bilinear',aspect='auto')
+    screen=snapshot.get('screen',{})
+    started=time.perf_counter_ns()
+    rgba=render_heatmap(grid,(screen.get('width_px',width),screen.get('height_px',height)),max_opacity=opacity,
+                        alpha_threshold=threshold,render_scale=visual.get('render_scale',.5),dither_strength=visual.get('dither_strength',.5))
+    metadata['render']=dict(render_ms=(time.perf_counter_ns()-started)/1e6,width=rgba.shape[1],height=rgba.shape[0],
+                            note='本次导出标量插值与配色耗时，不是实机合成耗时。')
+    (directory/'regions.json').write_text(json.dumps(metadata,ensure_ascii=False,indent=2,allow_nan=False)+'\n',encoding='utf-8')
+    ax.imshow(rgba,extent=(0,1,1,0),interpolation='bilinear',aspect='auto')
     image=ScalarMappable(norm=norm,cmap=cmap)
     for region in snapshot['regions']['regions']:
         from matplotlib.patches import Rectangle
@@ -62,6 +70,7 @@ def export_heatmap(snapshot,*,directory=None):
     lines=['# 屏幕区域热力图','',NOTICE,'',f"网格：{snapshot['unit']}；区域统计：累计、不衰减。",'',
            '核尺度统一为 sigma = 圆环误差半径；具体阶段及来源见 regions.json。',
            f'显示按当前最大热量归一化；低于其{threshold:.0%}完全透明，从阈值到2倍阈值用smoothstep平滑恢复正常透明度，黄色至红色，不透明度上限{opacity:g}。网格数值不受显示阈值影响。',
+           f'先在浮点标量场上三次插值，再配色及8位量化；逻辑屏渲染比例{visual.get("render_scale",.5)}，透明度有序抖动强度{visual.get("dither_strength",.5)}量化级（0关闭），与实时共用render_heatmap。',
            '状态：'+('未校准' if uncalibrated else 'C 点击粗校准（可能含历史 B 阶段）；各阶段见 JSON。' if coarse else 'B 九点校准；匹配与历史对齐方式见 JSON。' if snapshot['fixation_count'] else '没有可用的校准注视段；原因见 JSON。'),'',
            '## 边缘容差与屏幕外时长','',
            '中心到屏幕最近点的距离不超过同源核尺度1 sigma时，仅在热图/区域统计中夹回边缘；超过才排除。原始坐标和注视检测不夹回。',

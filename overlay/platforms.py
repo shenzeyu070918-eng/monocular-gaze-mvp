@@ -36,9 +36,20 @@ def configure_window(widget):
         native.setCollectionBehavior_(behavior)
         native.setLevel_(NSStatusWindowLevel)
         native.setIgnoresMouseEvents_(True)
+        # A translucent window's alpha mask must not become a system shadow
+        # around the gaze ring or heatmap. Ordinary/task windows are separate.
+        native.setHasShadow_(False)
+        widget._overlay_native_window=native
         if native.respondsToSelector_('setHidesOnDeactivate:'):native.setHidesOnDeactivate_(False)
     # On Windows Qt's Tool / DoesNotAcceptFocus / TransparentForInput flags
     # supply the native tool-window, no-activation and click-through behavior.
+
+
+def invalidate_shadow(widget):
+    """Only the configured overlay's native window; no lookup on every tick."""
+    if sys.platform=='darwin':
+        native=getattr(widget,'_overlay_native_window',None)
+        if native is not None:native.invalidateShadow()
 
 
 def present_panel(widget):

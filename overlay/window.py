@@ -11,7 +11,7 @@ class OverlayWindow(QWidget):
     def __init__(self, screen, options, *, native_configure=None, diagnostic=False, clock=time.monotonic):
         super().__init__(None,Qt.WindowType.FramelessWindowHint|Qt.WindowType.Tool|
                          Qt.WindowType.WindowStaysOnTopHint|Qt.WindowType.WindowTransparentForInput|
-                         Qt.WindowType.WindowDoesNotAcceptFocus)
+                         Qt.WindowType.WindowDoesNotAcceptFocus|Qt.WindowType.NoDropShadowWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
@@ -153,7 +153,10 @@ class OverlayWindow(QWidget):
             self._heatmap_enabled=False;self._heatmap_key=None
             # Hide once. Hidden accumulation must not copy images, invalidate
             # window regions or add any future heatmap repaint requests.
-            if was_visible:self.update()
+            if was_visible:
+                self.update()
+                from .platforms import invalidate_shadow
+                invalidate_shadow(self)
             return was_visible
         key=(None if latest is None else latest['version'],bool(enabled),bool(uncalibrated),bool(coarse_calibrated))
         if key==self._heatmap_key:return False
@@ -167,6 +170,9 @@ class OverlayWindow(QWidget):
                 self._heatmap_image=QImage(rgba.data,width,height,rgba.strides[0],QImage.Format.Format_RGBA8888).convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
             self._heatmap_version=latest['version']
         if old_enabled or self._heatmap_enabled:self.update()
+        if not old_enabled and self._heatmap_enabled:
+            from .platforms import invalidate_shadow
+            invalidate_shadow(self)
         return True
 
     def _paint_heatmap(self,painter):

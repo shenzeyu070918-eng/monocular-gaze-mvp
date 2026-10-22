@@ -176,6 +176,22 @@ class HeatmapQtTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
 
+    def test_overlay_has_no_shadow_and_only_heatmap_visibility_transitions_invalidate(self):
+        window=OverlayWindow(ScreenRect(0,0,800,600),OverlaySettings())
+        try:
+            self.assertTrue(window.windowFlags()&Qt.WindowType.NoDropShadowWindowHint)
+            latest=dict(version=1,rgba=np.zeros((8,10,4),np.uint8))
+            with patch('overlay.platforms.invalidate_shadow') as invalidate:
+                window.set_heatmap(None,enabled=False);invalidate.assert_not_called()
+                window.set_heatmap(latest,enabled=True);invalidate.assert_called_once_with(window)
+                window.set_heatmap(latest,enabled=True)
+                window.set_heatmap(dict(latest,version=2),enabled=True)
+                self.assertEqual(invalidate.call_count,1)
+                window.set_heatmap(None,enabled=False);self.assertEqual(invalidate.call_count,2)
+                window.set_heatmap(None,enabled=False);self.assertEqual(invalidate.call_count,2)
+                window.set_heatmap(latest,enabled=True);self.assertEqual(invalidate.call_count,3)
+        finally:window.hide();window.deleteLater();self.app.processEvents()
+
     def test_small_image_only_repaints_when_changed_and_ring_is_on_top(self):
         now=[10.]
         window=OverlayWindow(ScreenRect(0,0,800,600),replace(OverlaySettings(),label_autohide_s=0),clock=lambda:now[0])

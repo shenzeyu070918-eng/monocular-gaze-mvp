@@ -141,6 +141,7 @@ class RuntimeLabelTests(unittest.TestCase):
             with patch('overlay.runtime.OverlayController', return_value=controller), \
                  patch('overlay.runtime.time.perf_counter_ns', side_effect=clock.ns), \
                  patch('overlay.runtime.QMessageBox') as message_box, \
+                 patch('overlay.runtime.ScreenMonitor') as monitor, \
                  patch.object(tray, 'showMessage') as tray_message, \
                  patch.object(window, 'set_status', wraps=window.set_status) as status, \
                  patch('sys.excepthook', side_effect=lambda *error: qt_errors.append(error)), \
@@ -148,6 +149,7 @@ class RuntimeLabelTests(unittest.TestCase):
                 context.status = status
                 context.message_box = message_box
                 context.tray_message = tray_message
+                context.screen_event=lambda *args:monitor.call_args.args[2](*args)
                 self.assertEqual(run_camera_overlay(app, window, tray, pause, quit_action,
                                                     timer, settings, lambda: None), 0)
             self.assertFalse(qt_errors, qt_errors)
@@ -262,15 +264,14 @@ class RuntimeLabelTests(unittest.TestCase):
             self.tick(c, 6.1, 'blink')
             self.assertTrue(c.window._label_visibility.pending)
             c.status.reset_mock()
-            c.app.screenAdded.emit(None)
-            c.status.assert_called_once_with('未校准 · 屏幕变化，请重新启动', force=True)
-            self.assertEqual(c.window.label, '未校准 · 屏幕变化，请重新启动')
+            c.screen_event('unavailable',None,'内置屏不可用')
+            self.assertIn('内置屏不可用',c.window.label)
             self.assertEqual(c.window._label_opacity, 1.)
             self.assertFalse(c.window._label_visibility.pending)
             self.assertFalse(c.pause.isEnabled())
             self.assertEqual(c.controller.requests[-1], 'paused')
             c.timer.timeout.emit()
-            self.assertEqual(c.tray.toolTip(), c.window.label)
+            self.assertIn('内置屏不可用',c.tray.toolTip())
             c.tray_message.assert_called_once()
 
         self.exercise(scenario)

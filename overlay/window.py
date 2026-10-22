@@ -41,6 +41,17 @@ class OverlayWindow(QWidget):
         self.winId()
         if self.native_configure:self.native_configure(self)
 
+    def attach_screen(self,selection):
+        self.screen_selection=selection;self.rect_info=selection.rect
+        if selection.qscreen is not None and self.windowHandle() is not None:self.windowHandle().setScreen(selection.qscreen)
+        rect=selection.rect;self.setGeometry(rect.x,rect.y,rect.width,rect.height)
+        if self.native_configure:self.native_configure(self)
+
+    def change_screen(self,selection):
+        self.set_heatmap(None,enabled=False);self.position=None;self.opacity=0.
+        self._label_layout_key=None;self.attach_screen(selection)
+        self.update()
+
     def _ring_bounds(self):
         if self.position is None:return QRectF()
         x,y=self.position;rx,ry=self.radii;pad=self.options.stroke_px+2
@@ -150,9 +161,10 @@ class OverlayWindow(QWidget):
         self._heatmap_enabled=bool(enabled);self._heatmap_uncalibrated=bool(uncalibrated)
         self._heatmap_coarse=bool(coarse_calibrated)
         if latest is not None and (self._heatmap_image is None or getattr(self,'_heatmap_version',None)!=latest['version']):
-            rgba=latest['rgba'];height,width=rgba.shape[:2]
-            # Own the small image. The worker never mutates a published buffer.
-            self._heatmap_image=QImage(rgba.data,width,height,rgba.strides[0],QImage.Format.Format_RGBA8888).convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+            if 'image' in latest:self._heatmap_image=QImage(latest['image'])
+            else:
+                rgba=latest['rgba'];height,width=rgba.shape[:2]
+                self._heatmap_image=QImage(rgba.data,width,height,rgba.strides[0],QImage.Format.Format_RGBA8888).convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
             self._heatmap_version=latest['version']
         if old_enabled or self._heatmap_enabled:self.update()
         return True

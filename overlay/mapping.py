@@ -11,6 +11,8 @@ class ScreenRect:
     width: int
     height: int
     dpr: float = 1.
+    native_name: str | None = None  # Windows GDI display name, resolved from built-in identity.
+    cocoa_top: float | None = None  # Desktop y-flip reference, not built-in height.
 
     def __post_init__(self):
         for key in ('x','y','width','height'):

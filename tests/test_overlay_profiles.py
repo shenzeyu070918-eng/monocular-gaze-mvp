@@ -63,6 +63,25 @@ class OverlayProfilesTests(unittest.TestCase):
     def load(self):
         self.start();self.finish()
 
+    def test_screen_resize_rejects_old_profile_with_explicit_message_then_loads_new(self):
+        from overlay.screens import SCREEN_CHANGED
+        self.write();self.load();self.assertIsNotNone(self.manager.matrix)
+        resized=ScreenRect(0,0,1200,800,1.)
+        self.manager.change_screen(resized)
+        self.assertIsNone(self.manager.matrix);self.assertIsNone(self.manager.conditions)
+        self.assertTrue(self.manager.screen_mismatch);self.assertIn(SCREEN_CHANGED,self.manager.reason)
+        self.manager.observe(self.camera);self.manager.poll();self.finish()
+        self.assertIsNone(self.manager.matrix);self.assertIn(SCREEN_CHANGED,self.manager.last_error)
+        self.write(conditions=self.manager.conditions)
+        self.now+=2;self.manager.poll();self.finish()
+        self.assertIsNotNone(self.manager.matrix);self.assertFalse(self.manager.screen_mismatch)
+
+    def test_startup_mirror_resolution_mismatch_has_explicit_screen_notice(self):
+        self.write();self.manager.screen=ScreenRect(0,0,1200,800,1.)
+        self.load()
+        self.assertTrue(self.manager.screen_mismatch)
+        self.assertIn('屏幕设置已变化，请重新九点校准',self.manager.last_error)
+
     def test_waits_for_actual_metadata_then_loads_matching_python(self):
         self.write();self.manager.poll()
         self.assertFalse(self.manager.busy);self.assertIsNone(self.manager.matrix)

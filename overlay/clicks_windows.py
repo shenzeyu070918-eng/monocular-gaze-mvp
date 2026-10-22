@@ -33,6 +33,10 @@ class MouseHookData(C.Structure):
                 ('time', C.c_uint32), ('dwExtraInfo', C.c_size_t)]
 
 
+class MonitorInfo(C.Structure):
+    _fields_=[('cbSize',W.DWORD),('rcMonitor',Rect),('rcWork',Rect),('dwFlags',W.DWORD),('szDevice',W.WCHAR*32)]
+
+
 def physical_to_logical(point, physical_rect, screen):
     """Unique built-in monitor physical pixels -> its Qt logical rectangle."""
     left, top, right, bottom = physical_rect
@@ -121,7 +125,12 @@ class WindowsMouseDown:
     def _monitor(self):
         rectangles = []
         enumproc = CALLBACK(W.BOOL, C.c_void_p, C.c_void_p, C.POINTER(Rect), W.LPARAM)
-        def collect(_, __, rect, ___):
+        def collect(handle, __, rect, ___):
+            if self.screen.native_name is not None:
+                info=MonitorInfo();info.cbSize=C.sizeof(info)
+                get=self.user.GetMonitorInfoW
+                get.argtypes=[C.c_void_p,C.POINTER(MonitorInfo)];get.restype=W.BOOL
+                if not get(handle,C.byref(info)) or info.szDevice!=self.screen.native_name:return True
             value = rect.contents
             rectangles.append((value.left, value.top, value.right, value.bottom))
             return True
@@ -136,7 +145,7 @@ class WindowsMouseDown:
         finally:
             self.user.SetThreadDpiAwarenessContext(previous)
         if not success or len(rectangles) != 1:
-            raise RuntimeError('点击采集需要唯一启用的内置屏；不能自动选择主屏或外接屏。')
+            raise RuntimeError('点击采集需要唯一对应的内置屏；不能自动选择主屏或外接屏。')
         return rectangles[0]
 
     def start(self):

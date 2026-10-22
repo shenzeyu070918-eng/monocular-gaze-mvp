@@ -55,6 +55,24 @@ class OverlaySession:
         self._running=bool(running)
         self._sync_autocal_capture()
 
+    def change_screen(self,screen):
+        """Only after camera pause: discard stale coordinate contexts, not algorithms."""
+        self.set_running(False);self.cancel('screen_changed');self.recording.manual(False)
+        self.screen=screen;self.latest=None;self.buffer.clear();self._metadata_snapshot=None;self._saving=None
+        self.heatmap.change_screen(screen);self._heatmap_start_pending=False
+        self.autocal.configure(None);self.profiles.change_screen(screen)
+        if self._click_hub is not None:
+            # Listener is stopped while paused; the next start creates a fresh
+            # native coordinate adapter using this screen's resolved identity.
+            self._click_hub.listener.screen=screen
+            self.clicks.screen=screen
+        self._sync_correction()
+
+    def refresh_screen_mapping(self,screen):
+        if self.screen==screen:return
+        self.screen=screen;self.profiles.screen=screen
+        if self._click_hub is not None:self._click_hub.change_screen_mapping(screen);self.clicks.screen=screen
+
     def set_autocal_enabled(self,enabled):
         self.autocal.set_enabled(enabled)
         self._sync_autocal_capture();self._sync_correction()

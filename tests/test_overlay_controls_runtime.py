@@ -124,6 +124,9 @@ class Session:
             self.recording.task_id = None
             self.restore()
 
+    def change_screen(self,screen):
+        self.screen=screen;self.latest=None;self.profiles.disable();self.profiles.screen_mismatch=True
+
     def close(self):
         self.recording.close()
         self.profiles.close()
@@ -246,6 +249,7 @@ class ControlsRuntimeTests(unittest.TestCase):
 
         def run():
             context.hotkey_dispatch=hotkeys.call_args.args[1]
+            context.screen_event=monitor.call_args.args[2]
             scenario(context)
             if not context.controller.closed.is_set(): panel.buttons['quit'].click()
             timer.timeout.emit()
@@ -259,6 +263,7 @@ class ControlsRuntimeTests(unittest.TestCase):
                  patch('overlay.runtime.OverlayController', side_effect=make_controller), \
                  patch('overlay.runtime.time.perf_counter_ns', side_effect=clock.ns), \
                  patch('overlay.runtime.QTimer',HeatTimer), \
+                 patch('overlay.runtime.ScreenMonitor') as monitor, \
                  patch('PySide6.QtGui.QDesktopServices.openUrl', return_value=True) as open_web, \
                  patch('PySide6.QtWidgets.QFileDialog.getOpenFileName', return_value=('', '')) as select_web, \
                  patch('overlay.runtime.QMessageBox') as message_box, \
@@ -286,6 +291,35 @@ class ControlsRuntimeTests(unittest.TestCase):
             panel.hide()
             panel.deleteLater()
             self.qt_app.processEvents()
+
+    def test_projector_unchanged_does_not_pause_and_resize_recovers_without_restart(self):
+        from overlay.screens import BuiltinScreen,SCREEN_CHANGED
+        def scenario(c):
+            c.timer.timeout.emit()
+            selected=BuiltinScreen(self.qt_app.primaryScreen(),c.window.rect_info,'same')
+            requests=list(c.controller.requests)
+            c.screen_event('unchanged',selected,None)
+            self.assertEqual(c.controller.requests,requests)
+            resized=BuiltinScreen(selected.qscreen,ScreenRect(0,0,1000,700,1.5),'same')
+            c.screen_event('changed',resized,None)
+            self.assertEqual(c.controller.requests[-1],'paused')
+            c.timer.timeout.emit()
+            self.assertEqual(c.window.rect_info,resized.rect);self.assertEqual(c.session.screen,resized.rect)
+            self.assertTrue(c.actions['pause'].isEnabled())
+            self.assertIn(SCREEN_CHANGED,c.panel.notice.text())
+            c.actions['pause'].trigger();c.timer.timeout.emit()
+            self.assertEqual(c.controller.status,'running');self.assertTrue(c.actions['calibrate'].isEnabled())
+            self.assertEqual(c.session.profiles.disable_calls,2)
+        self.exercise(scenario)
+
+    def test_clamshell_unavailable_blocks_resume_and_does_not_draw_external(self):
+        def scenario(c):
+            c.screen_event('unavailable',None,'内置屏不可用，请打开屏幕')
+            c.timer.timeout.emit()
+            self.assertFalse(c.window.isVisible());self.assertFalse(c.actions['pause'].isEnabled())
+            requests=list(c.controller.requests);c.actions['pause'].trigger()
+            self.assertEqual(c.controller.requests,requests)
+        self.exercise(scenario)
 
     def tick(self, context, now=None, *, publish=True):
         if now is not None: context.clock.now = now

@@ -170,6 +170,66 @@ Windows 后续验证时将 Python 入口换成 `.\.venv\Scripts\python.exe`；�
 
 报告另列「非预登记探索分析（不参与 M5 判定）」：九点校正后点击残差的水平/垂直中位数及中位绝对误差；B 加点击中位数偏移（全部、核对前最近 10 分钟、采集开始后前 10 分钟）；仅点击中位数偏移、不叠加 B。使用前置筛选/连点合并后的样本和同一公共核对，不额外要求预登记模型的空间覆盖度；无样本时写不可用。残差定义为点击目标减预测，校正量向右/向下为正；二维中位绝对误差为残差长度的中位数。探索成绩不参与 M5 判定，也不改档案或实时显示。
 
+## M6：屏幕区域热力图
+
+**热力图表示「看了屏幕的哪个区域」，不表示「看了什么内容」；窗口切换和滚动会让同一位置对应不同内容。** 不截屏，不叠加桌面内容，不保存摄像头或人脸画面。数据和个人导出均在被 Git 忽略的 data/ 下。
+
+### 实时开关与导出
+
+先更新悬浮层依赖（包含 PNG 导出所需的 Matplotlib），正常启动后完成或加载条件匹配的 Python 九点：
+
+```sh
+./.venv/bin/python -m pip install -r requirements-overlay.txt
+./.venv/bin/python overlay.py --control-panel
+```
+
+控制面板与托盘共用「热力图开/关」「清空热力图」「导出当前会话热力图」。默认热键为 **Ctrl+Alt+H**（Mac：Control+Option+H），可在 `overlay.hotkeys.heatmap_toggle` 覆盖，空字符串禁用；仍然只注册该系统组合，不监听全部键盘。冲突或失败在面板逐项显示。暂停停止贡献，不把暂停时间当注视；热图保留并继续按时间衰减，清空才重置累计区域统计与起点。普通隐藏悬浮层不等于关闭热力图采集。
+
+默认关闭；没有匹配的 Python 九点档案时提示「未校准，位置可能偏差约 10 cm」并拒绝默认开启。这是已有实测风险说明，不是对当前用户的新测量。`allow_uncalibrated: true` 可强制开启，界面及导出持续标记未校准；即使后来匹配档案，已有未校准贡献的标记保留到清空。手动 web 档案不当作匹配的 Python 九点。
+
+```yaml
+heatmap:
+  enabled: false
+  allow_uncalibrated: false
+  grid_width: 160
+  update_hz: 4.0       # 合成器开销过高时可改为 2.0
+  half_life_s: 60.0
+  max_opacity: 0.4     # 不允许超过 0.4；圆环始终在热图上面
+  regions: null       # 默认 3×3
+  target_neighborhood_sigma: 1.0
+```
+
+以上可写入 local.yaml 覆盖。自定义区域示例：`regions: [{id: left, rect: [0, 0, 0.5, 1]}, {id: right, rect: [0.5, 0, 1, 1]}]`，使用内置屏全屏归一化矩形，不能重叠。以注视段中心归属，按时长而非帧数累计；输出停留时间及占有效屏内注视时长比例、首次时间（相对清空/开启起点）、进入次数、注视段数。连续同一区域的多个段不重复算进入，离开或无效中断后重入才增加；未覆盖和屏幕外时长在 JSON 中单列，屏幕外位置不裁剪到边缘。
+
+核尺度只有一处公共换算：**sigma = 圆环误差半径 cm**，优先最近匹配 B 核对的逐目标等权平均误差；否则用圆环配置示意值。横纵分别除以实测屏幕宽高；未实测屏幕改用同一逻辑像素示意半径，不估算厘米、不宣称实际精度。Qt 和导出不再另除以 2 或 3。
+
+面板导出后台的当前快照，**不重读录制**。PNG 和网格 CSV 是当前衰减热图（衰减加权秒/格）；区域 JSON 和报告的停留统计是累计秒、不衰减，不能混为同一数值。导出目录显示在面板；保存失败或队列满会明显提示，只停止热力图，推理、录制和点击采集继续。
+
+### 核对录制的会话热力图
+
+Python 管线没有跳点任务。验收直接使用悬浮层「精度核对」的录制：默认 14 个已知目标，也可以使用点击采集会话末尾那次核对。工具**只分析完整核对时段**，不把前面的自然使用或九点校准混进热图。核对目标仅用于附近热量占比验收，不参与拟合、平滑或注视检测。
+
+```sh
+./.venv/bin/python -m pip install -r requirements-analysis.txt
+./.venv/bin/python tools/session_heatmap.py "data/sessions/替换为会话文件名.jsonl"
+# 多次核对时可选一个任务；output 必须为 data/heatmaps/ 下尚不存在的子目录：
+./.venv/bin/python tools/session_heatmap.py "data/sessions/替换为会话文件名.jsonl" --task-id "替换为核对task_id" --output data/heatmaps/check-1
+```
+
+Windows 使用 `.\.venv\Scripts\python.exe` 替换 Python 入口，其余参数相同。`--config` 可指定配置文件。输出 `heatmap.png`（空白深色背景、热图/区域网格/图例/说明）、`grid.csv`、`regions.json`、`report.md`；不会覆盖已有目录或输入文件，不读取/改写当前个人档案。
+
+离线按历史 calibration 事件应用矩阵，使用未滤波 raw 修正后的 M2 注视检测，再在段内做离线双向平滑；不跨眼跳、眨眼、无脸、长间隙、核对或矩阵切换。过短段会标明未滤波回退。整段核对网格不衰减，单位为秒/格。新 Python 录制在帧与 calibration 事件保存实际矩阵版本；旧文件按事件单调时间回退，报告会说明切换附近的对齐局限。无可确认校准的帧跳过并列原因。
+
+报告给出每个目标附近占整张核对热图的热量比例，以及该目标显示期间的附近热量比例。附近默认 **1 sigma** 的物理圆（未实测时用逻辑像素圆）；各目标邻域可能重叠，不能相加成命中率，也不能当作新的精度评估。具体尺度、来源、矩阵阶段及跳过原因保留在 JSON。
+
+### Mac 性能验收（待实测）
+
+热图开/关分别启动一次 `./.venv/bin/python overlay.py --profile-seconds 10`；两组保持设备、2 线程/15 帧等实际配置、应用窗口、屏幕/DPR及交互条件一致，稳定后不要在采样中导出或运行核对任务。开启组可在 local.yaml 设置 `heatmap.enabled: true`，确认已匹配 Python 九点及面板显示开启后再比较；关闭组设回 false。保留 data/performance 下每次输出。
+
+预算是**目标而非成绩**：原 tick 中位数 ≤0.35 ms、P90 ≤0.8 ms。新增 `heatmap_update` 和 `heatmap_paint` 分别报告；剖析 JSON 的 `context.profile_window_inference` 给出窗口内实际推理完成数、秒数和帧率（含无效结果），不是配置上限或相机采集 fps。绘制提交耗时不能代表 WindowServer 合成开销。
+
+用活动监视器等本机工具分别记录 **Python 进程与 WindowServer 的 CPU/GPU**，写明采样时长、指标单位和是否为均值；系统没有进程 GPU 项就写「不可用」，不能填 0，也不以整机 GPU 代替进程 GPU。WindowServer 包含其他应用的开销，尽量保持对照条件一致。若 4 Hz 超预算或 WindowServer 开销过高，将 `update_hz` 改为 **2.0**，按同样条件再测。记录表和全部未验证项见验证记录；Windows 新路径仍待实机。
+
 ## 网页首次安装
 
 推荐 Python **3.12（64 位）**、Chrome、内置摄像头与单块笔记本屏幕。需要联网下载 Python 依赖及约 47 MB 模型；PyTorch 等依赖体积较大，请预留数 GB 空间。安装完成后，推理与画面处理在本机进行。v0.1.0 曾在 macOS M5 Pro 验证；新版在 Windows 和 Mac 的真实摄像头全流程仍待本次实机验证。Linux 暂不作为本轮支持目标。

@@ -56,6 +56,7 @@ class OverlayController:
         with self._condition:
             self._matrix=None if value is None else value.tolist()
             self._matrix_revision+=1;self._condition.notify_all()
+            return self._matrix_revision
 
     def set_task_active(self,active):
         """Deliver pacing intent to the control worker without GUI-thread I/O."""

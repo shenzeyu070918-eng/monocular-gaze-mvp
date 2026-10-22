@@ -22,10 +22,11 @@ VIDEO_FIELDS = {'source', 'callback_ms', 'presentationTime', 'expectedDisplayTim
 RESULT_FIELDS = {'valid', 'status', 'raw', 'origin_m', 'gaze_vector', 'head_degrees', 'distance_cm',
                  'eye_openness', 'inference_ms', 'camera'}
 FRAME_FIELDS = RESULT_FIELDS | {'capture_ns', 'request_received_ns', 'inference_completed_ns', 'frame_id',
-                               'browser_capture_ms', 'browser_request_ms', 'browser_response_ms', 'video_frame'}
+                               'browser_capture_ms', 'browser_request_ms', 'browser_response_ms', 'video_frame', 'matrix_revision'}
 EVENT_FIELDS = {
     'target': {'action', 'task_type', 'task_id', 'index', 'target', 'stage_target', 'browser_time_ms', 'reason', 'target_id', 'region'},
-    'calibration': {'action', 'matrix', 'calibration_id', 'group', 'browser_time_ms', 'coordinate_system'},
+    'calibration': {'action', 'matrix', 'calibration_id', 'group', 'browser_time_ms', 'coordinate_system',
+                    'matrix_revision', 'error_radius_cm', 'error_radius_source', 'calibration_matched'},
     'distance_check': {'measured_cm', 'estimated_cm', 'bias_cm', 'bias_percent', 'sample_count',
                        'sample_start_ms', 'sample_end_ms', 'browser_time_ms', 'warning', 'camera'},
     'evaluation_summary': {'task_id', 'run_id', 'calibration_id', 'completed', 'reason', 'summary', 'browser_time_ms',
@@ -82,7 +83,7 @@ def _json_numbers(value, field=''):
         return value
     converted = number(value, field or '数值')
     if isinstance(value, Integral) and (field.endswith(('_ns','_count','_frames','_targets')) or field in {
-            'schema_version', 'seq', 'frame_id', 'index', 'round', 'camera_index', 'configured_camera_index', 'sample_count', 'written_lines', 'failed_records'}):
+            'schema_version', 'seq', 'frame_id', 'index', 'round', 'matrix_revision', 'camera_index', 'configured_camera_index', 'sample_count', 'written_lines', 'failed_records'}):
         return int(value)
     return converted
 
@@ -229,6 +230,9 @@ def validate_payload(kind, fields, source):
     allowed = FRAME_FIELDS if kind == 'frame' else EVENT_FIELDS.get(kind)
     if allowed is None or set(fields)-allowed:
         raise ValueError('记录包含未知类型或未允许字段；不接受图像、字节或 base64')
+    if 'matrix_revision' in fields:
+        value=fields['matrix_revision']
+        if isinstance(value,bool) or not isinstance(value,Integral) or value<0:raise ValueError('matrix_revision 必须为非负整数')
     if kind == 'frame':
         if type(fields.get('valid')) is not bool or fields.get('status') not in STATUSES:
             raise ValueError('frame 状态无效')
@@ -286,11 +290,18 @@ def validate_payload(kind, fields, source):
             if fields.get('phase') not in ('initial','final','redo_cancelled'):raise ValueError('校准残差阶段无效')
             validate_quality(fields.get('quality'))
         elif kind == 'calibration':
+            if 'calibration_matched' in fields and type(fields['calibration_matched']) is not bool:
+                raise ValueError('calibration_matched 必须为布尔值')
             if fields.get('action') not in {'applied','reset'} or fields.get('group') not in {'A','B'}:
                 raise ValueError('calibration 动作或分组无效')
             if fields.get('coordinate_system') not in {None,'full_screen_normalized'}:raise ValueError('校准坐标系无效')
             text_value(fields.get('calibration_id'), 'calibration_id')
             matrix = fields.get('matrix')
+            if 'error_radius_cm' in fields:
+                radius=number(fields['error_radius_cm'],'error_radius_cm',nullable=True)
+                if radius is not None and radius<=0:raise ValueError('error_radius_cm 必须为正数或 null')
+            if 'error_radius_source' in fields and fields['error_radius_source'] not in {'matching_B_check','configured_cm','configured_logical_pixels'}:
+                raise ValueError('error_radius_source 无效')
             if matrix is not None:
                 if not isinstance(matrix, list) or len(matrix) != 3: raise ValueError('校准矩阵必须为 3×2')
                 for row in matrix: vector(row, 2, 'matrix')
@@ -465,9 +476,10 @@ class SessionRecorder:
     def record_frame(self, data, *, capture_ns=None, inference_completed_ns=None, frame_id=None,
                      request_received_ns=None, browser_capture_ms=None, browser_request_ms=None,
                      browser_response_ms=None, video_frame=None):
-        if set(data)-RESULT_FIELDS-{'landmarks'}:
+        if set(data)-RESULT_FIELDS-{'landmarks','matrix_revision'}:
             raise ValueError('推理结果含有未允许字段，拒绝写入')
         fields = {key: data.get(key) for key in RESULT_FIELDS}
+        if 'matrix_revision' in data:fields['matrix_revision']=data['matrix_revision']
         fields.update(capture_ns=capture_ns, inference_completed_ns=inference_completed_ns, frame_id=frame_id,
                       request_received_ns=request_received_ns, browser_capture_ms=browser_capture_ms,
                       browser_request_ms=browser_request_ms, browser_response_ms=browser_response_ms, video_frame=video_frame)

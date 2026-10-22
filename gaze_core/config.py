@@ -278,6 +278,42 @@ class ClickSessionSettings:
 
 
 @dataclass(frozen=True)
+class AutocalSettings:
+    enabled: bool = False
+    window_ms: tuple = (200.,0.)
+    max_fps: float | str | None = None  # null=unlimited; 'inference'=inherit.
+    min_clicks: int = 10
+    max_clicks: int = 40
+    min_occupied_cells: int = 3
+    frame_history_s: float = 2.0
+    pending_timeout_s: float = 2.0
+    queue_size: int = 256
+    close_timeout_s: float = 5.0
+    sampling_config: str = 'implicit_experiment.yaml'
+
+    def __post_init__(self):
+        from .devices import finite
+        if type(self.enabled) is not bool:raise ValueError('autocal.enabled 必须为布尔值')
+        if not isinstance(self.window_ms,(list,tuple)) or len(self.window_ms)!=2:
+            raise ValueError('autocal.window_ms 需要点击前 [start, end] 毫秒')
+        start,end=[finite(v,'autocal.window_ms') for v in self.window_ms]
+        if not 0<=end<start:raise ValueError('autocal.window_ms 必须满足 start > end ≥ 0')
+        if self.max_fps is not None and self.max_fps!='inference':finite(self.max_fps,'autocal.max_fps',positive=True)
+        for key in ('min_clicks','max_clicks','min_occupied_cells','queue_size'):
+            value=getattr(self,key)
+            if type(value) is not int or value<1:raise ValueError('autocal.'+key+' 必须为正整数')
+        if self.min_clicks<5 or self.max_clicks<self.min_clicks or self.min_occupied_cells>9:
+            raise ValueError('autocal 点击数/覆盖范围无效')
+        for key in ('frame_history_s','pending_timeout_s','close_timeout_s'):
+            finite(getattr(self,key),'autocal.'+key,positive=True)
+        if self.frame_history_s*1000<start:raise ValueError('autocal.frame_history_s 不足以覆盖取样窗口')
+        if not isinstance(self.sampling_config,str) or not self.sampling_config:raise ValueError('autocal.sampling_config 必须为配置文件名')
+
+    def inference_limit(self,inference):
+        return inference.max_fps if self.max_fps=='inference' else self.max_fps
+
+
+@dataclass(frozen=True)
 class Settings:
     inference: InferenceSettings
     camera: CameraSettings
@@ -298,6 +334,7 @@ class Settings:
     overlay: OverlaySettings = OverlaySettings()
     click_session: ClickSessionSettings = ClickSessionSettings()
     heatmap: HeatmapSettings = HeatmapSettings()
+    autocal: AutocalSettings = AutocalSettings()
 
 
 def select_device(requested, cuda_available, mps_available=False):
@@ -356,7 +393,7 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
         note(override, str(local))
         sources.append(str(local))
     required = {'inference', 'camera', 'geometry', 'recording', 'jump'}
-    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay', 'click_session', 'heatmap'}:
+    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay', 'click_session', 'heatmap', 'autocal'}:
         raise ValueError('配置必须包含 inference、camera、geometry、recording、jump 五部分')
     settings = Settings(InferenceSettings(**data['inference']), CameraSettings(**data['camera']),
                         ScreenGeometry(**data['geometry']), RecordingSettings(**data['recording']), JumpSettings(**data['jump']),
@@ -369,7 +406,8 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
                        display=DisplaySettings(**data.get('display', {})),
                        overlay=OverlaySettings(**data.get('overlay', {})),
                        click_session=ClickSessionSettings(**data.get('click_session', {})),
-                       heatmap=HeatmapSettings(**data.get('heatmap', {})))
+                       heatmap=HeatmapSettings(**data.get('heatmap', {})),
+                       autocal=AutocalSettings(**data.get('autocal', {})))
     i, c, g = settings.inference, settings.camera, settings.geometry
     # Validate the request separately from actual device availability.
     if i.device not in {'auto', 'cpu', 'cuda', 'mps'}:

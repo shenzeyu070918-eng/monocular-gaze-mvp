@@ -133,7 +133,18 @@ def coverage(samples):
                 target_span=np.ptp(target,axis=0).tolist() if len(target) else [0.,0.])
 
 
-def sample_clicks(frames, clicks, geometry, settings, window_ms):
+def raw_fixation_state(detector, frame, geometry):
+    """Shared causal raw-state step for both batch M4 and online sampling."""
+    if not frame.get('valid') or frame.get('raw') is None:
+        detector.reset();return None
+    try:
+        return detector.update(frame['raw'],frame['capture_ns']/1e9,
+                               origin_m=frame.get('origin_m'),geometry=geometry)
+    except (ValueError,TypeError):
+        detector.reset();return None
+
+
+def sample_clicks(frames, clicks, geometry, settings, window_ms, *, fixation_states=None):
     """Every rejection has one primary reason; diagnostics may overlap explicitly.
 
     Detector uses the same raw (not B corrected) coordinates as C fitting, and
@@ -142,15 +153,12 @@ def sample_clicks(frames, clicks, geometry, settings, window_ms):
     scale=cm_scale(geometry)
     ordered=sorted(frames,key=lambda r:r['capture_ns']);times=[r['capture_ns'] for r in ordered]
     if any(b<=a for a,b in zip(times,times[1:])):raise ValueError('capture_ns 必须严格递增')
-    states={};detector=FixationDetector(FixationSettings(**settings.fixation))
-    for frame in ordered:
-        if not frame.get('valid') or frame.get('raw') is None:
-            detector.reset();continue
-        try:
-            state=detector.update(frame['raw'],frame['capture_ns']/1e9,
-                                  origin_m=frame.get('origin_m'),geometry=geometry)
-        except (ValueError,TypeError):detector.reset();continue
-        states[frame['capture_ns']]=state
+    states=fixation_states
+    if states is None:
+        states={};detector=FixationDetector(FixationSettings(**settings.fixation))
+        for frame in ordered:
+            state=raw_fixation_state(detector,frame,geometry)
+            if state is not None:states[frame['capture_ns']]=state
     accepted=[];audit=[]
     first_pass=[r for r in clicks if not r.get('excluded',False)]
     groups=deduplicate_clicks(first_pass,geometry,settings)

@@ -280,10 +280,10 @@ class ClickSessionSettings:
 @dataclass(frozen=True)
 class AutocalSettings:
     enabled: bool = False
-    window_ms: tuple = (200.,0.)
-    max_fps: float | str | None = None  # null=unlimited; 'inference'=inherit.
+    window_ms: tuple = (300.,0.)
+    max_fps: float | str | None = 'inference'  # null=unlimited; 'inference'=inherit.
     min_clicks: int = 10
-    max_clicks: int = 40
+    max_clicks: int = 120  # Provisional, based on one session; independent live check pending.
     min_occupied_cells: int = 3
     frame_history_s: float = 2.0
     pending_timeout_s: float = 2.0

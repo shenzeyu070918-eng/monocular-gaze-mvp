@@ -1,4 +1,4 @@
-"""Read-only M5 replay and the predeclared window/FPS comparison."""
+"""Read-only M5 replay, preserving the original rule and its post-hoc correction."""
 import argparse
 from dataclasses import asdict,replace
 import hashlib
@@ -50,13 +50,16 @@ def simulate(trial,sampling,window,*,half=False,capacity=40):
                 batch_accepted=batch['accepted_count'],batch_reasons=batch['primary_reason_counts'])
 
 
-def choose_defaults(rows):
+def choose_defaults(rows,*,absolute=False):
     differences={}
     for label in ('all','recent_40'):
         a=rows['a'][label]['C'];c=rows['c'][label]['C']
-        differences[label]=None if a is None or c is None or not a['all']['complete'] or not c['all']['complete'] or a['all']['mean_cm'] is None or c['all']['mean_cm'] is None else abs(c['all']['mean_cm']-a['all']['mean_cm'])
+        difference=None if a is None or c is None or not a['all']['complete'] or not c['all']['complete'] or a['all']['mean_cm'] is None or c['all']['mean_cm'] is None else c['all']['mean_cm']-a['all']['mean_cm']
+        differences[label]=abs(difference) if absolute and difference is not None else difference
     passed=all(v is not None and v<=.15 for v in differences.values())
-    return dict(rule='Both all and recent_40 must have abs(C_c.mean_cm-C_a.mean_cm) <= 0.15 cm; unavailable fails.',
+    expression='abs(C_c.mean_cm-C_a.mean_cm)' if absolute else '(C_c.mean_cm-C_a.mean_cm)'
+    return dict(rule=f'Both all and recent_40 must have {expression} <= 0.15 cm; unavailable fails.',
+                revision='original_predeclared_absolute' if absolute else 'post_hoc_user_correction_one_sided',
                 threshold_cm=.15,differences_cm=differences,passed=passed,
                 window_ms=[300,0] if passed else [200,0],max_fps='inference' if passed else None)
 
@@ -66,6 +69,9 @@ def compare(trial,sampling):
     for name,half,window in (('a',False,(200,0)),('b',True,(200,0)),('c',True,(300,0))):
         rows[name]={label:simulate(trial,sampling,window,half=half,capacity=capacity)
                     for label,capacity in (('all',max(10,len(trial.clicks))),('recent_40',40))}
+    # Added after seeing the original six results. Never pass this row off as
+    # preregistered or use it to rewrite the earlier FPS decision.
+    rows['c']['recent_120']=simulate(trial,sampling,(300,0),half=True,capacity=120)
     reference=rows['a']['all']['C']
     for scenarios in rows.values():
         for row in scenarios.values():
@@ -76,9 +82,11 @@ def compare(trial,sampling):
                 sampling=asdict(sampling),scenarios=rows,
                 baselines=evaluate(trial.check_frames,trial.targets,trial.geometry,trial.baseline['baseline_matrix']),
                 public_check=dict(task_id=trial.summary['task_id'],frame_ids=[f['frame_id'] for f in trial.check_frames],
-                                  note='All six fits use the identical full original public check. Only training frames are thinned.'),
+                                  note='All original six fits and the post-hoc c/recent_120 fit use the identical full original public check. Only training frames are thinned.'),
                 decision=choose_defaults(rows),
-                limitations='Single person, Mac, one historical session; no new live measurements, no test-set parameter scan beyond the predeclared comparison.')
+                original_decision=choose_defaults(rows,absolute=True),
+                revision_note='事后修正（查看原六组回放后）：用户澄清“不比全速差超过0.15cm”为单侧规则；原绝对差规则及判定保留。max_clicks=120基于单次会话暂定，c/recent_120为事后追加，待实机独立核对。',
+                limitations='Single person, Mac, one historical session; no new live measurements. The one-sided rule correction and c/recent_120 are post-hoc, not preregistered or independent validation.')
 
 
 def save_report(result,destination):
@@ -99,7 +107,9 @@ def save_report(result,destination):
             lines.append(f"| {name}: {row['window_ms']} | {label} | {fmt(row['actual_training_fps'],6)} | {row['accepted']} | {row['used_count']} | {row['offset_cm']} | {score} | {p90} | {row['same_samples_match']} |")
             audits+=['',f"{name}/{label} 取样剔除原因：`{row['reasons']}`；滚动窗口候选{row['window_count']}，最终拟合离群{row['fit_outliers']}，内点{row['used_count']}；拟合状态：{row['fit_error']}。不足最少点击数时不提供C成绩。同样本相对M4批量offset的均值差：{fmt(row['mean_difference_vs_batch_cm'])} cm；相对M4原始全部点击的均值差：{fmt(row['mean_difference_vs_M4_original_all_cm'])} cm。",'']
     lines+=audits
-    lines+=['','## 预先固定的默认值判定','',result['decision']['rule'],'',
+    lines+=['','## 原预登记绝对差规则（保留历史判定）','',result['original_decision']['rule'],'',
+            json.dumps(result['original_decision'],ensure_ascii=False,indent=2),'',
+            '## 事后修正（不作为预登记结论）','',result['revision_note'],'',result['decision']['rule'],'',
             json.dumps(result['decision'],ensure_ascii=False,indent=2),'',
             '有效点击、剔除及偏移包含个人数据，仅保留data/，不改输入录制或个人档案。','']
     (destination/'report.md').write_text('\n'.join(lines),encoding='utf-8')

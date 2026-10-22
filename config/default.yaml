@@ -131,11 +131,11 @@ overlay:
 # M5: offset only, no nine-point fine tuning. Sampling thresholds remain M4's.
 autocal:
   enabled: false
-  window_ms: [200, 0]  # Frozen M5 replay decision; see verification record (single Mac session).
-  max_fps: null  # Replay retained full speed: recent_40 absolute difference exceeded 0.15 cm.
+  window_ms: [300, 0]  # Post-hoc correction to the one-sided rule; original decision retained in verification.
+  max_fps: inference  # Inherit inference.max_fps (default 15); independent live verification pending.
   # max_fps: null=full speed; inference=inherit inference.max_fps; or positive FPS.
   min_clicks: 10
-  max_clicks: 40
+  max_clicks: 120  # 基于单次会话的暂定值，待实机独立核对。
   min_occupied_cells: 3
   frame_history_s: 2.0
   pending_timeout_s: 2.0

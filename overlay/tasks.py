@@ -35,7 +35,7 @@ class TaskRunner:
     """
     def __init__(self, kind, settings, *, matrix=None, calibration_id='none',
                  clock_ns=time.perf_counter_ns, task_id=None, run_id=None, rng=None,
-                 screen_size=None, redo_from=None, redo_target_ids=None):
+                 screen_size=None, redo_from=None, redo_target_ids=None,corrected_group='B'):
         if kind not in {'calibrate', 'evaluate'}:
             raise ValueError('任务类型必须为 calibrate 或 evaluate')
         self.kind, self.settings, self.geometry = kind, settings.evaluation, settings.geometry
@@ -43,6 +43,8 @@ class TaskRunner:
         self.task_id = task_id or uuid.uuid4().hex
         self.run_id = run_id or uuid.uuid4().hex
         self.calibration_id = uuid.uuid4().hex if kind == 'calibrate' else calibration_id
+        if corrected_group not in {'B','C'}:raise ValueError('修正组必须为 B 或 C')
+        self.corrected_group=corrected_group
         self.screen_size=screen_size;self.redo_from=deepcopy(redo_from)
         self.redo_threshold=settings.overlay.calibration_redo_cm
         array = calibration_matrix(matrix)
@@ -220,6 +222,8 @@ class TaskRunner:
         else:
             result['matrix'] = deepcopy(self.matrix)
             result['summary'] = evaluate(self._frames, self.targets, self.geometry, self.matrix)
+            if self.corrected_group=='C' and 'B' in result['summary']['groups']:
+                result['summary']['groups']['C']=result['summary']['groups'].pop('B')
         self._target_end('completed', self._cutoff_ns)
         self.result, self.state, self.reason = result, 'completed', 'completed'
 

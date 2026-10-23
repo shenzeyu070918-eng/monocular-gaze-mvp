@@ -206,3 +206,40 @@ demo:
   debug_after_color: '#68DBFF'
   debug_point_px: 5
   practice_target_px: 5
+
+# M8 starfield: animation interpolation is visual only, never calibration data.
+starfield:
+  particle_count: 2000  # Includes a fixed reusable firework pool.
+  firework_pool: 400
+  firework_particles: 100
+  animation_fps: 60
+  frame_budget_ms: 8  # Median paintEvent target; real full-screen Mac measurement pending.
+  long_frame_ms: 16.666666666666668
+  round_s: 60
+  replay_s: 5
+  halo_radius_factor: 1.5
+  stable_radius_factor: 1
+  bloom_ms: 1500
+  cooldown_ms: 1000
+  stale_ms: 300
+  max_capture_gap_ms: 300
+  spring_hz: 3
+  halo_fade_s: 0.25
+  attraction_strength: 12
+  return_strength: 5
+  particle_drag: 4
+  max_animation_step_s: 0.05
+  base_brightness: 0.22
+  brightness_gain: 0.75
+  min_star_px: 1
+  max_star_px: 3
+  firework_life_s: 1.2
+  firework_speed_px_s: 170
+  firework_drag: 1
+  firework_size_px: 3
+  mask_columns: 160
+  constellation_footprint_px: 12  # Union of star disks and line corridors, not bounding boxes.
+  reveal_threshold: 0.7
+  reveal_s: 1
+  constellation_count: 4  # Supports 3–5 self-drawn patterns, no external images.
+  color_palette: [[190, 215, 255], [255, 190, 140], [255, 155, 210], [150, 235, 255]]

@@ -1,7 +1,7 @@
 """Opaque, interactive projection UI; all selection/scoring lives in DemoRun."""
 import math
 import time
-from PySide6.QtCore import Qt,QRectF,QEvent,Signal
+from PySide6.QtCore import Qt,QRectF,QEvent,Signal,QPointF
 from PySide6.QtGui import QColor,QFont,QPainter,QPen,QRegion
 from PySide6.QtWidgets import QWidget
 
@@ -9,9 +9,13 @@ from PySide6.QtWidgets import QWidget
 class DemoWindow(QWidget):
     cancelled=Signal(str)
 
-    def __init__(self,run,screen,options,*,clock_ns=time.perf_counter_ns):
+    def __init__(self,run,screen,options,*,clock_ns=time.perf_counter_ns,screen_rect=None,debug=False):
         super().__init__(None,Qt.WindowType.Window|Qt.WindowType.FramelessWindowHint|Qt.WindowType.WindowStaysOnTopHint)
         self.run,self.options,self.clock=run,options,clock_ns
+        from .mapping import ScreenRect
+        geometry=screen.geometry()
+        self.screen_rect=screen_rect or ScreenRect(geometry.x(),geometry.y(),run.width,run.height)
+        self.debug=debug;self.before_position=None;self.mapping_reason=''
         self.position=None;self.ring_opacity=0.;self._disposed=False;self._paint_key=None
         self._base_key=None;self._progress_key=None;self._ring_key=None;self._time_key=None
         self._old_button=None;self._old_ring=QRectF();self._old_flash=None
@@ -30,7 +34,13 @@ class DemoWindow(QWidget):
     def dispose(self):
         self._disposed=True;self.hide();self.deleteLater()
 
-    def refresh(self,position,opacity,now_ns):
+    def coordinates(self):
+        from gaze_core.demo_coordinates import DemoCoordinates
+        origin=self.mapToGlobal(QPointF(0,0))
+        return DemoCoordinates(self.screen_rect,window_origin=(origin.x(),origin.y()),
+                               window_size=(self.width(),self.height()),fullscreen=self.isFullScreen())
+
+    def refresh(self,position,opacity,now_ns,*,before_position=None):
         run=self.run
         base=(run.phase,run.page,run.target_id,run.feedback_text,run.speech_failed,run.score,tuple(run.buttons))
         region=QRegion()
@@ -43,13 +53,17 @@ class DemoWindow(QWidget):
                 if rect is not None:region|=QRegion(rect.toAlignedRect())
             self._old_button=button;self._progress_key=progress
         ring=QRectF()
-        if position is not None and opacity>0:
+        visible_position=position if self.options.show_gaze_ring or self.debug else None
+        if visible_position is not None and opacity>0:
             x,y=position;rx,ry=run.radii;p=self.options.progress_px
             ring=QRectF(x-rx-p,y-ry-p,2*(rx+p),2*(ry+p))
-        if (position,opacity)!=self._ring_key:
+        ring_key=(visible_position,opacity if visible_position is not None else 0.,before_position if self.debug else None)
+        if ring_key!=self._ring_key:
             region|=QRegion(self._old_ring.toAlignedRect())|QRegion(ring.toAlignedRect())
-            self._old_ring=ring;self._ring_key=(position,opacity)
+            self._old_ring=ring;self._ring_key=ring_key
+            if self.debug:region|=QRegion(self.rect())
         self.position,self.ring_opacity=position,opacity
+        self.before_position=before_position
         second=self.remaining(now_ns)
         if second!=self._time_key:
             self._time_key=second;region|=QRegion(0,0,self.width(),int(self.options.header_px))
@@ -102,10 +116,11 @@ class DemoWindow(QWidget):
         painter.setFont(self.heading_font);painter.setPen(QColor('white'))
         footer=('语音不可用，仅显示文字。 ' if run.speech_failed else '')+'Esc 退出；触发后 1 秒内可撤销'
         painter.drawText(QRectF(o.padding_px,self.height()-o.footer_px,self.width()-2*o.padding_px,o.footer_px),Qt.AlignmentFlag.AlignCenter,footer)
-        if self.position is not None and self.ring_opacity>0:
+        if self.options.show_gaze_ring and self.position is not None and self.ring_opacity>0:
             painter.setOpacity(self.ring_opacity);painter.setPen(QPen(QColor(o.progress_color),o.progress_px))
             painter.setBrush(Qt.BrushStyle.NoBrush);x,y=self.position;rx,ry=run.radii
             painter.drawEllipse(QRectF(x-rx,y-ry,rx*2,ry*2))
+        if self.debug:self._debug(painter)
         painter.end()
         if run.phase in {'practice','playing'}:run.presented(now)
 
@@ -115,7 +130,7 @@ class DemoWindow(QWidget):
         flash=now<run.flash_until and getattr(run,'flash_rect',None)==button.rect
         hole=run.app=='game' and run.phase=='playing' and button.id!='next'
         target=hole and button.id==run.target_id
-        color=o.feedback_color if flash or target else o.hole_color if hole else o.button_color
+        color=o.feedback_color if flash or target else o.active_color if active else o.hole_color if hole else o.button_color
         stroke=o.progress_px if active else 1
         painter.setBrush(QColor(color));painter.setPen(QPen(QColor(o.progress_color if active else color),stroke))
         painter.drawRoundedRect(rect.adjusted(stroke/2,stroke/2,-stroke/2,-stroke/2),24,24)
@@ -135,9 +150,25 @@ class DemoWindow(QWidget):
                 for dx in (-.35,.35):painter.drawEllipse(QRectF(cx+dx*radius-5,cy-8,10,14))
                 painter.setPen(QPen(QColor(o.text_color),4));painter.drawArc(QRectF(cx-radius*.35,cy+5,radius*.7,radius*.45),180*16,180*16)
         painter.setPen(QColor(o.text_color));painter.setFont(self.button_font)
-        text_rect=QRectF(rect.left(),rect.top()+18,rect.width(),60) if hole else rect.adjusted(20,20,-20,-70)
+        text_rect=QRectF(rect.left(),rect.top()+18,rect.width(),60) if hole else rect.adjusted(20,20,-20,-20)
         painter.drawText(text_rect,Qt.AlignmentFlag.AlignCenter|Qt.TextFlag.TextWordWrap,text)
         if active:
             diameter=min(60.,rect.height()/3);circle=QRectF(rect.center().x()-diameter/2,rect.bottom()-diameter-22,diameter,diameter)
             painter.setBrush(Qt.BrushStyle.NoBrush);painter.setPen(QPen(QColor(o.text_color),o.progress_px))
             painter.drawArc(circle,90*16,-round(run.selector.progress*360*16))
+
+    def _debug(self,painter):
+        painter.save();painter.setOpacity(1.)
+        for point,color in ((self.before_position,self.options.debug_before_color),(self.position,self.options.debug_after_color)):
+            if point is not None:
+                radius=self.options.debug_point_px;painter.setBrush(QColor(color));painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(QPointF(*point),radius,radius)
+        painter.setPen(QPen(QColor(self.options.debug_after_color),2))
+        for button in self.run.buttons:
+            x,y,w,h=button.rect;cx,cy=x+w/2,y+h/2
+            painter.drawLine(QPointF(cx-10,cy),QPointF(cx+10,cy));painter.drawLine(QPointF(cx,cy-10),QPointF(cx,cy+10))
+        painter.drawRect(QRectF(self.rect()).adjusted(1,1,-1,-1))
+        font=QFont(self.heading_font);font.setPixelSize(18);painter.setFont(font)
+        text='粉：修正前  蓝：修正后/按钮中心  '+(self.mapping_reason or '完整内屏逻辑坐标')
+        painter.drawText(QRectF(12,4,self.width()-24,28),Qt.AlignmentFlag.AlignLeft,text)
+        painter.restore()

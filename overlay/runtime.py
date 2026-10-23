@@ -9,7 +9,7 @@ from .state import RingState
 from .screens import BuiltinScreen,ScreenMonitor,SCREEN_CHANGED
 
 
-def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,permission_check,*,controls=None,profile_seconds=None):
+def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,permission_check,*,controls=None,profile_seconds=None,demo_debug=False):
     notice=permission_check()
     if notice:
         print(notice,file=sys.stderr)
@@ -139,7 +139,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         from PySide6.QtWidgets import QFileDialog
         actions,panel=controls.actions,controls.panel
         from .demo_session import DemoSession
-        demo=DemoSession(session,window,panel,notice=notice)
+        demo=DemoSession(session,window,panel,notice=notice,debug=demo_debug)
         session.calibration_completed=window.show_calibration_notice
         actions['presentation'].setChecked(settings.overlay.presentation)
         actions['presentation'].setEnabled(True)

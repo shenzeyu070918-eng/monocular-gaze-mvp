@@ -15,7 +15,7 @@ class LocalConfigurationTests(unittest.TestCase):
             with patch.object(config,'DEFAULT_CONFIG',path):
                 settings=config.load_settings(path)
                 self.assertEqual(settings.demo.hit_expand_ratio,0);self.assertFalse(settings.demo.practice)
-                self.assertEqual(settings.demo.dwell_ms,1000);self.assertTrue(settings.overlay.presentation)
+                self.assertEqual(settings.demo.dwell_ms,800);self.assertTrue(settings.overlay.presentation)
                 self.assertEqual(settings.overlay.hotkeys['demo'],'Ctrl+Alt+Y')
                 self.assertEqual(settings.overlay.hotkeys['pause'],'Ctrl+Alt+P')
                 self.assertEqual(settings.key_sources['demo.hit_expand_ratio'],str(local.resolve()))

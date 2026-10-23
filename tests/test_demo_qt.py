@@ -23,6 +23,12 @@ from overlay.speech import SystemSpeech
 class FakeWindow:
     def __init__(self,run,*args,**kwargs):
         self.run=run;self.cancelled=Mock();self.open=Mock();self.dispose=Mock();self.refresh=Mock()
+        self.screen_rect=kwargs['screen_rect']
+
+    def coordinates(self):
+        from gaze_core.demo_coordinates import DemoCoordinates
+        r=self.screen_rect
+        return DemoCoordinates(r,window_origin=(r.x,r.y),window_size=(r.width,r.height),fullscreen=True)
 
 
 class DemoQtTests(unittest.TestCase):
@@ -53,7 +59,7 @@ class DemoQtTests(unittest.TestCase):
 
     def make_session(self,*,group='B',pipeline='python',recording=False,practice=False):
         now=[0];settings=load_settings(use_local=False)
-        settings=replace(settings,demo=replace(settings.demo,practice=practice))
+        settings=replace(settings,demo=replace(settings.demo,practice=practice,dwell_ms=1000))
         s=SimpleNamespace(settings=settings,active=False,clicks=None,display_revision=1,_active_group=group,
                           profiles=SimpleNamespace(busy=False,conditions={'camera':1},profile={'pipeline':pipeline}),
                           controller=SimpleNamespace(snapshot=lambda:SimpleNamespace(status='running')),radius=None,
@@ -124,6 +130,35 @@ class DemoQtTests(unittest.TestCase):
         self.feed_selection(manager,now)
         self.assertFalse(manager.run.selections)
         manager.cancel()
+
+    def test_default_ring_hidden_and_active_button_filled(self):
+        options=DemoSettings(practice=False)
+        self.assertFalse(options.show_gaze_ring);self.assertEqual(options.dwell_ms,800)
+        run=DemoRun('board',options,1512,982,(90,90),group='B')
+        window=DemoWindow(run,self.app.primaryScreen(),options)
+        window.resize(1512,982)
+        try:
+            x,y,w,h=run.buttons[0].rect;run.presented(0)
+            run.feed((x+w/2,y+h/2),0,0);run.feed((x+w/2,y+h/2),100_000_000,100_000_000)
+            window.refresh((1300,500),.65,100_000_000)
+            image=QImage(window.size(),QImage.Format.Format_ARGB32_Premultiplied);window.render(image)
+            self.assertEqual(image.pixelColor(int(x+30),int(y+30)).name(),options.active_color.lower())
+            with patch.object(window,'update') as update:
+                window.refresh((1200,500),.65,100_000_000);update.assert_not_called()
+        finally:window.dispose();self.app.processEvents()
+
+    def test_window_mapping_uses_actual_origin_full_screen_and_not_dpr(self):
+        run=DemoRun('board',DemoSettings(),1512,982,(90,90),group='B')
+        window=DemoWindow(run,self.app.primaryScreen(),run.options,screen_rect=ScreenRect(-1512,40,1512,982,2))
+        window.resize(1512,982)
+        try:
+            from PySide6.QtCore import QPointF
+            with patch.object(window,'isFullScreen',return_value=True),patch.object(window,'mapToGlobal',return_value=QPointF(-1512,40)):
+                mapping=window.coordinates();self.assertTrue(mapping.ready)
+                self.assertEqual(mapping.hit_position((1,1)),(1511.,981.))
+            with patch.object(window,'isFullScreen',return_value=True),patch.object(window,'mapToGlobal',return_value=QPointF(-1512,78)):
+                self.assertFalse(window.coordinates().ready)
+        finally:window.dispose();self.app.processEvents()
 
     def test_presentation_persistence_restore_and_success_notice(self):
         now=[0.]

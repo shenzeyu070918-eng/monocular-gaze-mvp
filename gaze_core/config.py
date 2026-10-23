@@ -334,7 +334,8 @@ class AutocalSettings:
 
 @dataclass(frozen=True)
 class DemoSettings:
-    dwell_ms: float = 1000.0
+    dwell_ms: float = 800.0
+    show_gaze_ring: bool = False
     leave_grace_ms: float = 150.0
     cooldown_ms: float = 800.0
     loss_reset_ms: float = 400.0
@@ -359,21 +360,27 @@ class DemoSettings:
     text_color: str = '#112444'
     progress_color: str = '#FFCA55'
     feedback_color: str = '#FFCA55'
+    active_color: str = '#FFD475'
+    debug_before_color: str = '#F47BA9'
+    debug_after_color: str = '#68DBFF'
+    debug_point_px: float = 5.0
+    practice_target_px: float = 5.0
 
     def __post_init__(self):
         import re
         from .devices import finite
         for name in ('dwell_ms','loss_reset_ms','round_s','undo_ms','feedback_ms','flash_ms','speech_timeout_ms',
-                     'progress_px','min_button_px','padding_px','header_px','footer_px'):
+                     'progress_px','min_button_px','padding_px','header_px','footer_px','debug_point_px','practice_target_px'):
             finite(getattr(self,name),'demo.'+name,positive=True)
         for name in ('leave_grace_ms','cooldown_ms','hit_expand_ratio'):
             if finite(getattr(self,name),'demo.'+name)<0:raise ValueError('demo.'+name+' 必须非负')
         if type(self.practice) is not bool:raise ValueError('demo.practice 必须为布尔值')
+        if type(self.show_gaze_ring) is not bool:raise ValueError('demo.show_gaze_ring 必须为布尔值')
         for name,minimum in (('button_font_px',40),('heading_font_px',1)):
             if type(getattr(self,name)) is not int or getattr(self,name)<minimum:raise ValueError('demo.'+name+f' 必须为整数且至少 {minimum}')
         if not isinstance(self.labels,(tuple,list)) or len(self.labels)!=6 or any(not isinstance(v,str) or not v.strip() or len(v)>120 for v in self.labels):
             raise ValueError('demo.labels 需要六条非空短文字，每条不超过120字')
-        for name in ('background','button_color','hole_color','text_color','progress_color','feedback_color'):
+        for name in ('background','button_color','hole_color','text_color','progress_color','feedback_color','active_color','debug_before_color','debug_after_color'):
             if not isinstance(getattr(self,name),str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',getattr(self,name)):
                 raise ValueError('demo.'+name+' 必须为 #RRGGBB')
 

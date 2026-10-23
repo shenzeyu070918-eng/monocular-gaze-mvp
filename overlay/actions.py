@@ -9,6 +9,7 @@ class OverlayActions:
         'clicks': '点击采集', 'click_session': '开始点击采集会话', 'abort_click_session': '中止点击会话',
         'autocal': '点击自动粗校准',
         'demo': '眼控 Demo…', 'presentation': '演示模式',
+        'demo_practice': '重新练习修正',
         'heatmap_toggle':'热力图累加开/关', 'heatmap_view':'查看热力图', 'heatmap_clear':'清空热力图', 'heatmap_export':'导出当前会话热力图',
         'toggle': '隐藏悬浮层', 'pause': '暂停摄像头', 'web': '打开网页', 'quit': '退出',
     }

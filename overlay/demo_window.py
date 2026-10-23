@@ -16,6 +16,7 @@ class DemoWindow(QWidget):
         geometry=screen.geometry()
         self.screen_rect=screen_rect or ScreenRect(geometry.x(),geometry.y(),run.width,run.height)
         self.debug=debug;self.before_position=None;self.mapping_reason=''
+        self._coordinates_cache=None
         self.position=None;self.ring_opacity=0.;self._disposed=False;self._paint_key=None
         self._base_key=None;self._progress_key=None;self._ring_key=None;self._time_key=None
         self._old_button=None;self._old_ring=QRectF();self._old_flash=None
@@ -35,14 +36,22 @@ class DemoWindow(QWidget):
         self._disposed=True;self.hide();self.deleteLater()
 
     def coordinates(self):
+        if self._coordinates_cache is not None:return self._coordinates_cache
         from gaze_core.demo_coordinates import DemoCoordinates
         origin=self.mapToGlobal(QPointF(0,0))
-        return DemoCoordinates(self.screen_rect,window_origin=(origin.x(),origin.y()),
-                               window_size=(self.width(),self.height()),fullscreen=self.isFullScreen())
+        self._coordinates_cache=DemoCoordinates(self.screen_rect,window_origin=(origin.x(),origin.y()),
+                                               window_size=(self.width(),self.height()),fullscreen=self.isFullScreen())
+        return self._coordinates_cache
+
+    def moveEvent(self,event):
+        self._coordinates_cache=None;super().moveEvent(event)
+
+    def resizeEvent(self,event):
+        self._coordinates_cache=None;super().resizeEvent(event)
 
     def refresh(self,position,opacity,now_ns,*,before_position=None):
         run=self.run
-        base=(run.phase,run.page,run.target_id,run.feedback_text,run.speech_failed,run.score,tuple(run.buttons))
+        base=(run.phase,run.page,run.target_id,run.feedback_text,run.speech_failed,run.score,run.practice_message,tuple(run.buttons))
         region=QRegion()
         if base!=self._base_key:self._base_key=base;region=QRegion(self.rect())
         current=run.selector.current
@@ -89,6 +98,7 @@ class DemoWindow(QWidget):
         event.accept()
 
     def changeEvent(self,event):
+        self._coordinates_cache=None
         if (not self._disposed and self.isVisible() and event.type()==QEvent.Type.WindowStateChange
                 and (not self.isFullScreen() or self.isMinimized())):
             self.cancelled.emit('fullscreen_exited')
@@ -98,7 +108,7 @@ class DemoWindow(QWidget):
         run=self.run;now=self.clock();o=self.options
         painter=QPainter(self);painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(),QColor(o.background));painter.setPen(QColor('white'));painter.setFont(self.heading_font)
-        title='看着这个按钮 '+f'{o.dwell_ms/1000:g}'+' 秒试试' if run.phase=='practice' else '用目光说出你的需要' if run.app=='board' else '看住亮起的目标'
+        title='看着中间的点，保持 '+f'{o.dwell_ms/1000:g}'+' 秒' if run.phase=='practice' else '用目光说出你的需要' if run.app=='board' else '看住亮起的目标'
         if run.phase=='playing' and run.app=='game':title+=f'    得分 {run.score}    剩余 {self.remaining(now)} 秒'
         painter.drawText(QRectF(o.padding_px,0,self.width()-2*o.padding_px,o.header_px),Qt.AlignmentFlag.AlignCenter,title)
         painter.setFont(self.button_font)
@@ -114,7 +124,7 @@ class DemoWindow(QWidget):
         else:
             for button in run.buttons:self._button(painter,button,now)
         painter.setFont(self.heading_font);painter.setPen(QColor('white'))
-        footer=('语音不可用，仅显示文字。 ' if run.speech_failed else '')+'Esc 退出；触发后 1 秒内可撤销'
+        footer=(run.practice_message+' · ' if run.phase=='practice' and run.practice_message else '')+('语音不可用，仅显示文字。 ' if run.speech_failed else '')+'Esc 退出；触发后 1 秒内可撤销'
         painter.drawText(QRectF(o.padding_px,self.height()-o.footer_px,self.width()-2*o.padding_px,o.footer_px),Qt.AlignmentFlag.AlignCenter,footer)
         if self.options.show_gaze_ring and self.position is not None and self.ring_opacity>0:
             painter.setOpacity(self.ring_opacity);painter.setPen(QPen(QColor(o.progress_color),o.progress_px))
@@ -134,7 +144,7 @@ class DemoWindow(QWidget):
         stroke=o.progress_px if active else 1
         painter.setBrush(QColor(color));painter.setPen(QPen(QColor(o.progress_color if active else color),stroke))
         painter.drawRoundedRect(rect.adjusted(stroke/2,stroke/2,-stroke/2,-stroke/2),24,24)
-        if button.id=='practice':text='看着这里'
+        if button.id=='practice':text=''
         elif button.id=='next':text=f'下一页 {run.page+1}/{run.pages}'
         elif run.app=='board':text=o.labels[int(button.id)]
         else:text='看这里' if target else ''
@@ -152,6 +162,9 @@ class DemoWindow(QWidget):
         painter.setPen(QColor(o.text_color));painter.setFont(self.button_font)
         text_rect=QRectF(rect.left(),rect.top()+18,rect.width(),60) if hole else rect.adjusted(20,20,-20,-20)
         painter.drawText(text_rect,Qt.AlignmentFlag.AlignCenter|Qt.TextFlag.TextWordWrap,text)
+        if button.id=='practice':
+            painter.setBrush(QColor(o.text_color));painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(rect.center(),o.practice_target_px,o.practice_target_px)
         if active:
             diameter=min(60.,rect.height()/3);circle=QRectF(rect.center().x()-diameter/2,rect.bottom()-diameter-22,diameter,diameter)
             painter.setBrush(Qt.BrushStyle.NoBrush);painter.setPen(QPen(QColor(o.text_color),o.progress_px))

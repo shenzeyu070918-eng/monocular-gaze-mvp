@@ -236,7 +236,7 @@ class OverlaySettings:
     presentation_color: str = '#FFD166'
     presentation_label_font_px: int = 26
     calibration_notice_s: float = 3.0
-    hotkeys: dict = field(default_factory=lambda: dict(toggle='Ctrl+Alt+G', pause='Ctrl+Alt+P', calibrate='Ctrl+Alt+C', panel='Ctrl+Alt+O', heatmap_toggle='Ctrl+Alt+H',heatmap_view='Ctrl+Alt+V',demo='Ctrl+Alt+D'))
+    hotkeys: dict = field(default_factory=lambda: dict(toggle='Ctrl+Alt+G', pause='Ctrl+Alt+P', calibrate='Ctrl+Alt+C', panel='Ctrl+Alt+O', heatmap_toggle='Ctrl+Alt+H',heatmap_view='Ctrl+Alt+V',demo='Ctrl+Alt+D',demo_practice='Ctrl+Alt+R'))
 
     def __post_init__(self):
         import re
@@ -269,8 +269,8 @@ class OverlaySettings:
             raise ValueError('overlay.presentation_label_font_px 必须为正整数')
         if not isinstance(self.presentation_color,str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',self.presentation_color):
             raise ValueError('overlay.presentation_color 必须为 #RRGGBB')
-        if not isinstance(self.hotkeys,dict) or not {'toggle','pause','calibrate','panel'}<=set(self.hotkeys) or set(self.hotkeys)-{'toggle','pause','calibrate','panel','heatmap_toggle','heatmap_view','demo'} or any(not isinstance(v,str) for v in self.hotkeys.values()):
-            raise ValueError('overlay.hotkeys 必须包含 toggle / pause / calibrate / panel，可加 heatmap_toggle / heatmap_view / demo；空字符串禁用该项')
+        if not isinstance(self.hotkeys,dict) or not {'toggle','pause','calibrate','panel'}<=set(self.hotkeys) or set(self.hotkeys)-{'toggle','pause','calibrate','panel','heatmap_toggle','heatmap_view','demo','demo_practice'} or any(not isinstance(v,str) for v in self.hotkeys.values()):
+            raise ValueError('overlay.hotkeys 必须包含 toggle / pause / calibrate / panel，可加 heatmap_toggle / heatmap_view / demo / demo_practice；空字符串禁用该项')
         from urllib.parse import urlsplit
         url=urlsplit(self.web_url)
         if url.scheme!='http' or url.hostname not in {'127.0.0.1','localhost','::1'}:
@@ -341,6 +341,10 @@ class DemoSettings:
     loss_reset_ms: float = 400.0
     hit_expand_ratio: float = .5  # Active button only; 0 disables sticky hit testing.
     practice: bool = True
+    practice_window_ms: float = 600.
+    practice_min_samples: int = 5
+    practice_min_span_ms: float = 500.
+    practice_max_correction_cm: float = 3.
     labels: tuple = ('我想喝水','我不舒服','请叫护士','开灯','是','否')
     round_s: float = 60.0
     undo_ms: float = 1000.0
@@ -376,6 +380,8 @@ class DemoSettings:
             if finite(getattr(self,name),'demo.'+name)<0:raise ValueError('demo.'+name+' 必须非负')
         if type(self.practice) is not bool:raise ValueError('demo.practice 必须为布尔值')
         if type(self.show_gaze_ring) is not bool:raise ValueError('demo.show_gaze_ring 必须为布尔值')
+        from .demo_drift import DriftSettings
+        DriftSettings(self.practice_window_ms,self.practice_min_samples,self.practice_min_span_ms,self.practice_max_correction_cm)
         for name,minimum in (('button_font_px',40),('heading_font_px',1)):
             if type(getattr(self,name)) is not int or getattr(self,name)<minimum:raise ValueError('demo.'+name+f' 必须为整数且至少 {minimum}')
         if not isinstance(self.labels,(tuple,list)) or len(self.labels)!=6 or any(not isinstance(v,str) or not v.strip() or len(v)>120 for v in self.labels):

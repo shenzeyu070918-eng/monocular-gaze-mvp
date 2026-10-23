@@ -135,6 +135,7 @@ overlay:
     heatmap_toggle: Ctrl+Alt+H
     heatmap_view: Ctrl+Alt+V
     demo: Ctrl+Alt+D
+    demo_practice: Ctrl+Alt+R
 
 # M5: offset only, no nine-point fine tuning. Sampling thresholds remain M4's.
 autocal:
@@ -177,6 +178,10 @@ demo:
   loss_reset_ms: 400
   hit_expand_ratio: 0.5  # 0 = off; only expands the accumulating button, not its drawing.
   practice: true
+  practice_window_ms: 600  # Last valid capture-time window before practice trigger.
+  practice_min_samples: 5
+  practice_min_span_ms: 500  # Allow 15 Hz discrete sampling of the 600 ms window.
+  practice_max_correction_cm: 3  # Only checked using measured screen dimensions.
   labels: ['我想喝水', '我不舒服', '请叫护士', '开灯', '是', '否']
   round_s: 60
   undo_ms: 1000

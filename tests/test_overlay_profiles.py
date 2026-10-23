@@ -92,6 +92,20 @@ class OverlayProfilesTests(unittest.TestCase):
         self.assertEqual(self.applied,[IDENTITY]);self.assertIn('九点',self.manager.mode)
         self.assertEqual(self.manager.last_operation,'load')
 
+    def test_old_coordinate_profile_is_not_automatically_applied_and_explains_redo(self):
+        path=self.write();saved=json.loads(path.read_text());saved.pop('coordinate_version')
+        path.write_text(json.dumps(saved));before=path.read_bytes()
+        self.load()
+        self.assertIsNone(self.manager.matrix);self.assertIsNone(self.manager.radius)
+        self.assertEqual(self.applied,[])
+        self.assertIn('坐标换算已更新，请重新九点校准',self.manager.reason)
+        self.assertEqual(self.manager.last_error,'坐标换算已更新，请重新九点校准')
+        self.assertEqual(path.read_bytes(),before)
+        self.write(SHIFTED,'new-coordinate-calibration');self.now=2.
+        self.manager.poll();self.finish()
+        self.assertEqual(self.manager.matrix,SHIFTED)
+        self.assertEqual(self.manager.profile['coordinate_version'],2)
+
     def test_equal_camera_metadata_skips_condition_rebuild_and_copy(self):
         camera=deepcopy(self.camera)
         with patch('overlay.profiles.build_conditions',wraps=build_conditions) as build, \

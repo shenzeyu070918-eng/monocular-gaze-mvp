@@ -1,7 +1,7 @@
 """Opaque, interactive projection UI; all selection/scoring lives in DemoRun."""
 import math
 import time
-from PySide6.QtCore import Qt,QRectF,QEvent,Signal,QPointF
+from PySide6.QtCore import Qt,QRectF,QEvent,Signal,QPointF,QTimer
 from PySide6.QtGui import QColor,QFont,QPainter,QPen,QRegion
 from PySide6.QtWidgets import QWidget
 
@@ -25,6 +25,14 @@ class DemoWindow(QWidget):
         self.winId();self.windowHandle().setScreen(screen)
         self.button_font=QFont();self.button_font.setPixelSize(options.button_font_px);self.button_font.setBold(True)
         self.heading_font=QFont(self.button_font);self.heading_font.setPixelSize(options.heading_font_px)
+        self.star_painter=self.star_timer=self.frame_timer=None;self._star_version=None
+        if run.app=='stars':
+            from .starfield import StarfieldPainter,PaintEventTimer
+            self.star_painter=StarfieldPainter(run.star_settings)
+            self.frame_timer=PaintEventTimer(run.star_settings.frame_budget_ms)
+            self.star_timer=QTimer(self);self.star_timer.setTimerType(Qt.TimerType.PreciseTimer)
+            self.star_timer.setInterval(max(1,round(1000/run.star_settings.animation_fps)))
+            self.star_timer.timeout.connect(self._star_tick)
 
     def open(self):
         self.showFullScreen()
@@ -33,7 +41,26 @@ class DemoWindow(QWidget):
         self.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
 
     def dispose(self):
+        if self._disposed:return
+        if self.star_timer is not None:
+            self.star_timer.stop();self.star_painter.close()
+            # The worker has been joined by DemoSession before this one-off write.
+            from datetime import datetime,timezone
+            from gaze_core.config import ROOT
+            from .starfield import save_starfield_performance
+            path=ROOT/'data/performance'/(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')+'-stars.json')
+            try:
+                report=save_starfield_performance(path,self.run.worker,self.star_painter,frame_report=self.frame_timer.report())
+                m=report['paint_event']['milliseconds']
+                print(f'星空绘制：中位 {m["median"]} ms / P90 {m["p90"]} ms；记录 {path}')
+            except Exception as exc:print('星空性能记录失败：'+str(exc))
         self._disposed=True;self.hide();self.deleteLater()
+
+    def _star_tick(self):
+        if self._disposed:return
+        snapshot=self.run.worker.latest()
+        if snapshot is not None and snapshot['version']!=self._star_version:
+            self._star_version=snapshot['version'];self.update()
 
     def coordinates(self):
         if self._coordinates_cache is not None:return self._coordinates_cache
@@ -51,6 +78,9 @@ class DemoWindow(QWidget):
 
     def refresh(self,position,opacity,now_ns,*,before_position=None):
         run=self.run
+        if self.star_timer is not None:
+            if run.phase in {'playing','replay'} and not self.star_timer.isActive():self.star_timer.start()
+            elif run.phase not in {'playing','replay'}:self.star_timer.stop()
         base=(run.phase,run.page,run.target_id,run.feedback_text,run.speech_failed,run.score,run.practice_message,tuple(run.buttons))
         region=QRegion()
         if base!=self._base_key:self._base_key=base;region=QRegion(self.rect())
@@ -105,8 +135,29 @@ class DemoWindow(QWidget):
         super().changeEvent(event)
 
     def paintEvent(self,event):
+        token=self.frame_timer.start() if self.frame_timer is not None and self.run.phase in {'playing','replay'} else None
+        try:self._paint(event)
+        finally:
+            if token is not None:self.frame_timer.finish(token)
+
+    def _paint(self,event):
         run=self.run;now=self.clock();o=self.options
         painter=QPainter(self);painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if run.app=='stars' and run.phase in {'playing','replay','finished'}:
+            snapshot=run.worker.latest()
+            if not self.star_painter.draw(painter,QRectF(self.rect()),snapshot,now):painter.fillRect(self.rect(),QColor('#040713'))
+            painter.setPen(QColor('#E8EEFF'));painter.setFont(self.heading_font)
+            if snapshot is None:title='准备星空…'
+            elif run.phase=='finished':title=f'找到 {snapshot["found_count"]} 个星座 · 绽放 {snapshot["firework_count"]} 次'
+            elif run.phase=='replay':title=f'找到 {snapshot["found_count"]} 个星座 · 回看你的目光'
+            else:title=f'星空凝视    {math.ceil(snapshot["remaining_s"])} 秒    星座 {snapshot["found_count"]}/{run.star_settings.constellation_count}'
+            painter.drawText(QRectF(o.padding_px,0,self.width()-2*o.padding_px,o.header_px),Qt.AlignmentFlag.AlignCenter,title)
+            painter.drawText(QRectF(o.padding_px,self.height()-o.footer_px,self.width()-2*o.padding_px,o.footer_px),
+                             Qt.AlignmentFlag.AlignCenter,'用目光照亮星座 · 停留绽放 · Esc 退出')
+            if self.debug:self._debug(painter)
+            painter.end()
+            if snapshot is not None and run.phase=='playing':run.presented(now)
+            return
         painter.fillRect(self.rect(),QColor(o.background));painter.setPen(QColor('white'));painter.setFont(self.heading_font)
         title='看着中间的点，保持 '+f'{o.dwell_ms/1000:g}'+' 秒' if run.phase=='practice' else '用目光说出你的需要' if run.app=='board' else '看住亮起的目标'
         if run.phase=='playing' and run.app=='game':title+=f'    得分 {run.score}    剩余 {self.remaining(now)} 秒'

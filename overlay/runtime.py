@@ -152,14 +152,14 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             chooser=QMessageBox(panel)
             chooser.setWindowTitle('眼控 Demo');chooser.setText('请选择体验内容。进入后先练习一次，Esc 随时退出。')
             board=chooser.addButton('沟通板',QMessageBox.ButtonRole.AcceptRole)
-            game=chooser.addButton('眼控打地鼠',QMessageBox.ButtonRole.AcceptRole)
+            stars=chooser.addButton('星空凝视',QMessageBox.ButtonRole.AcceptRole)
             chooser.addButton(QMessageBox.StandardButton.Cancel)
             demo_dialog=chooser
             try:chooser.exec()
             finally:demo_dialog=None
-            if chooser.clickedButton() not in (board,game):return
+            if chooser.clickedButton() not in (board,stars):return
             try:
-                demo.start('board' if chooser.clickedButton() is board else 'game',controls.screen)
+                demo.start('board' if chooser.clickedButton() is board else 'stars',controls.screen)
                 if own_windows is not None:own_windows.refresh()
             except Exception as exc:notice('无法进入 Demo：'+str(exc),True)
         actions.connect('demo',start_demo)

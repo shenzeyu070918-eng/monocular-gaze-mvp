@@ -33,7 +33,8 @@ class AutocalProfilesTests(unittest.TestCase):
         data=load_click_profile(name='unit',conditions=self.conditions,directory=self.directory)
         self.assertEqual(data,saved)
         self.assertEqual(data['conditions_fingerprint'],conditions_id(self.conditions))
-        self.assertEqual(set(data),{'schema_version','pipeline','kind','offset_norm','sample_count','updated_at','conditions_fingerprint'})
+        self.assertEqual(set(data),{'schema_version','coordinate_version','pipeline','kind','offset_norm','sample_count','updated_at','conditions_fingerprint'})
+        self.assertEqual(data['coordinate_version'],2)
         self.assertFalse((self.directory/'unit.json').exists())
         for mutate in (lambda c:c['camera'].update(index=9),lambda c:c['camera'].update(width_px=1280),
                        lambda c:c['screen'].update(width_cm=31.),lambda c:c.update(device_file='other.yaml',device_fingerprint='f'*64)):
@@ -42,6 +43,34 @@ class AutocalProfilesTests(unittest.TestCase):
         path=click_profile_path('unit',self.directory);raw=json.loads(path.read_text());raw['click_positions']=[[.1,.2]]
         path.write_text(json.dumps(raw))
         with self.assertRaisesRegex(ValueError,'未允许'):load_click_profile(name='unit',conditions=self.conditions,directory=self.directory)
+
+    def test_legacy_native_global_click_offsets_stay_valid_without_rewriting(self):
+        saved=save_click_profile([np.float64(.1),np.float64(-.2)],name='unit',count=12,
+                                 conditions=self.conditions,directory=self.directory)
+        path=click_profile_path('unit',self.directory)
+        for version in (None,1):
+            with self.subTest(version=version):
+                legacy=deepcopy(saved)
+                if version is None:legacy.pop('coordinate_version')
+                else:legacy['coordinate_version']=version
+                path.write_text(json.dumps(legacy));before=path.read_bytes()
+                loaded=load_click_profile(name='unit',conditions=self.conditions,directory=self.directory)
+                self.assertEqual(loaded,legacy)
+                self.assertEqual(path.read_bytes(),before)
+        value=self.manager()
+        self.assertEqual(value.matrix,[[1.,0.],[0.,1.],[.1,-.2]])
+        self.assertIn('旧版原生全局坐标',value.reason)
+        self.assertEqual(path.read_bytes(),before)
+        self.assertEqual(value.profile['conditions_fingerprint'],saved['conditions_fingerprint'])
+
+    def test_click_coordinate_version_rejects_unknown_or_noninteger_values(self):
+        original=save_click_profile([.1,-.2],name='unit',count=12,conditions=self.conditions,directory=self.directory)
+        path=click_profile_path('unit',self.directory)
+        for version in (0,3,True,2.):
+            with self.subTest(version=version):
+                data=dict(original,coordinate_version=version);path.write_text(json.dumps(data))
+                with self.assertRaisesRegex(ValueError,'坐标版本无效'):
+                    load_click_profile(name='unit',conditions=self.conditions,directory=self.directory)
 
     def manager(self,**kwargs):
         value=AutocalManager(self.settings,name='unit',directory=self.directory,clock_ns=lambda:self.now,**kwargs)

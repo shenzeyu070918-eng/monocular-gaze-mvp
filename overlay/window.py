@@ -2,7 +2,7 @@
 import time
 from PySide6.QtCore import Qt,QRectF,QTimer,QEvent
 from PySide6.QtGui import QColor,QPainter,QPen,QFont,QFontMetrics,QRegion,QImage
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget,QLabel
 from .mapping import ScreenRect
 from .label import LabelVisibility
 
@@ -32,9 +32,40 @@ class OverlayWindow(QWidget):
         self._label_visibility=LabelVisibility(self.label,options.label_autohide_s,options.fade_ms,
                                                debounce_s=options.label_debounce_s,diagnostic=diagnostic,clock=clock)
         self._label_opacity=1.
+        self._presentation=options.presentation;self._completion_notice=None
+        self._label_visibility.set_persistent(self._presentation)
+        if self._presentation:font.setPixelSize(options.presentation_label_font_px);self.setFont(font)
         self._label_timer=QTimer(self);self._label_timer.setInterval(options.refresh_ms)
         self._label_timer.timeout.connect(self._refresh_label)
-        if not diagnostic and options.label_autohide_s>0:self._label_timer.start()
+        if not diagnostic and not self._presentation and options.label_autohide_s>0:self._label_timer.start()
+
+    def set_presentation(self,enabled):
+        enabled=bool(enabled)
+        if enabled==self._presentation:return
+        old_ring=self._ring_bounds();old_label=self._label_rect()
+        self._presentation=enabled;self._label_visibility.set_persistent(enabled)
+        font=self.font();font.setPixelSize(self.options.presentation_label_font_px if enabled else self.options.label_font_px)
+        self.setFont(font);self._refresh_label()
+        self._update_label_regions(old_label,self._label_rect())
+        self.update(QRegion(old_ring.toAlignedRect())|QRegion(self._ring_bounds().toAlignedRect()))
+
+    def show_calibration_notice(self):
+        if not self._presentation:return
+        if self._completion_notice is not None:
+            self._completion_notice.close();self._completion_notice.deleteLater()
+        label=QLabel('校准完成',self,Qt.WindowType.Tool|Qt.WindowType.FramelessWindowHint|
+                     Qt.WindowType.WindowStaysOnTopHint|Qt.WindowType.WindowTransparentForInput|
+                     Qt.WindowType.WindowDoesNotAcceptFocus|Qt.WindowType.NoDropShadowWindowHint)
+        label.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        font=QFont(self.font());font.setPixelSize(max(40,self.options.presentation_label_font_px*2));font.setBold(True)
+        label.setFont(font);label.setStyleSheet('background: '+self.options.presentation_color+'; color: #112444; padding: 28px;')
+        label.adjustSize();label.move(self.rect_info.x+(self.width()-label.width())//2,self.rect_info.y+(self.height()-label.height())//2)
+        label.winId()
+        if self.native_configure:self.native_configure(label)
+        label.show();self._completion_notice=label
+        # Bound QObject slot: Qt cancels delivery if the parent window dies.
+        QTimer.singleShot(round(self.options.calibration_notice_s*1000),label.hide)
 
     def prepare_native(self):
         # Call outside a Qt virtual callback so failures abort startup visibly.
@@ -54,7 +85,7 @@ class OverlayWindow(QWidget):
 
     def _ring_bounds(self):
         if self.position is None:return QRectF()
-        x,y=self.position;rx,ry=self.radii;pad=self.options.stroke_px+2
+        x,y=self.position;rx,ry=self.radii;pad=(self.options.presentation_stroke_px if self._presentation else self.options.stroke_px)+2
         return QRectF(x-rx-pad,y-ry-pad,2*(rx+pad),2*(ry+pad))
 
     def set_display(self,position,radii,opacity,label,*,label_kind='immediate'):
@@ -113,7 +144,7 @@ class OverlayWindow(QWidget):
             old_rect=self._label_rect()
             self.label=label;self._label_opacity=opacity
             self._update_label_regions(old_rect,self._label_rect())
-        ticking=self._label_visibility.pending or (opacity>0 and not self.diagnostic and self.options.label_autohide_s>0)
+        ticking=self._label_visibility.pending or (opacity>0 and not self.diagnostic and not self._presentation and self.options.label_autohide_s>0)
         if ticking and not self._label_timer.isActive():self._label_timer.start()
         elif not ticking:self._label_timer.stop()
 
@@ -132,7 +163,8 @@ class OverlayWindow(QWidget):
                 painter.setPen(QColor('white'));painter.drawText(text_rect,Qt.AlignmentFlag.AlignCenter,text)
             painter.restore()
         if self.diagnostic:
-            painter.setPen(QPen(QColor(self.options.color),self.options.stroke_px))
+            painter.setPen(QPen(QColor(self.options.presentation_color if self._presentation else self.options.color),
+                                self.options.presentation_stroke_px if self._presentation else self.options.stroke_px))
             size=self.options.diagnostic_size_px
             for index,point in enumerate(((0,0),(1,0),(0,1),(1,1))):
                 x,y=self.rect_info.local(point)
@@ -142,7 +174,8 @@ class OverlayWindow(QWidget):
                                  Qt.AlignmentFlag.AlignCenter,f'{index+1}: {point}')
         elif self.position is not None and self.opacity>0:
             painter.setOpacity(self.opacity)
-            painter.setPen(QPen(QColor(self.options.color),self.options.stroke_px))
+            painter.setPen(QPen(QColor(self.options.presentation_color if self._presentation else self.options.color),
+                                self.options.presentation_stroke_px if self._presentation else self.options.stroke_px))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             x,y=self.position;rx,ry=self.radii
             painter.drawEllipse(QRectF(x-rx,y-ry,rx*2,ry*2))

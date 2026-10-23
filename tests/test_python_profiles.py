@@ -15,6 +15,7 @@ from gaze_core.config import load_settings
 from gaze_core.devices import parse_device
 from gaze_core.evaluation import evaluate
 from gaze_core.profiles import (build_conditions, condition_mismatch_reason, device_fingerprint,
+                                COORDINATE_UPDATE_REQUIRED, PYTHON_COORDINATE_VERSION,
                                 load_manual_web_profile, load_profile, load_python_profile,
                                 profile_age_text, radius_from_profile, save_profile,
                                 save_python_check, save_python_profile)
@@ -71,11 +72,32 @@ class PythonProfilesTests(unittest.TestCase):
             self.assertEqual(path,self.directory/'data/profiles/python/synthetic.json')
             data=load_python_profile(name='synthetic',conditions=self.conditions)
         self.assertEqual(data['pipeline'],'python');self.assertEqual(data['schema_version'],2)
+        self.assertEqual(data['coordinate_version'],PYTHON_COORDINATE_VERSION)
         self.assertEqual(data['matrix'],IDENTITY);self.assertIs(type(data['matrix'][0][0]),float)
         self.assertEqual(data['calibration']['sample_count'],180)
         self.assertIs(type(data['calibration']['sample_count']),int)
         self.assertEqual(data['coordinates']['input'],'unfiltered_unclipped_raw_fullscreen_normalized')
         self.assertFalse(data['coordinates']['clip']);self.assertIsNone(radius_from_profile(data,self.conditions))
+
+    def test_old_python_coordinate_versions_never_load_or_reuse_check_radius(self):
+        path=self.save();self.check();current=json.loads(path.read_text())
+        self.assertEqual(current['coordinate_version'],2)
+        self.assertIsNotNone(radius_from_profile(current,self.conditions))
+        for version in (None,1,True,2.,3):
+            with self.subTest(version=version):
+                old=deepcopy(current)
+                if version is None:old.pop('coordinate_version')
+                else:old['coordinate_version']=version
+                path.write_text(json.dumps(old),encoding='utf-8');before=path.read_bytes()
+                with self.assertRaisesRegex(ValueError,COORDINATE_UPDATE_REQUIRED):self.load()
+                with self.assertRaisesRegex(ValueError,COORDINATE_UPDATE_REQUIRED):radius_from_profile(old,self.conditions)
+                with self.assertRaisesRegex(ValueError,COORDINATE_UPDATE_REQUIRED):self.check()
+                self.assertEqual(path.read_bytes(),before)
+        self.save(calibration_id='corrected-coordinates')
+        renewed=self.load()
+        self.assertEqual(renewed['coordinate_version'],2)
+        self.assertEqual(renewed['calibration_id'],'corrected-coordinates')
+        self.assertIsNone(renewed['latest_check'])
 
     def test_runtime_uses_actual_resolution_camera_index_and_screen(self):
         metadata=CameraAdapter(self.device).prepare((1280,960)).metadata
@@ -124,6 +146,7 @@ class PythonProfilesTests(unittest.TestCase):
         self.save();summary=self.summary();before=deepcopy(summary)
         self.check(summary)
         profile=self.load();check=profile['latest_check']
+        self.assertEqual(profile['coordinate_version'],2)
         self.assertEqual(summary,before);self.assertEqual(check['summary'],summary)
         self.assertEqual(check['calibration_id'],'calibration-1');self.assertEqual(check['matrix_id'],profile['matrix_id'])
         self.assertEqual(check['estimated_distance_cm_median'],48.);self.assertEqual(check['estimated_distance_sample_count'],40)

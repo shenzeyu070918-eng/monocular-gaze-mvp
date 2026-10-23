@@ -170,7 +170,8 @@ heatmap:
 
 # M8: display coordinates only; calibration/evaluation continue using raw data.
 demo:
-  dwell_ms: 1000
+  dwell_ms: 800
+  show_gaze_ring: false  # Highlight the button rather than encourage chasing a noisy ring.
   leave_grace_ms: 150
   cooldown_ms: 800
   loss_reset_ms: 400
@@ -195,3 +196,8 @@ demo:
   text_color: '#112444'
   progress_color: '#FFCA55'
   feedback_color: '#FFCA55'
+  active_color: '#FFD475'
+  debug_before_color: '#F47BA9'
+  debug_after_color: '#68DBFF'
+  debug_point_px: 5
+  practice_target_px: 5

@@ -10,7 +10,7 @@ from gaze_core.demo import DemoRun,button_layout
 
 class DwellTests(unittest.TestCase):
     def setUp(self):
-        self.options=DemoSettings()
+        self.options=DemoSettings(dwell_ms=1000)
         self.selector=DwellSelector(self.options,(20,20))
         self.selector.set_buttons([Button('a',(0,0,100,100)),Button('b',(120,0,100,100))])
 
@@ -65,7 +65,7 @@ class DwellTests(unittest.TestCase):
 
 class DemoTests(unittest.TestCase):
     def make(self,app='board',**options):
-        return DemoRun(app,replace(DemoSettings(),**options),1512,982,(100,100),group='B',rng=random.Random(42))
+        return DemoRun(app,replace(DemoSettings(dwell_ms=1000),**options),1512,982,(100,100),group='B',rng=random.Random(42))
 
     def select(self,run,target,started=0):
         button=next(b for b in run.buttons if b.id==target);x,y,w,h=button.rect

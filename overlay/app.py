@@ -37,6 +37,7 @@ def main(argv=None):
     parser.add_argument('--control-panel',action='store_true',help='启动时显示控制面板')
     parser.add_argument('--profile-seconds',type=float,default=None,help='相机与档案就绪后剖析主线程定时回调 N 秒，统计保存到 data/performance/')
     parser.add_argument('--verbose',action='store_true',help='在终端显示完整配置来源和启动诊断；默认写入 data/logs/')
+    parser.add_argument('--demo-debug',action='store_true',help='Demo中显示修正前后点、按钮中心与实际窗口边界')
     args=parser.parse_args(argv)
     if args.duration is not None and (not args.diagnostic or not 0<args.duration<float('inf')):
         parser.error('--duration 必须为有限正数且只用于 --diagnostic')
@@ -132,7 +133,7 @@ def _run(args,startup):
         from types import SimpleNamespace
         controls=SimpleNamespace(actions=actions,panel=panel,screen=screen,mode=mode)
         try:return run_camera_overlay(app,window,tray,pause,quit_action,timer,settings,platforms.camera_permission,controls=controls,
-                                     profile_seconds=args.profile_seconds)
+                                     profile_seconds=args.profile_seconds,demo_debug=args.demo_debug)
         finally:finished=True;panel.hide()
     except Exception as exc:
         print(f'悬浮层启动失败：{exc}',file=sys.stderr)

@@ -47,6 +47,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         from .session import OverlaySession
         session=OverlaySession(settings,window.rect_info,notice=notice,restore=restore,
                                results=controls.panel.results.setPlainText)
+        session.geometry_logger=getattr(controls,'log_detail',None)
         controller=OverlayController(settings,result_sink=session.sink,shutdown=session.close)
         session.controller=controller
         heatmap=getattr(session,'heatmap',None)

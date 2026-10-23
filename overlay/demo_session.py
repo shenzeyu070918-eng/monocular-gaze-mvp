@@ -29,7 +29,11 @@ class DemoSession:
         settings=s.settings;rect=self.overlay.rect_info
         radius=s.radius if s.radius is not None else settings.overlay.radius_cm
         radii=rect.radii(radius,settings.geometry,settings.overlay.fallback_radius_px)
-        run=DemoRun(app,settings.demo,rect.width,rect.height,radii,group=group,stale_ms=settings.overlay.stale_ms)
+        if app=='stars':
+            from .star_run import StarDemoRun
+            run=StarDemoRun(settings.demo,rect.width,rect.height,radii,group=group,settings=settings.starfield,
+                            clock_ns=self.clock,stale_ms=settings.overlay.stale_ms)
+        else:run=DemoRun(app,settings.demo,rect.width,rect.height,radii,group=group,stale_ms=settings.overlay.stale_ms)
         from gaze_core.demo_drift import DemoDrift,DriftSettings
         o=settings.demo;geometry=settings.geometry
         self.drift=DemoDrift(DriftSettings(o.practice_window_ms,o.practice_min_samples,o.practice_min_span_ms,o.practice_max_correction_cm),
@@ -39,7 +43,9 @@ class DemoSession:
             from .demo_window import DemoWindow
             factory=DemoWindow
         else:factory=self.window_factory
-        window=factory(run,qscreen,settings.demo,clock_ns=self.clock,screen_rect=rect,debug=self.debug)
+        try:window=factory(run,qscreen,settings.demo,clock_ns=self.clock,screen_rect=rect,debug=self.debug)
+        except Exception:
+            run.close(self.clock(),'window_closed');self.drift=None;raise
         self._saved=(self.overlay.isVisible(),self.panel.isVisible());self._token=self._context()
         self.run,self.window=run,window;self._recorded={};self._deferred=[]
         self._practice_status('等待看着练习按钮中间的点' if settings.demo.practice else '未做本次 Demo 漂移修正')
@@ -55,6 +61,8 @@ class DemoSession:
         if self._context()!=self._token:self.cancel('conditions_changed');return
         if not active:self.cancel('camera_paused');return
         run=self.run;run.advance(now_ns)
+        if run.app=='stars' and run.worker.error:
+            self.notice(run.worker.error,True);self.cancel('prediction_error');return
         mapping=self.window.coordinates();self._mapping=mapping
         self.window.mapping_reason=mapping.reason
         if mapping.reason!=self._mapping_reason:

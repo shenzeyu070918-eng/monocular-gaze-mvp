@@ -157,6 +157,7 @@ class DemoQtTests(unittest.TestCase):
                 mapping=window.coordinates();self.assertTrue(mapping.ready)
                 self.assertEqual(mapping.hit_position((1,1)),(1511.,981.))
             with patch.object(window,'isFullScreen',return_value=True),patch.object(window,'mapToGlobal',return_value=QPointF(-1512,78)):
+                window._coordinates_cache=None  # A native Move event invalidates this cache.
                 self.assertFalse(window.coordinates().ready)
         finally:window.dispose();self.app.processEvents()
 

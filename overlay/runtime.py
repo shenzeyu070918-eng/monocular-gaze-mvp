@@ -163,6 +163,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
                 if own_windows is not None:own_windows.refresh()
             except Exception as exc:notice('无法进入 Demo：'+str(exc),True)
         actions.connect('demo',start_demo)
+        actions.connect('demo_practice',demo.repractice)
         redo_dialog=None
         def offer_redo(quality,decide):
             nonlocal redo_dialog
@@ -394,6 +395,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             demo_active=demo is not None and demo.active
             ready=active and session.latest is not None and not session.active and not demo_active and not session.profiles.busy and not click_active
             update(actions['demo'],'setEnabled',ready)
+            update(actions['demo_practice'],'setEnabled',demo_active and active)
             for name in ('calibrate','check'):update(actions[name],'setEnabled',ready)
             update(actions['load_web'],'setEnabled',ready)
             update(actions['reset'],'setEnabled',not session.active and not demo_active and not click_active and not session.profiles.busy and session.profiles.profile is not None)

@@ -46,6 +46,7 @@ class DemoRun:
         self.speech_failed=False;self.reason=None;self.events=[];self.pending=None
         self.selections=[];self.score=0;self.reactions=[];self.last_sequence=-1
         self._reported=False
+        self.practice_gate=None;self.practice_message=''
         self._configure()
 
     @property
@@ -109,6 +110,9 @@ class DemoRun:
         result=self.selector.feed(point,capture_ns,now_ns,valid=valid)
         if result is None:return None
         target=result['target_id'];button=next(b for b in self.buttons if b.id==target)
+        if self.phase=='practice' and self.practice_gate is not None and not self.practice_gate(button,result):
+            self.selector.cooldown_until=0
+            return None
         self._confirm(now_ns)
         was_practice=self.phase=='practice'
         scored=self.app=='game' and not was_practice and target==self.target_id
@@ -121,7 +125,7 @@ class DemoRun:
         self._event('demo_selection',action='triggered',**event)
         self.flash_until=now_ns+int(self.options.flash_ms*1e6);self.flash_rect=button.rect
         if was_practice:
-            self.feedback_text='学会了！';self._feedback(now_ns,self.options.cooldown_ms)
+            self.feedback_text=self.practice_message or '学会了！';self._feedback(now_ns,self.options.cooldown_ms)
         elif target=='next':
             self.page=(self.page+1)%self.pages;self._configure()
         elif self.app=='board':
@@ -139,6 +143,12 @@ class DemoRun:
 
     def speech_finished(self,success=True):
         self.speech_pending=False;self.speech_failed=not success
+
+    def repractice(self,now_ns):
+        if not self.active:return False
+        self.speech_pending=False;self.phase='practice';self.practice_message=''
+        self.selector.cooldown_until=0;self._configure()
+        return True
 
     def _summary(self,now_ns,reason):
         self._reported=True

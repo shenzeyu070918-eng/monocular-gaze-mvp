@@ -9,6 +9,7 @@ class DemoSession:
         self.window_factory=window_factory;self.speech_factory=speech_factory;self.clock=clock_ns
         self.run=self.window=self.speech=None;self._recorded={};self._saved=None
         self._token=None;self._deferred=[];self.debug=debug;self._mapping_reason=None
+        self.drift=None;self._mapping=None
 
     @property
     def active(self):return self.run is not None
@@ -29,6 +30,11 @@ class DemoSession:
         radius=s.radius if s.radius is not None else settings.overlay.radius_cm
         radii=rect.radii(radius,settings.geometry,settings.overlay.fallback_radius_px)
         run=DemoRun(app,settings.demo,rect.width,rect.height,radii,group=group,stale_ms=settings.overlay.stale_ms)
+        from gaze_core.demo_drift import DemoDrift,DriftSettings
+        o=settings.demo;geometry=settings.geometry
+        self.drift=DemoDrift(DriftSettings(o.practice_window_ms,o.practice_min_samples,o.practice_min_span_ms,o.practice_max_correction_cm),
+                             width_cm=geometry.width_cm,height_cm=geometry.height_cm,measured=geometry.measured)
+        run.practice_gate=self._practice_gate
         if self.window_factory is None:
             from .demo_window import DemoWindow
             factory=DemoWindow
@@ -36,6 +42,7 @@ class DemoSession:
         window=factory(run,qscreen,settings.demo,clock_ns=self.clock,screen_rect=rect,debug=self.debug)
         self._saved=(self.overlay.isVisible(),self.panel.isVisible());self._token=self._context()
         self.run,self.window=run,window;self._recorded={};self._deferred=[]
+        self._practice_status('等待看着练习按钮中间的点' if settings.demo.practice else '未做本次 Demo 漂移修正')
         window.cancelled.connect(self.cancel)
         try:
             s.set_demo_active(True)
@@ -48,21 +55,45 @@ class DemoSession:
         if self._context()!=self._token:self.cancel('conditions_changed');return
         if not active:self.cancel('camera_paused');return
         run=self.run;run.advance(now_ns)
-        mapping=self.window.coordinates()
+        mapping=self.window.coordinates();self._mapping=mapping
         self.window.mapping_reason=mapping.reason
         if mapping.reason!=self._mapping_reason:
             self._mapping_reason=mapping.reason
             if not mapping.ready:self.notice('Demo 坐标暂不可用：'+mapping.reason,False)
         if prediction is not None and eligible:
-            point=None if display.position is None else mapping.hit_position(display.position)
+            valid=display.tracking and mapping.ready and not self.panel.isVisible()
+            if run.phase=='practice':
+                self.drift.observe(display.position,prediction.captured_ns,valid=valid,now_ns=now_ns)
+            corrected=self.drift.apply(display.position)
+            point=None if corrected is None else mapping.hit_position(corrected)
             event=run.feed(point,prediction.captured_ns,now_ns,
-                           valid=display.tracking and mapping.ready and not self.panel.isVisible(),sequence=prediction.sequence)
+                           valid=valid,sequence=prediction.sequence)
             if event is not None and run.app=='board' and event['stage']=='application' and event['target_id']!='next':
                 self._speak(run.feedback_text)
         if self.speech is not None and not run.speech_pending:self.speech.stop()
         self._events()
-        point=None if display.position is None else mapping.screen_to_window(display.position)
-        self.window.refresh(point,display.opacity,now_ns,before_position=point)
+        before=None if display.position is None else mapping.screen_to_window(display.position)
+        corrected=self.drift.apply(display.position)
+        point=None if corrected is None else mapping.screen_to_window(corrected)
+        self.window.refresh(point,display.opacity,now_ns,before_position=before)
+
+    def _practice_status(self,text):
+        if hasattr(self.panel,'demo_status'):self.panel.demo_status.setText('Demo 练习修正：'+text)
+
+    def _practice_gate(self,button,event):
+        x,y,w,h=button.rect
+        target=self._mapping.window_to_screen((x+w/2,y+h/2))
+        result=self.drift.estimate(target,event['capture_ns'])
+        self.run.practice_message=result.reason;self._practice_status(result.reason)
+        return result.status in {'applied','unmeasured'}
+
+    def repractice(self):
+        if not self.active:return False
+        if self.speech is not None:self.speech.stop()
+        self.drift.restart();self.run.repractice(self.clock())
+        self._practice_status('请看着练习按钮中间的点；新的结果替换旧偏移')
+        self.panel.hide();self.window.open()
+        return True
 
     def _speak(self,text):
         if self.speech is None:
@@ -100,6 +131,8 @@ class DemoSession:
         undone=bool(self.run.selections and self.run.selections[-1]['false_activation'] is True)
         if self.speech is not None:self.speech.stop();self.speech=None
         self.window.dispose();self.window=None;self.run=None
+        self.drift=None;self._mapping=None
+        self._practice_status('Demo 已结束，会话偏移已清除')
         self.session.set_demo_active(False)
         if restore:
             self.overlay.setVisible(self._saved[0])

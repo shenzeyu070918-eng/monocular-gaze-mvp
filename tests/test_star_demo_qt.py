@@ -55,15 +55,25 @@ class StarDemoQtTests(unittest.TestCase):
         try:
             self.assertIsNone(run.started_ns)
             image=QImage(window.size(),QImage.Format.Format_ARGB32_Premultiplied)
+            with patch.object(run.worker,'latest',return_value=None):
+                window.render(image)
+                self.assertIsNone(run.started_ns)
             window.render(image)
             self.assertEqual(run.started_ns,0);self.assertEqual(run.worker.latest()['phase'],'playing')
-            self.assertEqual(window.frame_timer.report()['count'],1)
+            self.assertEqual(window.frame_timer.report()['count'],2)
             with patch.object(window,'update') as update:
                 window._star_tick();update.assert_called_once()
                 update.reset_mock();window._star_tick();update.assert_not_called()
             self.assertEqual(image.pixelColor(0,0).name(),'#040713')
             self.assertEqual(len(run.worker.latest()['positions']),2000)
+            window.star_timer.stop();window._star_deadline=None
             window.refresh((500,400),.7,0);self.assertTrue(window.star_timer.isActive())
+            intervals=[]
+            for _ in range(60):
+                interval=window.star_timer.interval();intervals.append(interval)
+                now[0]+=interval*1_000_000;window._star_tick()
+            self.assertEqual(set(intervals),{16,17})
+            self.assertLessEqual(abs(sum(intervals)-1000),1)
             run.repractice(1)
             window.refresh((500,400),.7,1);self.assertFalse(window.star_timer.isActive())
             self.assertTrue(run.worker.model.paused)

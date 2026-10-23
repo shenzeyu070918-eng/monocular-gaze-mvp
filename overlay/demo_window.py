@@ -25,13 +25,13 @@ class DemoWindow(QWidget):
         self.winId();self.windowHandle().setScreen(screen)
         self.button_font=QFont();self.button_font.setPixelSize(options.button_font_px);self.button_font.setBold(True)
         self.heading_font=QFont(self.button_font);self.heading_font.setPixelSize(options.heading_font_px)
-        self.star_painter=self.star_timer=self.frame_timer=None;self._star_version=None
+        self.star_painter=self.star_timer=self.frame_timer=None;self._star_version=None;self._star_deadline=None
         if run.app=='stars':
             from .starfield import StarfieldPainter,PaintEventTimer
             self.star_painter=StarfieldPainter(run.star_settings)
             self.frame_timer=PaintEventTimer(run.star_settings.frame_budget_ms)
             self.star_timer=QTimer(self);self.star_timer.setTimerType(Qt.TimerType.PreciseTimer)
-            self.star_timer.setInterval(max(1,round(1000/run.star_settings.animation_fps)))
+            self.star_timer.setSingleShot(True)
             self.star_timer.timeout.connect(self._star_tick)
 
     def open(self):
@@ -61,6 +61,15 @@ class DemoWindow(QWidget):
         snapshot=self.run.worker.latest()
         if snapshot is not None and snapshot['version']!=self._star_version:
             self._star_version=snapshot['version'];self.update()
+        if self.run.phase in {'playing','replay'}:self._arm_star_timer()
+
+    def _arm_star_timer(self):
+        # Absolute deadlines alternate 16/17 ms at 60 Hz. A fixed rounded
+        # 17 ms interval would impose a 58.8 Hz ceiling before drawing costs.
+        now=self.clock();period=1e9/self.run.star_settings.animation_fps
+        self._star_deadline=now+period if self._star_deadline is None else self._star_deadline+period
+        if self._star_deadline<=now:self._star_deadline=now+period
+        self.star_timer.start(max(1,math.ceil((self._star_deadline-now)/1e6)))
 
     def coordinates(self):
         if self._coordinates_cache is not None:return self._coordinates_cache
@@ -79,8 +88,8 @@ class DemoWindow(QWidget):
     def refresh(self,position,opacity,now_ns,*,before_position=None):
         run=self.run
         if self.star_timer is not None:
-            if run.phase in {'playing','replay'} and not self.star_timer.isActive():self.star_timer.start()
-            elif run.phase not in {'playing','replay'}:self.star_timer.stop()
+            if run.phase in {'playing','replay'} and not self.star_timer.isActive():self._arm_star_timer()
+            elif run.phase not in {'playing','replay'}:self.star_timer.stop();self._star_deadline=None
         base=(run.phase,run.page,run.target_id,run.feedback_text,run.speech_failed,run.score,run.practice_message,tuple(run.buttons))
         region=QRegion()
         if base!=self._base_key:self._base_key=base;region=QRegion(self.rect())

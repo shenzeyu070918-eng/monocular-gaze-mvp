@@ -131,7 +131,7 @@ def _run(args,startup):
         # Camera integration is kept below the diagnostic path.
         from .runtime import run_camera_overlay
         from types import SimpleNamespace
-        controls=SimpleNamespace(actions=actions,panel=panel,screen=screen,mode=mode)
+        controls=SimpleNamespace(actions=actions,panel=panel,screen=screen,mode=mode,log_detail=startup.detail)
         try:return run_camera_overlay(app,window,tray,pause,quit_action,timer,settings,platforms.camera_permission,controls=controls,
                                      profile_seconds=args.profile_seconds,demo_debug=args.demo_debug)
         finally:finished=True;panel.hide()

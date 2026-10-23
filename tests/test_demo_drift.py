@@ -8,6 +8,14 @@ from gaze_core.demo_drift import DemoDrift, DriftSettings
 
 
 class DemoDriftTests(unittest.TestCase):
+    def test_delivery_delay_does_not_shorten_capture_window(self):
+        drift=DemoDrift(width_cm=30,height_cm=20,measured=True)
+        for ms in range(0,801,50):
+            drift.observe((.48,.47),ms*1_000_000,now_ns=(ms+200)*1_000_000)
+        result=drift.estimate((.5,.5),800_000_000)
+        self.assertTrue(result.applied)
+        self.assertEqual(result.span_ms,600.)
+        self.assertEqual(result.sample_count,13)
     def make(self, **kwargs):
         values = dict(width_cm=30., height_cm=20., measured=True)
         values.update(kwargs)

@@ -117,7 +117,9 @@ class DemoDrift:
         if now_ns is not None and capture_ns > now_ns:
             return False
         self._last_capture_ns = capture_ns
-        self._trim(capture_ns if now_ns is None else max(capture_ns, now_ns))
+        # The last 600 ms is on the capture clock, ending at the trigger's
+        # capture. UI/inference delivery delay must not shorten that window.
+        self._trim(capture_ns)
         if (not valid or position is None or
                 (now_ns is not None and now_ns - capture_ns > self.settings.window_ms * 1_000_000)):
             return False

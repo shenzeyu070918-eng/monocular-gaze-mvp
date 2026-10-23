@@ -1,4 +1,4 @@
-"""Shared configuration without UI or model imports."""
+"""Shared configuration without UI or inference model imports."""
 from dataclasses import dataclass, replace, field
 import math
 from pathlib import Path

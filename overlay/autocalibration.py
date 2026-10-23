@@ -130,6 +130,8 @@ class AutocalManager:
             if profile is not None and profile['sample_count']<self.options.min_clicks:
                 raise ValueError('粗校准档案的点击数未达到当前最少点击数')
             self.reason='已匹配点击粗校准档案' if profile is not None else '没有匹配粗校准档案，等待新点击'
+            if profile is not None and profile.get('coordinate_version',1)==1:
+                self.reason+='（旧版原生全局坐标，不受任务窗口偏移影响）'
         except (ValueError,OSError) as exc:
             profile=None;self.reason=str(exc)
         if epoch==self._epoch:

@@ -4,11 +4,10 @@ The screen rectangle includes the menu-bar area.  ``window_origin`` is the
 actual client origin in global *logical* coordinates (for example Qt's
 ``mapToGlobal(QPoint(0, 0))``), not the outer native frame origin.  A native
 full-screen transition may temporarily change that client rectangle; drawing
-can still inspect the mappings, but ``hit_position`` refuses selection until
-the complete built-in screen is covered.
+can still inspect the mappings. A notched Mac may place the full-screen client
+below the menu/notch area; that contained rectangle is valid without rescaling
+the full-screen normalized signal to the smaller client.
 """
-from math import isclose
-
 from .devices import finite
 
 
@@ -45,11 +44,12 @@ class DemoCoordinates:
 
     @property
     def geometry_matches(self):
+        """Whether the actual client is wholly within the built-in screen."""
         if self.window_origin is None or self.window_size is None:
             return False
-        return all(isclose(a, b, rel_tol=0., abs_tol=self.tolerance_px)
-                   for a, b in zip(self.screen_origin + self.screen_size,
-                                   self.window_origin + self.window_size))
+        tolerance=self.tolerance_px
+        return all(s-tolerance<=w and w+size<=s+extent+tolerance
+                   for s,extent,w,size in zip(self.screen_origin,self.screen_size,self.window_origin,self.window_size))
 
     @property
     def ready(self):
@@ -64,7 +64,7 @@ class DemoCoordinates:
         if self.window_origin is None or self.window_size is None:
             return '尚未获得 Demo 窗口的实际客户区坐标'
         if not self.geometry_matches:
-            return 'Demo 窗口未覆盖完整内屏逻辑区域（含菜单栏），暂不进行命中判断'
+            return '全屏窗口客户区超出内置屏逻辑区域，暂不进行命中判断'
         return ''
 
     def screen_to_global(self, position):

@@ -10,6 +10,7 @@ class DemoSession:
         self.run=self.window=self.speech=None;self._recorded={};self._saved=None
         self._token=None;self._deferred=[];self.debug=debug;self._mapping_reason=None
         self.drift=None;self._mapping=None
+        self._viewport=None;self._coordinate_blocked_since=None
 
     @property
     def active(self):return self.run is not None
@@ -48,6 +49,8 @@ class DemoSession:
             run.close(self.clock(),'window_closed');self.drift=None;raise
         self._saved=(self.overlay.isVisible(),self.panel.isVisible());self._token=self._context()
         self.run,self.window=run,window;self._recorded={};self._deferred=[]
+        self._viewport=None;self._coordinate_blocked_since=None
+        run.prepare_coordinates=self._prepare_coordinates
         self._practice_status('等待看着练习按钮中间的点' if settings.demo.practice else '未做本次 Demo 漂移修正')
         window.cancelled.connect(self.cancel)
         try:
@@ -60,16 +63,14 @@ class DemoSession:
         if not self.active:return
         if self._context()!=self._token:self.cancel('conditions_changed');return
         if not active:self.cancel('camera_paused');return
-        run=self.run;run.advance(now_ns)
+        run=self.run
         if run.app=='stars' and run.worker.error:
             self.notice(run.worker.error,True);self.cancel('prediction_error');return
-        mapping=self.window.coordinates();self._mapping=mapping
-        self.window.mapping_reason=mapping.reason
-        if mapping.reason!=self._mapping_reason:
-            self._mapping_reason=mapping.reason
-            if not mapping.ready:self.notice('Demo 坐标暂不可用：'+mapping.reason,False)
+        mapping=self.window.coordinates()
+        coordinate_ready=self._prepare_coordinates(mapping,now_ns)
+        run.advance(now_ns)
         if prediction is not None and eligible:
-            valid=display.tracking and mapping.ready and not self.panel.isVisible()
+            valid=display.tracking and coordinate_ready and not self.panel.isVisible()
             if run.phase=='practice':
                 self.drift.observe(display.position,prediction.captured_ns,valid=valid,now_ns=now_ns)
             corrected=self.drift.apply(display.position)
@@ -80,10 +81,41 @@ class DemoSession:
                 self._speak(run.feedback_text)
         if self.speech is not None and not run.speech_pending:self.speech.stop()
         self._events()
-        before=None if display.position is None else mapping.screen_to_window(display.position)
+        before=None if display.position is None or mapping.window_origin is None else mapping.screen_to_window(display.position)
         corrected=self.drift.apply(display.position)
-        point=None if corrected is None else mapping.screen_to_window(corrected)
+        point=None if corrected is None or mapping.window_origin is None else mapping.screen_to_window(corrected)
         self.window.refresh(point,display.opacity,now_ns,before_position=before)
+
+    def _prepare_coordinates(self,mapping,now_ns):
+        """Used by first paint AND frame delivery, before any target is dated."""
+        self._mapping=mapping
+        reason=mapping.reason
+        if mapping.ready:
+            signature=(mapping.window_origin,mapping.window_size)
+            try:
+                changed=self._viewport is not None and signature!=self._viewport
+                if changed and self.run.application_sampled:
+                    raise ValueError('Demo 可见区域已变化，请按 Esc 退出后重新进入')
+                resized=self.run.resize_viewport(*mapping.window_size,now_ns)
+                if resized or changed:
+                    old=self.drift
+                    self.drift=type(old)(old.settings,width_cm=old.width_cm,height_cm=old.height_cm,measured=old.measured)
+                    if changed and self.run.options.practice:self.run.repractice(now_ns)
+                self.run.target_to_screen=mapping.window_to_screen
+                self._viewport=signature
+            except ValueError as exc:reason=str(exc)
+        ready=mapping.ready and not reason
+        self.window.mapping_reason=reason
+        if reason!=self._mapping_reason:
+            self._mapping_reason=reason
+            if reason:self.notice('Demo 坐标暂不可用：'+reason,False)
+        if ready:
+            self._coordinate_blocked_since=None;self.window.coordinate_notice=''
+        else:
+            if self._coordinate_blocked_since is None:self._coordinate_blocked_since=now_ns
+            delay=self.session.settings.overlay.coordinate_warning_s*1e9
+            self.window.coordinate_notice=('坐标暂不可用：'+reason+' · Esc 退出') if now_ns-self._coordinate_blocked_since>=delay else ''
+        return ready
 
     def _practice_status(self,text):
         if hasattr(self.panel,'demo_status'):self.panel.demo_status.setText('Demo 练习修正：'+text)
@@ -140,6 +172,7 @@ class DemoSession:
         if self.speech is not None:self.speech.stop();self.speech=None
         self.window.dispose();self.window=None;self.run=None
         self.drift=None;self._mapping=None
+        self._viewport=None;self._coordinate_blocked_since=None
         self._practice_status('Demo 已结束，会话偏移已清除')
         self.session.set_demo_active(False)
         if restore:

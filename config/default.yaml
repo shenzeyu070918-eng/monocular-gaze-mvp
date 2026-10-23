@@ -100,6 +100,7 @@ overlay:
   presentation_color: '#FFD166'
   presentation_label_font_px: 26
   calibration_notice_s: 3
+  coordinate_warning_s: 1.0  # Explain blocked geometry on the task/Demo itself after this delay.
   screen_debounce_ms: 300  # Coalesce projector topology signals; never query displays in the 16ms tick.
   screen_retry_count: 3    # Allow Qt/AppKit/Quartz topology snapshots to settle before reporting unavailable.
   radius_cm: 2.0  # Illustrative fallback only; M3b will use a matching B check.

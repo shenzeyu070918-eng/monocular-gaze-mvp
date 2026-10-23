@@ -37,9 +37,9 @@ class DemoCoordinateTests(unittest.TestCase):
         mapping = self.mapping(window_origin=(-1502, 54), window_size=(1502, 958))
         self.assertEqual(mapping.screen_to_window((0, 0)), (-10., -24.))
         self.assertEqual(mapping.window_to_screen((-10, -24)), (0., 0.))
-        self.assertFalse(mapping.ready)
-        self.assertIsNone(mapping.hit_position((.5, .5)))
-        self.assertIn('含菜单栏', mapping.reason)
+        self.assertTrue(mapping.ready)
+        self.assertEqual(mapping.hit_position((.5, .5)),(745.5,466.5))
+        self.assertEqual(mapping.reason,'')
 
     def test_transition_or_nonfullscreen_never_accepts_hits(self):
         for values, reason in ((dict(fullscreen=False), '尚未进入全屏'),
@@ -51,8 +51,10 @@ class DemoCoordinateTests(unittest.TestCase):
             self.assertIsNone(mapping.hit_position((.5, .5)))
             self.assertIn(reason, mapping.reason)
 
-    def test_client_geometry_must_match_whole_screen(self):
-        for values in (dict(window_origin=(-1512, 62)), dict(window_size=(1512, 950)),
+    def test_client_geometry_must_stay_inside_screen(self):
+        self.assertTrue(self.mapping(window_origin=(-1512,62),window_size=(1512,950)).ready)
+        self.assertTrue(self.mapping(window_size=(1512,950)).ready)
+        for values in (dict(window_origin=(-1512, 62)),
                        dict(window_size=(3024, 1964)), dict(window_origin=(0, 0))):
             mapping = self.mapping(**values)
             self.assertFalse(mapping.geometry_matches)

@@ -53,7 +53,26 @@ class DemoRun:
         self.selections=[];self.score=0;self.reactions=[];self.last_sequence=-1
         self._reported=False
         self.practice_gate=None;self.practice_message=''
+        self.target_to_screen=None
+        self.application_sampled=False
         self._configure()
+
+    def resize_viewport(self,width,height,now_ns):
+        """Relayout to actual visible client before accepting any samples."""
+        if (width,height)==(self.width,self.height):return False
+        if self.started_ns is not None and self.application_sampled:
+            raise ValueError('Demo 可见区域已变化，请退出后重新进入')
+        if self.app=='stars':
+            w=max(self.options.min_button_px,3*self.radii[0]);h=max(self.options.min_button_px,3*self.radii[1])
+            if w>width-2*self.options.padding_px or h>height-self.options.header_px-self.options.footer_px-2*self.options.padding_px:
+                raise ValueError('可见区域放不下满足误差半径的练习按钮，请重新校准')
+            cells=(((width-w)/2,(height-h)/2,w,h),)
+        else:cells=button_layout(width,height,self.radii,self.options)
+        self.width,self.height,self.cells=width,height,cells
+        self.started_ns=None
+        self.page=0;self.selector.cooldown_until=0
+        self._configure()
+        return True
 
     @property
     def active(self):return self.phase!='closed'
@@ -113,6 +132,7 @@ class DemoRun:
             if sequence<=self.last_sequence:return None
             self.last_sequence=sequence
         if self.phase not in {'practice','playing'} or self.presented_ns is None or capture_ns<self.presented_ns:return None
+        if self.phase=='playing' and valid and point is not None:self.application_sampled=True
         result=self.selector.feed(point,capture_ns,now_ns,valid=valid)
         if result is None:return None
         target=result['target_id'];button=next(b for b in self.buttons if b.id==target)
@@ -123,8 +143,10 @@ class DemoRun:
         was_practice=self.phase=='practice'
         scored=self.app=='game' and not was_practice and target==self.target_id
         left,top,w,h=button.rect
+        center=(left+w/2,top+h/2)
+        target_position=self.target_to_screen(center) if self.target_to_screen is not None else (center[0]/(self.width-1),center[1]/(self.height-1))
         event=dict(**result,selection_id=uuid.uuid4().hex,stage='practice' if was_practice else 'application',
-                   target=[(left+w/2)/(self.width-1),(top+h/2)/(self.height-1)],
+                   target=list(target_position),
                    reaction_ms=(now_ns-self.presented_ns)/1e6 if scored else None,
                    false_activation=None,scored=scored,hit_expand_ratio=self.options.hit_expand_ratio)
         self.selections.append(event);self.pending=event

@@ -15,7 +15,7 @@ class DemoWindow(QWidget):
         from .mapping import ScreenRect
         geometry=screen.geometry()
         self.screen_rect=screen_rect or ScreenRect(geometry.x(),geometry.y(),run.width,run.height)
-        self.debug=debug;self.before_position=None;self.mapping_reason=''
+        self.debug=debug;self.before_position=None;self.mapping_reason='';self.coordinate_notice=''
         self._coordinates_cache=None
         self.position=None;self.ring_opacity=0.;self._disposed=False;self._paint_key=None
         self._base_key=None;self._progress_key=None;self._ring_key=None;self._time_key=None
@@ -59,8 +59,9 @@ class DemoWindow(QWidget):
     def _star_tick(self):
         if self._disposed:return
         snapshot=self.run.worker.latest()
-        if snapshot is not None and snapshot['version']!=self._star_version:
-            self._star_version=snapshot['version'];self.update()
+        version=None if snapshot is None else (id(self.run.worker),snapshot['version'])
+        if version is not None and version!=self._star_version:
+            self._star_version=version;self.update()
         if self.run.phase in {'playing','replay'}:self._arm_star_timer()
 
     def _arm_star_timer(self):
@@ -90,7 +91,7 @@ class DemoWindow(QWidget):
         if self.star_timer is not None:
             if run.phase in {'playing','replay'} and not self.star_timer.isActive():self._arm_star_timer()
             elif run.phase not in {'playing','replay'}:self.star_timer.stop();self._star_deadline=None
-        base=(run.phase,run.page,run.target_id,run.feedback_text,run.speech_failed,run.score,run.practice_message,tuple(run.buttons))
+        base=(run.phase,run.page,run.target_id,run.feedback_text,run.speech_failed,run.score,run.practice_message,tuple(run.buttons),self.coordinate_notice)
         region=QRegion()
         if base!=self._base_key:self._base_key=base;region=QRegion(self.rect())
         current=run.selector.current
@@ -151,6 +152,12 @@ class DemoWindow(QWidget):
 
     def _paint(self,event):
         run=self.run;now=self.clock();o=self.options
+        mapping=self.coordinates()
+        prepare=getattr(run,'prepare_coordinates',None)
+        ready=prepare(mapping,now) if prepare is not None else mapping.ready
+        if ready and prepare is None:
+            run.resize_viewport(*mapping.window_size,now)
+            run.target_to_screen=mapping.window_to_screen
         painter=QPainter(self);painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if run.app=='stars' and run.phase in {'playing','replay','finished'}:
             snapshot=run.worker.latest()
@@ -164,8 +171,9 @@ class DemoWindow(QWidget):
             painter.drawText(QRectF(o.padding_px,self.height()-o.footer_px,self.width()-2*o.padding_px,o.footer_px),
                              Qt.AlignmentFlag.AlignCenter,'用目光照亮星座 · 停留绽放 · Esc 退出')
             if self.debug:self._debug(painter)
+            self._coordinate_warning(painter)
             painter.end()
-            if snapshot is not None and run.phase=='playing':run.presented(now)
+            if ready and snapshot is not None and run.phase=='playing':run.presented(now)
             return
         painter.fillRect(self.rect(),QColor(o.background));painter.setPen(QColor('white'));painter.setFont(self.heading_font)
         title='看着中间的点，保持 '+f'{o.dwell_ms/1000:g}'+' 秒' if run.phase=='practice' else '用目光说出你的需要' if run.app=='board' else '看住亮起的目标'
@@ -191,8 +199,18 @@ class DemoWindow(QWidget):
             painter.setBrush(Qt.BrushStyle.NoBrush);x,y=self.position;rx,ry=run.radii
             painter.drawEllipse(QRectF(x-rx,y-ry,rx*2,ry*2))
         if self.debug:self._debug(painter)
+        self._coordinate_warning(painter)
         painter.end()
-        if run.phase in {'practice','playing'}:run.presented(now)
+        if ready and run.phase in {'practice','playing'}:run.presented(now)
+
+    def _coordinate_warning(self,painter):
+        if not self.coordinate_notice:return
+        painter.save();painter.setOpacity(1.)
+        rect=QRectF(self.rect()).adjusted(32,self.options.header_px,-32,-self.options.footer_px)
+        painter.fillRect(rect,QColor('#231820'))
+        painter.setFont(self.heading_font);painter.setPen(QColor('#FFD475'))
+        painter.drawText(rect.adjusted(24,24,-24,-24),Qt.AlignmentFlag.AlignCenter|Qt.TextFlag.TextWordWrap,self.coordinate_notice)
+        painter.restore()
 
     def _button(self,painter,button,now):
         run=self.run;o=self.options;rect=QRectF(*button.rect)

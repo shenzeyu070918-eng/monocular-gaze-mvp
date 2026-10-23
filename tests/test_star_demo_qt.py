@@ -48,6 +48,8 @@ class StarDemoQtTests(unittest.TestCase):
                         clock_ns=lambda:now[0],worker_factory=StaticWorker)
         window=DemoWindow(run,self.app.primaryScreen(),options,screen_rect=ScreenRect(0,0,1512,982,2),clock_ns=lambda:now[0])
         window.resize(1512,982)
+        from gaze_core.demo_coordinates import DemoCoordinates
+        window.coordinates=lambda:DemoCoordinates(window.screen_rect,window_origin=(0,0),window_size=(1512,982),fullscreen=True)
         return now,run,window
 
     def test_complete_paint_start_and_repaint_only_new_snapshot(self):
@@ -103,6 +105,29 @@ class StarDemoQtTests(unittest.TestCase):
         self.assertEqual(settings.starfield.constellation_count,5)
         self.assertEqual(settings.starfield.spring_hz,4)
         self.assertEqual(settings.starfield.particle_count,2000)
+
+    def test_initial_notch_resize_before_first_sample_replaces_ready_worker(self):
+        now,run,window=self.make()
+        try:
+            image=QImage(window.size(),QImage.Format.Format_ARGB32_Premultiplied);window.render(image)
+            self.assertEqual(run.started_ns,0);self.assertFalse(run.application_sampled)
+            window._star_tick()
+            original=run.worker
+            from gaze_core.demo_coordinates import DemoCoordinates
+            window.resize(1512,950)
+            window.coordinates=lambda:DemoCoordinates(window.screen_rect,window_origin=(0,32),window_size=(1512,950),fullscreen=True)
+            image=QImage(window.size(),QImage.Format.Format_ARGB32_Premultiplied);window.render(image)
+            self.assertTrue(original.closed)
+            self.assertEqual((run.width,run.height),(1512,950))
+            self.assertEqual(run.worker.model.height,950)
+            self.assertEqual(run.worker.model.phase,'playing')
+            # New worker version 1 must repaint even if old worker had version 1.
+            with patch.object(window,'update') as update:
+                window._star_tick();update.assert_called_once()
+        finally:
+            run.close(now[0])
+            with patch('overlay.starfield.save_starfield_performance',return_value={'paint_event':{'milliseconds':{'median':None,'p90':None}}}):window.dispose()
+            self.app.processEvents()
 
 
 if __name__=='__main__':unittest.main()

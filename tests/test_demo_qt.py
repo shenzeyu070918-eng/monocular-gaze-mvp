@@ -5,7 +5,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock,patch
-from PySide6.QtCore import Qt,QObject,Signal,QRect,QProcess
+from PySide6.QtCore import Qt,QObject,Signal,QRect,QProcess,QPointF
 from PySide6.QtGui import QImage,QKeyEvent
 from PySide6.QtWidgets import QApplication
 from gaze_core.config import load_settings,DemoSettings,OverlaySettings
@@ -46,7 +46,10 @@ class DemoQtTests(unittest.TestCase):
             self.assertGreaterEqual(window.button_font.pixelSize(),40)
             self.assertIsNone(run.presented_ns)
             image=QImage(window.size(),QImage.Format.Format_ARGB32_Premultiplied)
-            image.fill(0);window.render(image)
+            from gaze_core.demo_coordinates import DemoCoordinates
+            mapping=DemoCoordinates(ScreenRect(0,0,1512,982),window_origin=(0,0),window_size=(1512,982),fullscreen=True)
+            with patch.object(window,'coordinates',return_value=mapping):
+                image.fill(0);window.render(image)
             self.assertEqual(run.presented_ns,123)
             self.assertEqual(image.pixelColor(0,0).name(),run.options.background.lower())
             cancelled=Mock();window.cancelled.connect(cancelled)
@@ -69,6 +72,24 @@ class DemoQtTests(unittest.TestCase):
         panel=Mock();panel.isVisible.return_value=False
         manager=DemoSession(s,overlay,panel,notice=Mock(),window_factory=FakeWindow,clock_ns=lambda:now[0])
         return manager,s,overlay,panel,now
+
+    def test_first_paint_reflows_notch_client_before_practice_ack(self):
+        manager,_,_,_,now=self.make_session(practice=True)
+        manager.window_factory=DemoWindow
+        with patch.object(DemoWindow,'open'):
+            manager.start('board',self.app.primaryScreen())
+        window=manager.window;window.resize(1512,950);window._coordinates_cache=None
+        try:
+            with patch.object(window,'mapToGlobal',return_value=QPointF(0,32)),patch.object(window,'isFullScreen',return_value=True):
+                self.assertIsNone(manager.run.presented_ns)
+                image=QImage(window.size(),QImage.Format.Format_ARGB32_Premultiplied);window.render(image)
+                self.assertEqual((manager.run.width,manager.run.height),(1512,950))
+                self.assertEqual(manager.run.presented_ns,now[0])
+                button=manager.run.buttons[0];x,y,w,h=button.rect
+                target=manager.run.target_to_screen((x+w/2,y+h/2))
+                self.assertAlmostEqual(target[1],(y+h/2+32)/981)
+                self.assertEqual(image.pixelColor(round(x+w/2),round(y+h/2)).name(),manager.run.options.text_color.lower())
+        finally:manager.cancel();self.app.processEvents()
 
     def feed_selection(self,manager,now):
         run=manager.run;run.presented(0)

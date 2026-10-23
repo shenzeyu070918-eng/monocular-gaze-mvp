@@ -9,9 +9,19 @@ class StarDemoRun(DemoRun):
             from .starfield import StarfieldWorker
             worker_factory=StarfieldWorker
         self.star_settings=settings
+        self._worker_factory,self._clock_ns=worker_factory,clock_ns
         self.worker=worker_factory(width,height,radii,settings,clock_ns=clock_ns)
         self._stars_started=False;self._stars_paused=False
         self.worker.start()
+
+    def resize_viewport(self,width,height,now_ns):
+        if not super().resize_viewport(width,height,now_ns):return False
+        # No round has started: discard the initial, never-presented canvas.
+        # Discovery/trajectory state is never rescaled into a different canvas.
+        self.worker.close(reason='conditions_changed',now_ns=now_ns)
+        self.worker=self._worker_factory(width,height,self.radii,self.star_settings,clock_ns=self._clock_ns)
+        self._stars_started=self._stars_paused=False;self.worker.start()
+        return True
 
     def presented(self,now_ns):
         first=self.presented_ns is None
@@ -37,6 +47,7 @@ class StarDemoRun(DemoRun):
             if sequence<=self.last_sequence:return None
             self.last_sequence=sequence
         if self.phase=='playing' and self.presented_ns is not None and capture_ns>=self.presented_ns:
+            if valid and point is not None:self.application_sampled=True
             self.worker.ingest(point,capture_ns,now_ns,valid=valid)
         return None
 

@@ -237,6 +237,7 @@ class OverlaySettings:
     presentation_color: str = '#FFD166'
     presentation_label_font_px: int = 26
     calibration_notice_s: float = 3.0
+    coordinate_warning_s: float = 1.0
     hotkeys: dict = field(default_factory=lambda: dict(toggle='Ctrl+Alt+G', pause='Ctrl+Alt+P', calibrate='Ctrl+Alt+C', panel='Ctrl+Alt+O', heatmap_toggle='Ctrl+Alt+H',heatmap_view='Ctrl+Alt+V',demo='Ctrl+Alt+D',demo_practice='Ctrl+Alt+R'))
 
     def __post_init__(self):
@@ -244,6 +245,7 @@ class OverlaySettings:
         from .devices import finite
         for key in ('radius_cm','fallback_radius_px','opacity','fade_ms','stale_ms','stroke_px','idle_after_s','idle_fps'):
             finite(getattr(self,key),'overlay.'+key,positive=True)
+        finite(self.coordinate_warning_s,'overlay.coordinate_warning_s',positive=True)
         if self.opacity>1:raise ValueError('overlay.opacity 必须在 (0,1]')
         if type(self.screen_retry_count) is not int or self.screen_retry_count<0:raise ValueError('overlay.screen_retry_count 必须为非负整数')
         for key in ('refresh_ms','label_font_px','label_inset_px','diagnostic_size_px','task_radius_px','tray_check_delay_ms','screen_debounce_ms'):

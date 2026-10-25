@@ -244,3 +244,43 @@ starfield:
   reveal_s: 1
   constellation_count: 4  # Supports 3–5 self-drawn patterns, no external images.
   color_palette: [[190, 215, 255], [255, 190, 140], [255, 155, 210], [150, 235, 255]]
+
+# M8b: controls are exploratory defaults, performance/gesture accuracy pending real hardware.
+galaxy:
+  text: BME
+  particle_count: 50000  # 100000 enables the larger tier; downgrade never upgrades automatically.
+  pixel_ratio: 1.5
+  min_pixel_ratio: 0.75
+  low_fps: 50.0
+  low_fps_s: 3.0
+  intro_s: 2.0
+  dwell_ms: 1500.0
+  transition_s: 1.2
+  stale_ms: 400.0
+  hand_enter_frames: 3
+  hand_leave_ms: 500.0
+  hand_smoothing_ms: 100.0
+  hand_closed: 0.25
+  hand_open: 0.7
+  hand_confidence: 0.5
+  connection_timeout_s: 30.0
+  heartbeat_timeout_s: 5.0
+  disconnect_grace_s: 0.5       # 区分正常关页和意外断连，等待专用Chrome退出状态
+  max_message_bytes: 8192
+  bloom_strength: 1.3
+  bloom_radius: 0.55
+  bloom_threshold: 0.5
+  particle_brightness: 0.65
+  text_brightness: 0.3           # 密集文字降低曝光，避免辉光糊成白团
+  gaze_brightness: 1.5
+  spring_hz: 2.0
+  attraction: 1.5
+  restore: 2.5
+  drag: 1.5
+  explode: 7.0
+  rotation: 2.0
+  star_count: 2200
+  point_size: 2.2
+  camera_z: 8.0
+  field_of_view: 55.0
+  hand_model: models/hand_landmarker.task

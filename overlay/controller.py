@@ -15,13 +15,15 @@ class ControllerView:
 
 class OverlayController:
     def __init__(self,settings,*,pipeline_factory=None,result_sink=None,shutdown=None):
+        from gaze_core.demo_frame import DemoFrameSlot
+        self.demo_frames=DemoFrameSlot()
         if pipeline_factory is None:
             from gaze_core.capture import CameraPipeline
             from gaze_core.display import DisplayPipeline
             def pipeline_factory():
                 return CameraPipeline(settings,display_pipeline=DisplayPipeline(settings.filter,settings.fixation,matrix=None),
                                       idle_after_s=settings.overlay.idle_after_s,idle_fps=settings.overlay.idle_fps,
-                                      result_sink=result_sink)
+                                      result_sink=result_sink,demo_processor=self.demo_frames)
         self._factory=pipeline_factory
         self._shutdown=shutdown
         self._poll_seconds=settings.overlay.refresh_ms/1000

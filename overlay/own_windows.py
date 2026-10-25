@@ -9,6 +9,7 @@ class OwnWindows(QObject):
     def __init__(self,app,*,ignore=()):
         super().__init__(app)
         self.app=app;self.ignore=tuple(ignore);self.rectangles=();self.handles=frozenset();self.dirty=True
+        self.external_rectangles=lambda:()
         app.installEventFilter(self)
 
     def eventFilter(self,watched,event):
@@ -28,7 +29,7 @@ class OwnWindows(QObject):
 
     def reason(self,point):
         x,y=point
-        for left,top,width,height in self.rectangles:
+        for left,top,width,height in self.rectangles+tuple(self.external_rectangles()):
             if left<=x<left+width and top<=y<top+height:return 'own_ui'
         return None
 

@@ -152,15 +152,16 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
                 demo_dialog.raise_();demo_dialog.activateWindow();return
             chooser=QMessageBox(panel)
             chooser.setWindowTitle('眼控 Demo');chooser.setText('请选择体验内容。进入后先练习一次，Esc 随时退出。')
-            board=chooser.addButton('沟通板',QMessageBox.ButtonRole.AcceptRole)
-            stars=chooser.addButton('星空凝视',QMessageBox.ButtonRole.AcceptRole)
+            galaxy=chooser.addButton('眼手星系',QMessageBox.ButtonRole.AcceptRole)
+            stars=chooser.addButton('Qt 星空（备用）',QMessageBox.ButtonRole.AcceptRole)
+            chooser.setDefaultButton(galaxy)
             chooser.addButton(QMessageBox.StandardButton.Cancel)
             demo_dialog=chooser
             try:chooser.exec()
             finally:demo_dialog=None
-            if chooser.clickedButton() not in (board,stars):return
+            if chooser.clickedButton() not in (galaxy,stars):return
             try:
-                demo.start('board' if chooser.clickedButton() is board else 'stars',controls.screen)
+                demo.start('galaxy' if chooser.clickedButton() is galaxy else 'stars',controls.screen)
                 if own_windows is not None:own_windows.refresh()
             except Exception as exc:notice('无法进入 Demo：'+str(exc),True)
         actions.connect('demo',start_demo)
@@ -194,6 +195,11 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         if hasattr(session,'bind_clicks'):
             from .own_windows import OwnWindows
             own_windows=OwnWindows(app,ignore=(window,))
+            def galaxy_rectangles():
+                if demo is None or demo.galaxy is None or not demo.galaxy.bridge.ui_focused:return ()
+                rect=window.rect_info
+                return ((rect.x,rect.y,rect.width,rect.height),)
+            own_windows.external_rectangles=galaxy_rectangles
             clicks=session.bind_clicks(start_task=start_task,exclude=own_windows.reason,own_handles=lambda:own_windows.handles)
 
         def capture_clicks(enabled):

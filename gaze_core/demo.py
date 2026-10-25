@@ -34,11 +34,11 @@ def button_layout(width,height,radii,options):
 
 class DemoRun:
     def __init__(self, app, options, width,height,radii, *, group, stale_ms=300., rng=None):
-        if app not in {'board','game','stars'}:raise ValueError('未知 Demo 应用')
+        if app not in {'board','game','stars','galaxy'}:raise ValueError('未知 Demo 应用')
         if group not in {'B','C'}:raise ValueError('请先完成九点或点击粗校准')
         self.app,self.options,self.width,self.height,self.group=app,options,width,height,group
         self.radii=radii
-        if app=='stars':
+        if app in {'stars','galaxy'}:
             w=max(options.min_button_px,3*radii[0]);h=max(options.min_button_px,3*radii[1])
             if w>width-2*options.padding_px or h>height-options.header_px-options.footer_px-2*options.padding_px:
                 raise ValueError('屏幕放不下满足当前误差半径的练习按钮，请重新校准。')
@@ -62,7 +62,7 @@ class DemoRun:
         if (width,height)==(self.width,self.height):return False
         if self.started_ns is not None and self.application_sampled:
             raise ValueError('Demo 可见区域已变化，请退出后重新进入')
-        if self.app=='stars':
+        if self.app in {'stars','galaxy'}:
             w=max(self.options.min_button_px,3*self.radii[0]);h=max(self.options.min_button_px,3*self.radii[1])
             if w>width-2*self.options.padding_px or h>height-self.options.header_px-self.options.footer_px-2*self.options.padding_px:
                 raise ValueError('可见区域放不下满足误差半径的练习按钮，请重新校准')
@@ -78,14 +78,14 @@ class DemoRun:
     def active(self):return self.phase!='closed'
 
     @property
-    def pages(self):return 1 if self.app=='stars' else ceil(6/(len(self.cells)-1)) if len(self.cells)<6 else 1
+    def pages(self):return 1 if self.app in {'stars','galaxy'} else ceil(6/(len(self.cells)-1)) if len(self.cells)<6 else 1
 
     def _configure(self):
         self.presented_ns=None
         if self.phase=='practice':
             w,h=self.cells[0][2:]
             buttons=[Button('practice',((self.width-w)/2,(self.height-h)/2,w,h))]
-        elif self.phase=='playing' and self.app!='stars':
+        elif self.phase=='playing' and self.app not in {'stars','galaxy'}:
             n=6 if self.pages==1 else len(self.cells)-1
             ids=list(range(self.page*n,min(6,(self.page+1)*n)))
             buttons=[Button(str(i),self.cells[j]) for j,i in enumerate(ids)]
@@ -211,7 +211,7 @@ def validate_demo_event(kind,fields):
         value=fields.get(key)
         if not isinstance(value,str) or len(value)!=32 or any(c not in '0123456789abcdef' for c in value):
             raise ValueError('Demo '+key+' 必须为32位十六进制编号')
-    if fields.get('app') not in {'board','game','stars'} or fields.get('group') not in {'B','C'}:raise ValueError('Demo 应用或分组无效')
+    if fields.get('app') not in {'board','game','stars','galaxy'} or fields.get('group') not in {'B','C'}:raise ValueError('Demo 应用或分组无效')
     event_ns=fields.get('event_ns')
     if isinstance(event_ns,bool) or not isinstance(event_ns,Integral) or event_ns<0:raise ValueError('Demo event_ns 无效')
     if kind=='demo_selection':

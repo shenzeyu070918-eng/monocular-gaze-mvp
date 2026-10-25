@@ -415,7 +415,7 @@ Windows 使用 `.\.venv\Scripts\python.exe` 替换 Python 入口，其余参数�
 
 1. 验证基线时，从 Releases 下载 **v0.1.0** 的 Source code ZIP，或切到 `v0.1.0` 标签。验证 M2 时使用对应 PR 的 `m2-filter` 分支；合并后使用 `main`。两个版本分别解压/检出，环境不要混用。
 2. 从 [Python 官网](https://www.python.org/downloads/) 安装 Python 3.12。Windows 安装时启用 Python Launcher；macOS 安装后重新打开终端。
-3. 在解压目录打开终端，执行对应命令（整个目录路径含空格或中文也可以）：
+3. 在解压目录打开终端，执行对应命令。**本分支修复后，Windows项目路径可以包含中文和空格**：人脸和手势模型由Python读取字节，再传给MediaPipe。旧版本如遇中文路径模型加载失败，更新代码后重新运行安装命令；不用修改`.venv`里的ptgaze文件。详细步骤见 [Windows安装说明](docs/Windows安装说明.md)。
 
 **Windows（PowerShell 或命令提示符）**
 
@@ -425,6 +425,14 @@ py -3.12 setup_mvp.py
 ```
 
 以后可双击 `启动-Windows.cmd`。不需要激活虚拟环境或更改 PowerShell 执行策略。
+
+如果已安装Python 3.12，但`py -3.12`仍找不到它，改用**实际Python安装路径**运行。PowerShell示例（替换为本机路径；悬浮层安装保留`--overlay`，仅网页可省略）：
+
+```powershell
+& "C:\Users\你的用户名\AppData\Local\Programs\Python\Python312\python.exe" setup_mvp.py --overlay
+```
+
+命令提示符中去掉开头的`&`，保留路径双引号。下载出现SSL报错时重新运行同一安装命令即可；长时间卡住可按Ctrl+C结束后重试。无需删除`.venv`或已下载成功的模型，安装程序会复用已完成的依赖并检查模型摘要；若持续失败，保留完整报错。
 
 **macOS**
 
@@ -775,12 +783,13 @@ print(session.summary())
 
 | 现象 | 处理 |
 |---|---|
-| 找不到 `py` 或 `python3.12` | 确认已安装 Python 3.12，重新打开终端；Windows 检查 Python Launcher |
-| 下载失败或超时 | 检查能否访问 Python 包源、Hugging Face 和 Google 模型来源，保留错误，再执行安装命令；不需要删掉已下载成功的模型 |
+| 找不到 `py` 或 `python3.12` | 确认已安装 Python 3.12，重新打开终端；Windows的`py -3.12`未找到已装Python时，改用带双引号的完整python.exe路径运行安装程序，见Windows安装说明 |
+| 下载出现SSL报错、卡住或超时 | 重新运行相同安装命令即可；卡住先Ctrl+C退出。无需删除`.venv`或已下载成功的模型；持续失败时保留错误并检查模型来源和包源是否可访问 |
 | 页面连接失败 | 先启动服务并保持终端打开，确认地址是 `127.0.0.1:8765`，不要直接打开 `static/index.html` |
 | 端口已占用 | 检查是否已经启动过同一应用；已有服务可直接使用，不要重复启动 |
 | 摄像头打不开 | 在 Chrome 和系统隐私设置中允许相机访问，关闭会议软件后重试；macOS 的 Python 管线首次从后台线程打开摄像头可能因权限请求失败，需先在「系统设置 → 隐私与安全性 → 摄像头」中为终端授权 |
 | 模型加载失败 | 保存页面与终端错误，通过测试反馈模板报告；不要把个人路径或摄像头画面贴到公开 Issue |
+| Windows中文路径下MediaPipe无法打开task文件 | 更新到本修复后重新运行安装命令，使环境重新安装仓库内ptgaze；人脸/手势均按字节加载，不再要求移到英文路径或手改`.venv` |
 | 切换灰度、全屏或窗口后没有已校准结果 | 设置或窗口尺寸变化会清除校准。先固定条件，再重新校准 |
 
 ## 使用

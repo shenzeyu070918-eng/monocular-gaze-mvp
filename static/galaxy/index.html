@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>眼手星系</title>
+<link rel="stylesheet" href="/assets/style.css">
+<link rel="icon" href="data:,">
+<script type="importmap">{"imports":{"three":"/assets/vendor/three/build/three.module.js","three/addons/":"/assets/vendor/three/examples/jsm/"}}</script>
+</head><body><canvas id="universe" aria-label="眼手交互粒子星系"></canvas>
+<div id="status" aria-live="polite"><span id="eye" title="视线离线">◉</span><span id="hand" title="手势离线">✋</span></div>
+<section id="gate"><h1>眼手星系</h1><p id="message">正在连接本机视线……</p><button id="start" disabled>点击进入星系</button><button id="fallback">切回 Qt 星空</button></section>
+<pre id="debug" hidden></pre><div id="gaze" hidden></div><script type="module" src="/assets/app.mjs"></script></body></html>

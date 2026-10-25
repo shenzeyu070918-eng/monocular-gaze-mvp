@@ -47,7 +47,7 @@ class GalaxyBridgeTests(unittest.TestCase):
 
     def test_loopback_only_host_headers_local_assets_and_shutdown(self):
         with urllib.request.urlopen(self.origin,timeout=2) as r:
-            self.assertEqual(r.status,200);self.assertIn(b'/assets/app.mjs',r.read())
+            self.assertEqual(r.status,200);self.assertIn(b'/assets/entry.mjs',r.read())
             self.assertEqual(r.headers['Permissions-Policy'],'camera=(), microphone=(), display-capture=()')
             self.assertIn("connect-src 'self' ws://127.0.0.1:",r.headers['Content-Security-Policy'])
         request=urllib.request.Request(self.origin,headers={'Host':'untrusted.example'})

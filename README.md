@@ -12,6 +12,37 @@
 
 ## M8b：眼手星系
 
+### PR #15 中途检查点：先确认粒子行星画面
+
+本次先交付独立画面预览，**等待用户确认后再接入新的视线和手势交互**。原悬浮层入口仍使用上一版实时场景；请用下面的预览检查新画面，无需相机、个人档案或眼动数据。
+
+在项目目录运行（使用已有虚拟环境）：
+
+```sh
+# Mac
+./.venv/bin/python -m tools.preview_galaxy
+```
+
+```powershell
+# Windows
+.\.venv\Scripts\python.exe -m tools.preview_galaxy
+```
+
+用 Chrome 打开 **http://127.0.0.1:8768/?preview**。底部按钮可切换「粒子行星 / 螺旋星系 / 文字」、斜视/俯视/近景、暂停、重播约2秒开场及全屏。文字读取 `galaxy.text`。`?preview&debug` 显示浏览器实际rAF帧率与渲染提交耗时；提交耗时不等于GPU完成耗时。预览只绑定本机，不启动WebSocket或摄像头，资源均在本地；终端 Ctrl+C 结束服务。
+
+画面使用GPU顶点着色器直接计算轨道/翻涌：默认8万体积球粒子、15万宽环粒子，暖金/青白配色、距离缩小/变暗、开普勒差速与少量游离。辉光克制，经过HDR色调映射；星系是有厚度的螺旋体，文字填满笔画并在笔画内流动。参数集中在 `galaxy.visual`，不改变原实时场景的参数；预览当前不启用自动降档，真实GPU/投影性能待测。
+
+固定种子/时间的截图可复现（需要Chrome与已有overlay依赖；先保持预览服务运行，在另一个终端执行）：
+
+```sh
+./.venv/bin/python -m tools.render_planet_check
+# Windows: .\.venv\Scripts\python.exe -m tools.render_planet_check
+```
+
+输出都在忽略提交的 `data/reference/`：`render_check.png`（斜视）、`render_closeup.png`（近景）、`render_galaxy.png`、`render_text.png`；原参考图存在时另生成 `render_comparison.png` / `.html`，浏览器可打开 **http://127.0.0.1:8768/comparison** 并排查看。该命令用独立无头Chrome/SwiftShader，只截取自身画布及用户提供的参考图，不读取真实桌面或摄像头；`render_check.json`记录渲染错误和逐场景运动检查，不用软件渲染成绩代替Mac实机性能。静态复查可用 `?preview&still&clean&t=8&scene=planet&view=oblique`。
+
+### 现有实时入口（新交互待下一检查点）
+
 已有项目环境先运行 `python3.12 setup_mvp.py --overlay`（Windows：`py -3.12 setup_mvp.py --overlay`），安装本地WebSocket依赖并校验/下载Hand Landmarker权重。之后可断网运行；three.js 0.180.0、GPU粒子与辉光模块已放在仓库本地，许可见 `static/galaxy/vendor/NOTICE.md`。浏览器不申请相机权限，Python与手势使用同一相机帧。
 
 1. 用悬浮层启动脚本打开面板，完成匹配当前条件的Python九点校准（已有匹配粗校准也可进入）。面板「眼控 Demo」或原生 `Ctrl+Alt+D` 默认选择「眼手星系」，Qt星空保留为备用，沟通板保留代码。

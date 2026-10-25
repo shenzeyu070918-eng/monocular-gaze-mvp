@@ -284,3 +284,50 @@ galaxy:
   camera_z: 8.0
   field_of_view: 55.0
   hand_model: models/hand_landmarker.task
+  # PR #15 visual checkpoint: ?preview only. Live gaze/hand scene stays unchanged until approval.
+  visual:
+    planet_particles: 80000
+    ring_particles: 150000
+    seed: 918
+    radius: 1.5
+    ring_inner_ratio: 1.4
+    ring_outer_ratio: 8.0
+    ring_density_power: 1.5
+    ring_thickness: 0.035
+    orbit_speed: 0.34
+    planet_spin: 0.08
+    swirl_amplitude: 0.035
+    swirl_speed: 0.22
+    wander_fraction: 0.025
+    wander_distance: 0.6
+    camera_distance: 7.8
+    camera_pitch_deg: 25
+    camera_yaw_deg: 0
+    camera_roll_deg: -12
+    close_distance: 3.6
+    field_of_view: 50
+    point_size: 1.65
+    point_size_min: 0.5
+    point_size_max: 2.7
+    planet_intensity: 2.6
+    ring_intensity: 1.5
+    core_size_px: 32
+    absorption: 0.9
+    exposure: 0.9
+    bloom_strength: 0.18
+    bloom_threshold: 1.2
+    bloom_radius: 0.25
+    background_stars: 600
+    nebula_intensity: 0.012
+    galaxy_intensity: 1.6
+    galaxy_core_intensity: 0.32
+    galaxy_distance: 10.4
+    galaxy_radius: 5.2
+    galaxy_arm_width: 0.4
+    galaxy_spin: 0.1
+    text_intensity: 0.65
+    text_width: 7.2
+    text_depth: 0.35
+    text_flow: 0.06
+    planet_colors: ['#c99441', '#f7d778', '#fff5bf']
+    ring_colors: ['#74b6c6', '#c6e9ed', '#eefbff']

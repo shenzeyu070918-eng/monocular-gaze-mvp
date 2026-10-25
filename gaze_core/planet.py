@@ -12,7 +12,12 @@ class PlanetVisualSettings:
     radius: float = 1.5
     ring_inner_ratio: float = 1.4
     ring_outer_ratio: float = 8.
-    ring_density_power: float = 1.5
+    ring_density_power: float = 2.6
+    ring_light_power: float = 1.5
+    ring_outer_light: float = .15
+    ring_gap_centers: tuple = (2.25,3.3)  # Radii in planet-radius units.
+    ring_gap_width: float = .07
+    ring_gap_depth: float = .85
     ring_thickness: float = .035
     orbit_speed: float = .34
     planet_spin: float = .08
@@ -28,8 +33,15 @@ class PlanetVisualSettings:
     field_of_view: float = 50.
     point_size: float = 1.65
     point_size_min: float = .5
-    point_size_max: float = 2.7
-    planet_intensity: float = 2.6
+    point_size_max: float = 5.0
+    bright_fraction: float = .015
+    bright_size: float = 1.9
+    bright_intensity: float = 2.0
+    bright_halo: float = .12
+    twinkle_speed: float = .5
+    rim_strength: float = 3.5
+    rim_power: float = 3.0
+    planet_intensity: float = 4.6
     ring_intensity: float = 1.5
     core_size_px: float = 32.
     absorption: float = .9
@@ -49,15 +61,19 @@ class PlanetVisualSettings:
     text_width: float = 7.2
     text_depth: float = .35
     text_flow: float = .06
-    planet_colors: tuple = ('#c99441','#f7d778','#fff5bf')
-    ring_colors: tuple = ('#74b6c6','#c6e9ed','#eefbff')
+    planet_colors: tuple = ('#d8ad55','#ffe498','#fff5bf')
+    ring_colors: tuple = ('#437b9f','#83c4d7','#effaff')
 
     def __post_init__(self):
         integers={'planet_particles','ring_particles','background_stars','seed'}
         angles={'camera_pitch_deg','camera_yaw_deg','camera_roll_deg'}
-        zero_ok={'seed','swirl_amplitude','wander_fraction','bloom_strength','nebula_intensity'}
+        zero_ok={'seed','swirl_amplitude','wander_fraction','bloom_strength','nebula_intensity','rim_strength','bright_fraction','bright_halo','ring_gap_depth'}
         for f in fields(self):
             value=getattr(self,f.name)
+            if f.name=='ring_gap_centers':
+                if not isinstance(value,(tuple,list)) or len(value)>2:raise ValueError('最多两道环缝')
+                value=tuple(finite(v,'环缝半径') for v in value)
+                object.__setattr__(self,f.name,value);continue
             if f.name.endswith('_colors'):
                 if not isinstance(value,(tuple,list)) or len(value)!=3 or any(not isinstance(c,str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',c) for c in value):
                     raise ValueError('galaxy.visual.'+f.name+' 需要三个六位十六进制颜色')
@@ -71,3 +87,6 @@ class PlanetVisualSettings:
         if not self.radius<self.close_distance<=self.camera_distance:raise ValueError('镜头必须在球体外')
         if abs(self.camera_pitch_deg)>85 or abs(self.camera_yaw_deg)>180 or abs(self.camera_roll_deg)>90:raise ValueError('镜头角度超出范围')
         if not 0<=self.wander_fraction<=.2 or self.ring_density_power>3:raise ValueError('游离比例/密度衰减无效')
+
+        if any(not self.ring_inner_ratio<c<self.ring_outer_ratio for c in self.ring_gap_centers):raise ValueError('环缝必须在环内')
+        if not 0<=self.bright_fraction<=.05 or not 0<self.ring_outer_light<=1 or not 0<=self.ring_gap_depth<1:raise ValueError('亮颗粒比例/环渐变无效')

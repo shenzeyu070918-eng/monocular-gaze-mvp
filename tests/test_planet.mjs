@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {planetField,ringField,galaxyField,textField,ringRadius,keplerSpeed,maskDistance} from '../static/galaxy/particle-fields.mjs';
+import {planetField,ringField,galaxyField,textField,ringRadius,keplerSpeed,maskDistance,ringGap,ringLight,grain} from '../static/galaxy/particle-fields.mjs';
 const o={seed:918,radius:1.5,ring_inner_ratio:1.4,ring_outer_ratio:8,ring_density_power:1.5,ring_thickness:.035,galaxy_radius:5.2,galaxy_arm_width:.4,text_width:7.2,text_depth:.35,text_flow:.06};
 const sphere=planetField(16000,o);let inner=0,volumeMean=0;
 for(let i=0;i<sphere.count;i++){
@@ -33,3 +33,13 @@ for(let i=0;i<text.count;i++){
 }
 assert.ok(centers>text.count*.1);assert.throws(()=>textField(10,o,new Uint8Array(9),3,3));
 console.log('planet volume, ring density/bounds/Kepler motion, filled text clearance and deterministic fields passed');
+
+const gradient={...o,ring_density_power:2.6,ring_gap_centers:[2.25,3.3],ring_gap_width:.07,ring_gap_depth:.85,ring_light_power:1.5,ring_outer_light:.15,bright_fraction:.015,bright_size:1.9,bright_intensity:2};
+assert.ok(ringGap(2.25*o.radius,gradient)<.16);assert.ok(ringGap(2.6*o.radius,gradient)>.99);
+const layered=ringField(40000,gradient);let gap=0,adjacent=0;
+for(let i=0;i<layered.count;i++){const r=Math.hypot(layered.position[i*3],layered.position[i*3+2])/o.radius;gap+=Number(Math.abs(r-2.25)<.04);adjacent+=Number(Math.abs(r-2.5)<.04);}
+assert.ok(gap<adjacent*.5);assert.equal(ringLight(o.radius*o.ring_inner_ratio,gradient),1);
+assert.equal(ringLight(o.radius*o.ring_outer_ratio,gradient),.15);
+let rare=0;for(let i=0;i<10000;i++){const g=grain((i+.5)/10000,gradient);rare+=Number(g.rare);assert.ok(g.size>0&&g.light>0);}
+assert.equal(rare,150);assert.ok(grain(.99999,gradient).size>grain(.5,gradient).size*2);
+console.log('ring density gaps, radial light falloff, and 1.5% long-tail grain population passed');

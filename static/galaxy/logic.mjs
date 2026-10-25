@@ -27,8 +27,11 @@ export class Intro {
 
 export function handPhysics(frame) {
   if(!frame || !frame.control || !frame.hands.length)return {collapse:0,explode:0,rx:0,ry:0,scale:1};
-  const hands=frame.hands,opening=hands.reduce((s,h)=>s+h[2],0)/hands.length;
-  return {collapse:Math.max(0,1-opening*2),explode:Math.max(0,(opening-.45)/.55),
+  const hands=frame.hands;
+  // Python's Schmitt state selects fist/open. A noisy half-open hand cannot
+  // switch between collapse and expansion merely by crossing one raw value.
+  return {collapse:hands.reduce((s,h)=>s+Number(h[6]===-1),0)/hands.length,
+    explode:hands.reduce((s,h)=>s+(h[6]===1?h[2]:0),0)/hands.length,
     rx:hands.reduce((s,h)=>s+(h[1]-.5),0)/hands.length,
     ry:hands.reduce((s,h)=>s+(h[0]-.5),0)/hands.length,
     scale:hands.length===2?Math.max(.5,Math.min(2,frame.distance*3)):1};

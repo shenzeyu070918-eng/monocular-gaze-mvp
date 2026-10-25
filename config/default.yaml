@@ -95,6 +95,12 @@ display:
 
 # M3a: no personal profiles; radii are visual settings, NOT measured accuracy.
 overlay:
+  presentation: false
+  presentation_stroke_px: 6
+  presentation_color: '#FFD166'
+  presentation_label_font_px: 26
+  calibration_notice_s: 3
+  coordinate_warning_s: 1.0  # Explain blocked geometry on the task/Demo itself after this delay.
   screen_debounce_ms: 300  # Coalesce projector topology signals; never query displays in the 16ms tick.
   screen_retry_count: 3    # Allow Qt/AppKit/Quartz topology snapshots to settle before reporting unavailable.
   radius_cm: 2.0  # Illustrative fallback only; M3b will use a matching B check.
@@ -129,6 +135,8 @@ overlay:
     panel: Ctrl+Alt+O
     heatmap_toggle: Ctrl+Alt+H
     heatmap_view: Ctrl+Alt+V
+    demo: Ctrl+Alt+D
+    demo_practice: Ctrl+Alt+R
 
 # M5: offset only, no nine-point fine tuning. Sampling thresholds remain M4's.
 autocal:
@@ -161,3 +169,78 @@ heatmap:
   queue_size: 256
   regions: null  # Default 3x3; or [{id: left, rect: [0, 0, 0.5, 1]}, ...], no overlaps.
   target_neighborhood_sigma: 1.0  # Target validation radius in multiples of the SAME sigma.
+
+# M8: display coordinates only; calibration/evaluation continue using raw data.
+demo:
+  dwell_ms: 800
+  show_gaze_ring: false  # Highlight the button rather than encourage chasing a noisy ring.
+  leave_grace_ms: 150
+  cooldown_ms: 800
+  loss_reset_ms: 400
+  hit_expand_ratio: 0.5  # 0 = off; only expands the accumulating button, not its drawing.
+  practice: true
+  practice_window_ms: 600  # Last valid capture-time window before practice trigger.
+  practice_min_samples: 5
+  practice_min_span_ms: 500  # Allow 15 Hz discrete sampling of the 600 ms window.
+  practice_max_correction_cm: 3  # Only checked using measured screen dimensions.
+  labels: ['我想喝水', '我不舒服', '请叫护士', '开灯', '是', '否']
+  round_s: 60
+  undo_ms: 1000
+  feedback_ms: 2000
+  flash_ms: 350
+  speech_timeout_ms: 15000
+  button_font_px: 48  # Logical pixels, >= 40. No DPR multiplication.
+  heading_font_px: 36
+  progress_px: 10
+  min_button_px: 160  # Floor; each side is also >= 3 x corresponding error radius.
+  padding_px: 32
+  header_px: 120
+  footer_px: 65
+  background: '#101B30'
+  button_color: '#EDF3FF'
+  hole_color: '#294363'
+  text_color: '#112444'
+  progress_color: '#FFCA55'
+  feedback_color: '#FFCA55'
+  active_color: '#FFD475'
+  debug_before_color: '#F47BA9'
+  debug_after_color: '#68DBFF'
+  debug_point_px: 5
+  practice_target_px: 5
+
+# M8 starfield: animation interpolation is visual only, never calibration data.
+starfield:
+  particle_count: 2000  # Includes a fixed reusable firework pool.
+  firework_pool: 400
+  firework_particles: 100
+  animation_fps: 60
+  frame_budget_ms: 8  # Median paintEvent target; real full-screen Mac measurement pending.
+  long_frame_ms: 16.666666666666668
+  round_s: 60
+  replay_s: 5
+  halo_radius_factor: 1.5
+  stable_radius_factor: 1
+  bloom_ms: 1500
+  cooldown_ms: 1000
+  stale_ms: 300
+  max_capture_gap_ms: 300
+  spring_hz: 3
+  halo_fade_s: 0.25
+  attraction_strength: 12
+  return_strength: 5
+  particle_drag: 4
+  max_animation_step_s: 0.05
+  base_brightness: 0.22
+  brightness_gain: 0.75
+  min_star_px: 1
+  max_star_px: 3
+  firework_life_s: 1.2
+  firework_speed_px_s: 170
+  firework_drag: 1
+  firework_size_px: 3
+  mask_columns: 160
+  constellation_footprint_px: 12  # Union of star disks and line corridors, not bounding boxes.
+  reveal_threshold: 0.7
+  reveal_s: 1
+  constellation_count: 4  # Supports 3–5 self-drawn patterns, no external images.
+  color_palette: [[190, 215, 255], [255, 190, 140], [255, 155, 210], [150, 235, 255]]

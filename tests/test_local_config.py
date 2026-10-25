@@ -7,6 +7,24 @@ import yaml
 import gaze_core.config as config
 
 class LocalConfigurationTests(unittest.TestCase):
+    def test_demo_local_options_merge_with_presentation_and_named_hotkey(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'default.yaml';path.write_text(config.DEFAULT_CONFIG.read_text())
+            local=path.with_name('local.yaml')
+            local.write_text('demo:\n  hit_expand_ratio: 0\n  practice: false\noverlay:\n  presentation: true\n  hotkeys:\n    demo: Ctrl+Alt+Y\n')
+            with patch.object(config,'DEFAULT_CONFIG',path):
+                settings=config.load_settings(path)
+                self.assertEqual(settings.demo.hit_expand_ratio,0);self.assertFalse(settings.demo.practice)
+                self.assertEqual(settings.demo.dwell_ms,800);self.assertTrue(settings.overlay.presentation)
+                self.assertEqual(settings.overlay.hotkeys['demo'],'Ctrl+Alt+Y')
+                self.assertEqual(settings.overlay.hotkeys['pause'],'Ctrl+Alt+P')
+                self.assertEqual(settings.key_sources['demo.hit_expand_ratio'],str(local.resolve()))
+        from overlay.hotkeys import Hotkeys
+        from unittest.mock import Mock
+        keys=Hotkeys(config.load_settings(use_local=False).overlay.hotkeys,Mock(),backend_factory=lambda _:Mock())
+        try:self.assertIn('眼控 Demo：已注册 Ctrl+Alt+D',keys.text())
+        finally:keys.close()
+
     def test_click_session_rate_and_baseline_age_validation(self):
         base=config.load_settings(use_local=False)
         self.assertIsNone(base.click_session.max_fps)

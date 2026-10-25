@@ -36,16 +36,24 @@ def main(argv=None):
     parser.add_argument('--duration',type=float,default=None,help='诊断模式自动退出秒数')
     parser.add_argument('--control-panel',action='store_true',help='启动时显示控制面板')
     parser.add_argument('--profile-seconds',type=float,default=None,help='相机与档案就绪后剖析主线程定时回调 N 秒，统计保存到 data/performance/')
+    parser.add_argument('--verbose',action='store_true',help='在终端显示完整配置来源和启动诊断；默认写入 data/logs/')
+    parser.add_argument('--demo-debug',action='store_true',help='Demo中显示修正前后点、按钮中心与实际窗口边界')
     args=parser.parse_args(argv)
     if args.duration is not None and (not args.diagnostic or not 0<args.duration<float('inf')):
         parser.error('--duration 必须为有限正数且只用于 --diagnostic')
     if args.profile_seconds is not None and (args.diagnostic or not 0<args.profile_seconds<float('inf')):
         parser.error('--profile-seconds 必须为有限正数，且只用于真实采集模式')
+    from .startup_log import StartupLog
+    with StartupLog(verbose=args.verbose) as startup:
+        return _run(args,startup)
+
+
+def _run(args,startup):
     print('按 Ctrl+C 退出',flush=True)
     try:
         from PySide6.QtCore import QTimer
         from PySide6.QtWidgets import QApplication,QMenu,QSystemTrayIcon,QMessageBox
-        from gaze_core.config import load_settings,print_configuration
+        from gaze_core.config import load_settings
         from .window import OverlayWindow
         from .actions import OverlayActions,TrayFallback,panel_at_start,panel_on_tray_failure
         from .panel import ControlPanel
@@ -57,7 +65,8 @@ def main(argv=None):
     app.setApplicationName('视线悬浮层');app.setQuitOnLastWindowClosed(False)
     try:
         settings=load_settings() if args.config is None else load_settings(args.config)
-        print_configuration(settings)
+        startup.configuration(settings)
+        startup.key(f'设备：{settings.device_profile.name if settings.device_profile else "未指定设备文件"}；摄像头 index {settings.camera.index}，请求 {settings.camera.width}×{settings.camera.height}；档案：等待实际相机条件匹配。')
         platforms.prepare_application()
         tray_available=QSystemTrayIcon.isSystemTrayAvailable()
         if not tray_available:
@@ -66,7 +75,7 @@ def main(argv=None):
         selection=startup_screen(app,delay_ms=settings.overlay.screen_debounce_ms,retry_count=settings.overlay.screen_retry_count)
         screen=selection.qscreen;logical=selection.rect
         rect=screen.geometry()
-        print(f'内置屏逻辑范围：{logical}；个人档案仅在实际 Python 相机条件匹配后加载。',flush=True)
+        startup.detail(f'内置屏逻辑范围：{logical}；个人档案仅在实际 Python 相机条件匹配后加载。')
         window=OverlayWindow(logical,settings.overlay,native_configure=platforms.configure_window,diagnostic=args.diagnostic)
         window.screen_selection=selection
         tray=QSystemTrayIcon(make_tray_icon(settings.overlay.color),app)
@@ -74,7 +83,7 @@ def main(argv=None):
         menu=QMenu();mode=menu.addAction('未校准 · Python 管线');mode.setEnabled(False)
         actions.add_to_menu(menu)
         toggle,pause,quit_action=(actions[name] for name in ('toggle','pause','quit'))
-        for name in ('calibrate','check','load_web','reset','record','pause','web','autocal','heatmap_toggle','heatmap_view','heatmap_clear','heatmap_export'):actions[name].setEnabled(False)
+        for name in ('demo','demo_practice','presentation','calibrate','check','load_web','reset','record','pause','web','autocal','heatmap_toggle','heatmap_view','heatmap_clear','heatmap_export'):actions[name].setEnabled(False)
         tray.setContextMenu(menu);tray.setToolTip('视线悬浮层 · 未校准')
         def toggle_visible():
             window.setVisible(not window.isVisible())
@@ -91,23 +100,23 @@ def main(argv=None):
         if tray_available:tray.show()
         window.show()
         app.processEvents()
-        print(f'托盘状态：isSystemTrayAvailable={tray_available}；tray.isVisible()={tray.isVisible()}；tray.geometry()={tray.geometry()}',flush=True)
+        startup.detail(f'托盘状态：isSystemTrayAvailable={tray_available}；tray.isVisible()={tray.isVisible()}；tray.geometry()={tray.geometry()}')
         fallback=TrayFallback()
         def check_tray(final=False):
             if finished:return
             if final:
-                print(f'托盘复查：tray.isVisible()={tray.isVisible()}；tray.geometry()={tray.geometry()}',flush=True)
+                startup.detail(f'托盘复查：tray.isVisible()={tray.isVisible()}；tray.geometry()={tray.geometry()}')
             if fallback.check(tray_available,tray.isVisible(),tray.geometry().height(),final=final) and panel_on_tray_failure(settings.overlay.panel_on_start):
                 print('托盘不可见或几何高度为 0，已打开控制面板；请保留面板，或使用 --control-panel 启动。',flush=True)
                 panel.present()
         QTimer.singleShot(0,check_tray)
         QTimer.singleShot(settings.overlay.tray_check_delay_ms,lambda:check_tray(True))
         if panel_at_start(settings.overlay.panel_on_start,sys.platform,forced=args.control_panel):
-            print('启动控制面板（panel_on_start='+settings.overlay.panel_on_start+'）；不依据托盘几何判断 macOS 菜单栏可见性。',flush=True)
+            startup.detail('启动控制面板（panel_on_start='+settings.overlay.panel_on_start+'）；不依据托盘几何判断 macOS 菜单栏可见性。')
             panel.present()
         if window.geometry()!=rect:
             raise RuntimeError(f'窗口未覆盖完整逻辑屏：期望 {rect}，实际 {window.geometry()}。')
-        print(f'窗口逻辑范围已核对：{window.geometry()}；仅核对几何，不代表穿透/全屏实机验收。',flush=True)
+        startup.detail(f'窗口逻辑范围已核对：{window.geometry()}；仅核对几何，不代表穿透/全屏实机验收。')
         # Keep Python handling terminal Ctrl+C through the Qt event loop.
         signal.signal(signal.SIGINT,lambda *_:diagnostic_quit())
         timer=QTimer();timer.timeout.connect(lambda:None);timer.start(settings.overlay.refresh_ms)
@@ -122,9 +131,9 @@ def main(argv=None):
         # Camera integration is kept below the diagnostic path.
         from .runtime import run_camera_overlay
         from types import SimpleNamespace
-        controls=SimpleNamespace(actions=actions,panel=panel,screen=screen,mode=mode)
+        controls=SimpleNamespace(actions=actions,panel=panel,screen=screen,mode=mode,log_detail=startup.detail)
         try:return run_camera_overlay(app,window,tray,pause,quit_action,timer,settings,platforms.camera_permission,controls=controls,
-                                     profile_seconds=args.profile_seconds)
+                                     profile_seconds=args.profile_seconds,demo_debug=args.demo_debug)
         finally:finished=True;panel.hide()
     except Exception as exc:
         print(f'悬浮层启动失败：{exc}',file=sys.stderr)

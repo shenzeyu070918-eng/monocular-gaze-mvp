@@ -292,6 +292,26 @@ class ControlsRuntimeTests(unittest.TestCase):
             panel.deleteLater()
             self.qt_app.processEvents()
 
+    def test_demo_hotkey_uses_shared_entry_task_gates_and_pause_cleanup(self):
+        from overlay.demo_session import DemoSession
+        manager=Mock(spec=DemoSession);manager.active=False
+        manager.start.side_effect=lambda *_:setattr(manager,'active',True)
+        manager.cancel.side_effect=lambda *_,**__:setattr(manager,'active',False)
+        def scenario(c):
+            self.tick(c)
+            board,game=object(),object()
+            dialog=c.message_box.return_value
+            dialog.addButton.side_effect=[board,game,object()];dialog.clickedButton.return_value=board
+            c.hotkey_dispatch('demo');self.qt_app.processEvents()
+            manager.start.assert_called_once_with('board',c.controls.screen)
+            self.tick(c,.1)
+            manager.tick.assert_called_once()
+            self.assertFalse(c.actions['calibrate'].isEnabled());self.assertFalse(c.actions['check'].isEnabled())
+            self.assertFalse(c.actions['toggle'].isEnabled())
+            c.actions['presentation'].trigger();self.assertEqual(c.window.font().pixelSize(),26)
+            c.actions['pause'].trigger();manager.cancel.assert_called_with('camera_paused')
+        with patch('overlay.demo_session.DemoSession',return_value=manager):self.exercise(scenario)
+
     def test_projector_unchanged_does_not_pause_and_resize_recovers_without_restart(self):
         from overlay.screens import BuiltinScreen,SCREEN_CHANGED
         def scenario(c):

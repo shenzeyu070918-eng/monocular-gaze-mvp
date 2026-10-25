@@ -19,8 +19,11 @@ import sys
 from typing import Any, Callable, Iterator
 import warnings
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-EVENT_TYPES = frozenset({"target", "calibration", "calibration_quality", "distance_check", "evaluation_summary", "click", "click_session"})
+
+EVENT_TYPES = frozenset({"target", "calibration", "calibration_quality", "distance_check", "evaluation_summary", "click", "click_session", "demo_selection", "demo_summary", "starfield_event", "starfield_summary"})
 RECORD_TYPES = EVENT_TYPES | {"session", "frame", "end"}
 
 
@@ -187,6 +190,15 @@ def read_session(path: str | Path) -> RecordingSession:
             raise ReplayError("同一文件不允许嵌套 session")
         if kind == "end" and index != len(rows) - 1:
             raise ReplayError("end 必须是最后一条完整记录")
+        if kind in {"starfield_event", "starfield_summary"}:
+            if source != "python":
+                raise ReplayError("星空记录仅支持 Python 管线")
+            from gaze_core.starfield_recording import validate_starfield_event
+            envelope = {"schema_version", "type", "session_id", "seq", "server_ns"}
+            try:
+                validate_starfield_event(kind, {key: value for key, value in row.items() if key not in envelope})
+            except ValueError as error:
+                raise ReplayError(f"第 {index + 1} 行星空记录无效：{error}") from error
         if source == "web":
             if kind != "end" or "page_clock_id" in row:
                 if row.get("page_clock_id") != clock_id:

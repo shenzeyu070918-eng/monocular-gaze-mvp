@@ -1,7 +1,8 @@
-"""Shared configuration without UI or model imports."""
+"""Shared configuration without UI or inference model imports."""
 from dataclasses import dataclass, replace, field
 import math
 from pathlib import Path
+from .starfield import StarfieldSettings
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / 'config/default.yaml'
@@ -231,13 +232,20 @@ class OverlaySettings:
     web_url: str = 'http://127.0.0.1:8765'
     panel_on_start: str = 'auto'
     calibration_redo_cm: float = 2.0
-    hotkeys: dict = field(default_factory=lambda: dict(toggle='Ctrl+Alt+G', pause='Ctrl+Alt+P', calibrate='Ctrl+Alt+C', panel='Ctrl+Alt+O', heatmap_toggle='Ctrl+Alt+H',heatmap_view='Ctrl+Alt+V'))
+    presentation: bool = False
+    presentation_stroke_px: float = 6.0
+    presentation_color: str = '#FFD166'
+    presentation_label_font_px: int = 26
+    calibration_notice_s: float = 3.0
+    coordinate_warning_s: float = 1.0
+    hotkeys: dict = field(default_factory=lambda: dict(toggle='Ctrl+Alt+G', pause='Ctrl+Alt+P', calibrate='Ctrl+Alt+C', panel='Ctrl+Alt+O', heatmap_toggle='Ctrl+Alt+H',heatmap_view='Ctrl+Alt+V',demo='Ctrl+Alt+D',demo_practice='Ctrl+Alt+R'))
 
     def __post_init__(self):
         import re
         from .devices import finite
         for key in ('radius_cm','fallback_radius_px','opacity','fade_ms','stale_ms','stroke_px','idle_after_s','idle_fps'):
             finite(getattr(self,key),'overlay.'+key,positive=True)
+        finite(self.coordinate_warning_s,'overlay.coordinate_warning_s',positive=True)
         if self.opacity>1:raise ValueError('overlay.opacity 必须在 (0,1]')
         if type(self.screen_retry_count) is not int or self.screen_retry_count<0:raise ValueError('overlay.screen_retry_count 必须为非负整数')
         for key in ('refresh_ms','label_font_px','label_inset_px','diagnostic_size_px','task_radius_px','tray_check_delay_ms','screen_debounce_ms'):
@@ -257,8 +265,15 @@ class OverlaySettings:
         if self.panel_on_start not in ('auto','always','never'):
             raise ValueError('overlay.panel_on_start 必须为 auto / always / never')
         finite(self.calibration_redo_cm,'overlay.calibration_redo_cm',positive=True)
-        if not isinstance(self.hotkeys,dict) or not {'toggle','pause','calibrate','panel'}<=set(self.hotkeys) or set(self.hotkeys)-{'toggle','pause','calibrate','panel','heatmap_toggle','heatmap_view'} or any(not isinstance(v,str) for v in self.hotkeys.values()):
-            raise ValueError('overlay.hotkeys 必须包含 toggle / pause / calibrate / panel，可加 heatmap_toggle / heatmap_view；空字符串禁用该项')
+        if type(self.presentation) is not bool:raise ValueError('overlay.presentation 必须为布尔值')
+        finite(self.presentation_stroke_px,'overlay.presentation_stroke_px',positive=True)
+        finite(self.calibration_notice_s,'overlay.calibration_notice_s',positive=True)
+        if type(self.presentation_label_font_px) is not int or self.presentation_label_font_px<1:
+            raise ValueError('overlay.presentation_label_font_px 必须为正整数')
+        if not isinstance(self.presentation_color,str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',self.presentation_color):
+            raise ValueError('overlay.presentation_color 必须为 #RRGGBB')
+        if not isinstance(self.hotkeys,dict) or not {'toggle','pause','calibrate','panel'}<=set(self.hotkeys) or set(self.hotkeys)-{'toggle','pause','calibrate','panel','heatmap_toggle','heatmap_view','demo','demo_practice'} or any(not isinstance(v,str) for v in self.hotkeys.values()):
+            raise ValueError('overlay.hotkeys 必须包含 toggle / pause / calibrate / panel，可加 heatmap_toggle / heatmap_view / demo / demo_practice；空字符串禁用该项')
         from urllib.parse import urlsplit
         url=urlsplit(self.web_url)
         if url.scheme!='http' or url.hostname not in {'127.0.0.1','localhost','::1'}:
@@ -321,6 +336,65 @@ class AutocalSettings:
 
 
 @dataclass(frozen=True)
+class DemoSettings:
+    dwell_ms: float = 800.0
+    show_gaze_ring: bool = False
+    leave_grace_ms: float = 150.0
+    cooldown_ms: float = 800.0
+    loss_reset_ms: float = 400.0
+    hit_expand_ratio: float = .5  # Active button only; 0 disables sticky hit testing.
+    practice: bool = True
+    practice_window_ms: float = 600.
+    practice_min_samples: int = 5
+    practice_min_span_ms: float = 500.
+    practice_max_correction_cm: float = 3.
+    labels: tuple = ('我想喝水','我不舒服','请叫护士','开灯','是','否')
+    round_s: float = 60.0
+    undo_ms: float = 1000.0
+    feedback_ms: float = 2000.0
+    flash_ms: float = 350.0
+    speech_timeout_ms: float = 15000.0
+    button_font_px: int = 48
+    heading_font_px: int = 36
+    progress_px: float = 10.0
+    min_button_px: float = 160.0
+    padding_px: float = 32.0
+    header_px: float = 120.0
+    footer_px: float = 65.0
+    background: str = '#101B30'
+    button_color: str = '#EDF3FF'
+    hole_color: str = '#294363'
+    text_color: str = '#112444'
+    progress_color: str = '#FFCA55'
+    feedback_color: str = '#FFCA55'
+    active_color: str = '#FFD475'
+    debug_before_color: str = '#F47BA9'
+    debug_after_color: str = '#68DBFF'
+    debug_point_px: float = 5.0
+    practice_target_px: float = 5.0
+
+    def __post_init__(self):
+        import re
+        from .devices import finite
+        for name in ('dwell_ms','loss_reset_ms','round_s','undo_ms','feedback_ms','flash_ms','speech_timeout_ms',
+                     'progress_px','min_button_px','padding_px','header_px','footer_px','debug_point_px','practice_target_px'):
+            finite(getattr(self,name),'demo.'+name,positive=True)
+        for name in ('leave_grace_ms','cooldown_ms','hit_expand_ratio'):
+            if finite(getattr(self,name),'demo.'+name)<0:raise ValueError('demo.'+name+' 必须非负')
+        if type(self.practice) is not bool:raise ValueError('demo.practice 必须为布尔值')
+        if type(self.show_gaze_ring) is not bool:raise ValueError('demo.show_gaze_ring 必须为布尔值')
+        from .demo_drift import DriftSettings
+        DriftSettings(self.practice_window_ms,self.practice_min_samples,self.practice_min_span_ms,self.practice_max_correction_cm)
+        for name,minimum in (('button_font_px',40),('heading_font_px',1)):
+            if type(getattr(self,name)) is not int or getattr(self,name)<minimum:raise ValueError('demo.'+name+f' 必须为整数且至少 {minimum}')
+        if not isinstance(self.labels,(tuple,list)) or len(self.labels)!=6 or any(not isinstance(v,str) or not v.strip() or len(v)>120 for v in self.labels):
+            raise ValueError('demo.labels 需要六条非空短文字，每条不超过120字')
+        for name in ('background','button_color','hole_color','text_color','progress_color','feedback_color','active_color','debug_before_color','debug_after_color'):
+            if not isinstance(getattr(self,name),str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',getattr(self,name)):
+                raise ValueError('demo.'+name+' 必须为 #RRGGBB')
+
+
+@dataclass(frozen=True)
 class Settings:
     inference: InferenceSettings
     camera: CameraSettings
@@ -342,6 +416,8 @@ class Settings:
     click_session: ClickSessionSettings = ClickSessionSettings()
     heatmap: HeatmapSettings = HeatmapSettings()
     autocal: AutocalSettings = AutocalSettings()
+    demo: DemoSettings = DemoSettings()
+    starfield: StarfieldSettings = StarfieldSettings()
 
 
 def select_device(requested, cuda_available, mps_available=False):
@@ -400,7 +476,7 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
         note(override, str(local))
         sources.append(str(local))
     required = {'inference', 'camera', 'geometry', 'recording', 'jump'}
-    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay', 'click_session', 'heatmap', 'autocal'}:
+    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay', 'click_session', 'heatmap', 'autocal', 'demo', 'starfield'}:
         raise ValueError('配置必须包含 inference、camera、geometry、recording、jump 五部分')
     settings = Settings(InferenceSettings(**data['inference']), CameraSettings(**data['camera']),
                         ScreenGeometry(**data['geometry']), RecordingSettings(**data['recording']), JumpSettings(**data['jump']),
@@ -414,7 +490,9 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
                        overlay=OverlaySettings(**data.get('overlay', {})),
                        click_session=ClickSessionSettings(**data.get('click_session', {})),
                        heatmap=HeatmapSettings(**data.get('heatmap', {})),
-                       autocal=AutocalSettings(**data.get('autocal', {})))
+                       autocal=AutocalSettings(**data.get('autocal', {})),
+                       demo=DemoSettings(**data.get('demo', {})),
+                       starfield=StarfieldSettings(**data.get('starfield', {})))
     i, c, g = settings.inference, settings.camera, settings.geometry
     # Validate the request separately from actual device availability.
     if i.device not in {'auto', 'cpu', 'cuda', 'mps'}:
@@ -523,6 +601,7 @@ def configuration_info(settings):
     return {'files': list(settings.config_sources), 'keys': dict(settings.key_sources or {}),
             'device_file': settings.device_file, 'camera': asdict(settings.camera), 'geometry': asdict(settings.geometry), 'filter': asdict(settings.filter),
             'fixation': asdict(settings.fixation), 'offline_filter': asdict(settings.offline_filter), 'heatmap': asdict(settings.heatmap),
+            'demo':asdict(settings.demo),'starfield':asdict(settings.starfield),
             'inference':dict(device=settings.inference.device,num_threads=settings.inference.num_threads,max_fps=settings.inference.max_fps)}
 
 

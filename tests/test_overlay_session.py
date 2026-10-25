@@ -142,6 +142,22 @@ class OverlaySessionTests(unittest.TestCase):
                                camera=deepcopy(self.camera),origin_m=[0.,.1,.5],distance_cm=distance,
                                inference_ms=np.float64(1)))
 
+    def test_unready_window_blocks_ingest_and_advance_but_keeps_numeric_recording(self):
+        runner=self.start('evaluate')
+        window=self.session.task_window
+        window.accept_prediction=lambda *_:False
+        self.now+=500_000_000
+        prediction=self.prediction(self.now,[.3,.4])
+        with patch.object(runner,'ingest') as ingest,patch.object(runner,'advance') as advance:
+            self.session.sink(prediction);self.session.tick(self.view)
+            ingest.assert_not_called();advance.assert_not_called()
+        self.assertEqual(self.session.recording.frames[-1].sequence,prediction.sequence)
+        window.accept_prediction=lambda *_:True
+        self.now+=1;self.session.sink(self.prediction(self.now,[.3,.4]))
+        with patch.object(runner,'ingest',wraps=runner.ingest) as ingest:
+            self.session.tick(self.view);ingest.assert_called_once()
+        self.session.cancel('test_complete')
+
     def test_screen_change_while_paused_resets_context_and_recalibrates_without_recreating_pipeline(self):
         self.load_coarse();self.assertEqual(self.session._active_group,'C')
         runner=self.start('calibrate');self.fill_task(runner);self.finish_io()

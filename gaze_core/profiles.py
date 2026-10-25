@@ -13,6 +13,13 @@ from .devices import device_name, finite
 COORDINATES = dict(input='unfiltered_unclipped_raw_fullscreen_normalized',output='corrected_fullscreen_normalized',
                    origin='top_left',x='right',y='down',formula='[raw_x, raw_y, 1] @ matrix',clip=False)
 
+# Version 2 maps targets through their actual global client origin. Older
+# Python nine-point files did not record that origin, so a file cannot prove
+# that its targets covered the full display rather than the notched client.
+# This is independent of the storage schema and of device-file semantics.
+PYTHON_COORDINATE_VERSION = 2
+COORDINATE_UPDATE_REQUIRED = '坐标换算已更新，请重新九点校准'
+
 
 def _matrix(value):
     from .display import calibration_matrix
@@ -265,7 +272,10 @@ def _check(value, profile):
 def _python_profile(data, *, name=None):
     if not isinstance(data,dict) or data.get('pipeline','web')!='python':
         raise ValueError('只自动加载 pipeline=python 的个人档案；缺少 pipeline 的旧档案按 web 处理')
-    keys={'schema_version','pipeline','device_name','matrix','matrix_id','source','group','created_at','device_file',
+    version=data.get('coordinate_version')
+    if isinstance(version,bool) or not isinstance(version,Integral) or version!=PYTHON_COORDINATE_VERSION:
+        raise ValueError(COORDINATE_UPDATE_REQUIRED)
+    keys={'schema_version','coordinate_version','pipeline','device_name','matrix','matrix_id','source','group','created_at','device_file',
           'calibration_id','coordinates','conditions','calibration','latest_check'}
     _fields(data,keys,'Python 个人档案')
     if type(data['schema_version']) is not int or data['schema_version']!=2 or data['pipeline']!='python':
@@ -288,7 +298,7 @@ def _python_path(name, directory):
 
 def save_python_profile(matrix, *, name, conditions, calibration_id, calibration, directory=None):
     name=device_name(name);conditions=_conditions(conditions);matrix=_matrix(matrix)
-    data=dict(schema_version=2,pipeline='python',device_name=name,matrix=matrix,matrix_id=_fingerprint(matrix),source='nine_point',group='B',
+    data=dict(schema_version=2,coordinate_version=PYTHON_COORDINATE_VERSION,pipeline='python',device_name=name,matrix=matrix,matrix_id=_fingerprint(matrix),source='nine_point',group='B',
               created_at=datetime.now(timezone.utc).isoformat(),device_file=conditions['device_file'],calibration_id=calibration_id,
               conditions=conditions,coordinates=dict(COORDINATES),calibration=calibration,latest_check=None)
     data=_python_profile(data,name=name)
@@ -347,9 +357,19 @@ def click_profile_path(name,directory=None):
 
 
 def _click_profile(data):
-    _fields(data,{'schema_version','pipeline','kind','offset_norm','sample_count','updated_at','conditions_fingerprint'},'click_offset')
+    required={'schema_version','pipeline','kind','offset_norm','sample_count','updated_at','conditions_fingerprint'}
+    allowed=required|({'coordinate_version'} if isinstance(data,dict) and 'coordinate_version' in data else set())
+    _fields(data,allowed,'click_offset')
     if type(data['schema_version']) is not int or data['schema_version']!=1 or data['pipeline']!='python' or data['kind']!='click_offset':
         raise ValueError('粗校准档案类型或版本无效')
+    # Legacy click offsets were learned directly from native global mouse
+    # coordinates and raw fullscreen gaze. Unlike nine-point targets, neither
+    # input passed through task_window's client coordinate conversion. Retain
+    # these offsets, including files without a coordinate_version; never rewrite
+    # the source file or its condition fingerprint simply to add the marker.
+    version=data.get('coordinate_version',1)
+    if isinstance(version,bool) or not isinstance(version,Integral) or version not in {1,PYTHON_COORDINATE_VERSION}:
+        raise ValueError('粗校准档案坐标版本无效，请重新采集点击或九点校准')
     offset=data['offset_norm']
     if not isinstance(offset,(list,tuple)) or len(offset)!=2:raise ValueError('offset_norm 必须为全屏归一化二维偏移')
     offset=[finite(v,'offset_norm') for v in offset]
@@ -361,7 +381,7 @@ def _click_profile(data):
 
 
 def save_click_profile(offset,*,name,count,conditions,directory=None,updated_at=None):
-    data=_click_profile(dict(schema_version=1,pipeline='python',kind='click_offset',offset_norm=offset,
+    data=_click_profile(dict(schema_version=1,coordinate_version=PYTHON_COORDINATE_VERSION,pipeline='python',kind='click_offset',offset_norm=offset,
                             sample_count=count,updated_at=updated_at or datetime.now(timezone.utc).isoformat(),
                             conditions_fingerprint=conditions_fingerprint(conditions)))
     path=click_profile_path(name,directory)

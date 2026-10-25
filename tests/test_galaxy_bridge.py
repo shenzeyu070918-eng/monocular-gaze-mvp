@@ -18,9 +18,9 @@ from test_galaxy import geometry
 
 
 def packet(seq=0):
-    return dict(v=1,seq=seq,capture_us=0,completed_us=0,viewport=1,gaze_valid=1,gaze_state=0,
+    return dict(v=2,seq=seq,capture_us=0,completed_us=0,viewport=1,gaze_valid=1,gaze_state=0,
                 fixation=1,xy=[10.,20.],radius=[50.,50.],control=0,hands=[],distance=0.,
-                pattern=0,intro=1,hand_ms=0.,hand_available=0)
+                pattern=0,intro=1,hand_ms=0.,hand_available=0,hand_detected=0,hand_openings=[],hand_error=0)
 
 
 class GalaxyBridgeTests(unittest.TestCase):
@@ -86,7 +86,7 @@ class GalaxyBridgeTests(unittest.TestCase):
         self.assertNotIn('image',latest)
         ws.send(json.dumps(dict(type='focus',active=1)))
         with self.assertRaises(ValueError):self.bridge.publish(dict(packet(),image='data:image/png'))
-        ws.send(json.dumps(dict(type='performance',fps=60,p90_ms=17,frames=60,long_frames=1,particles=50000,pixel_ratio=1,downgrades=0)))
+        ws.send(json.dumps(dict(type='performance',fps=60,p90_ms=17,frames=60,long_frames=1,particles=50000,pixel_ratio=1,downgrades=0,render_median_ms=.2,render_p90_ms=.3)))
         ws.send(json.dumps(dict(type='geometry',**geometry())))
         self.receive(ws,'ready');self.assertEqual(len(self.bridge.telemetry),1)
         self.assertTrue(self.bridge.ui_focused)
@@ -105,7 +105,7 @@ class GalaxyAssetTests(unittest.TestCase):
         for name,expected in manifest['sha256'].items():
             self.assertEqual(hashlib.sha256((vendor/name).read_bytes()).hexdigest(),expected,name)
         self.assertIn('MIT License',(vendor/'LICENSE').read_text())
-        for name in ('app.mjs','logic.mjs','renderer.mjs','shapes.mjs','index.html'):
+        for name in ('app.mjs','logic.mjs','renderer.mjs','planet-renderer.mjs','planet-controls.mjs','planet-shaders.mjs','particle-fields.mjs','index.html'):
             source=(root/name).read_text()
             self.assertNotIn('getUserMedia',source);self.assertNotIn('https://',source)
 

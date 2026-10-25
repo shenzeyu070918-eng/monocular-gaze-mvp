@@ -38,8 +38,8 @@ class GalaxyProcessor:
         self.bridge,self.o,self.radii,self.offset=bridge,options,tuple(radii),tuple(offset)
         self.factory=model_factory;self.clock=clock_ns;self.model=None;self.controls=HandControls(options)
         self.pattern=PatternCycle(options);self.origin=clock_ns();self.stopped=threading.Event()
-        self.error=None;self.hand_times=[];self.frames=0;self.first_ns=None;self.last_ns=None
-        self._revision=None;self._last_sequence=-1;self._attempted=False
+        self.error=None;self.detected_frames=0;self.active_frames=0;self.hand_times=[];self.frames=0;self.first_ns=None;self.last_ns=None
+        self.hand_error_code=0;self._revision=None;self._last_sequence=-1;self._attempted=False
 
     def stop(self):self.stopped.set()
 
@@ -52,28 +52,30 @@ class GalaxyProcessor:
         if not self._attempted:
             self._attempted=True
             try:self.model=self.factory(self.o)
-            except Exception as exc:self.error='手势不可用，仅视线继续：'+str(exc)
+            except Exception as exc:self.error='手势不可用，仅视线继续：'+str(exc);self.hand_error_code=1
         began=self.clock();features=[]
         try:
             if self.model is not None:features=self.model.detect(frame.image,frame.captured_ns)
         except Exception as exc:
-            self.error='手势识别失败，仅视线继续：'+str(exc);self.model.close();self.model=None
+            self.error='手势识别失败，仅视线继续：'+str(exc);self.hand_error_code=2;self.model.close();self.model=None;self.controls=HandControls(self.o)
         hand_ms=(self.clock()-began)/1e6
         self.hand_times.append(hand_ms)
         if len(self.hand_times)>36000:self.hand_times.pop(0)
         hands=self.controls.update(features,frame.captured_ns)
+        self.detected_frames+=int(bool(features));self.active_frames+=hands['control']
         display=data.get('display',{});position=display.get('position')
         valid=bool(data.get('valid') and position is not None)
         xy=[0.,0.] if not valid else list(mapping.screen_to_window(tuple(p+d for p,d in zip(position,self.offset))))
         intro=int(frame.captured_ns<started+int(self.o.intro_s*1e9))
-        if revision!=self._revision:self.pattern.reset_window();self._revision=revision
-        pattern=self.pattern.feed(xy,self.radii,frame.captured_ns,valid and not intro)
+        if revision!=self._revision:self.pattern=PatternCycle(self.o);self._revision=revision
+        pattern=self.pattern.feed(xy,self.radii,frame.captured_ns,valid and not intro,viewport_size=mapping.window_size)
         state={'tracking':0,'blink':1,'no_face':2}.get(data.get('status'),3)
-        packet=dict(v=1,seq=int(frame.sequence),capture_us=max(0,(frame.captured_ns-self.origin)//1000),
+        packet=dict(v=2,seq=int(frame.sequence),capture_us=max(0,(frame.captured_ns-self.origin)//1000),
             completed_us=max(0,(self.clock()-self.origin)//1000),viewport=revision,gaze_valid=int(valid),gaze_state=state,
             fixation={'fixation':1,'saccade':2}.get(display.get('state'),0),xy=xy,radius=list(self.radii),
             control=hands['control'],hands=hands['hands'],distance=hands['distance'],pattern=pattern,intro=intro,
-            hand_ms=hand_ms,hand_available=int(self.model is not None))
+            hand_ms=hand_ms,hand_available=int(self.model is not None),hand_detected=len(features[:2]),
+            hand_openings=[float(f[2]) for f in features[:2]],hand_error=self.hand_error_code)
         if not self.stopped.is_set():self.bridge.publish(packet)
         self.frames+=1
         if self.first_ns is None:self.first_ns=frame.captured_ns
@@ -82,7 +84,8 @@ class GalaxyProcessor:
     def report(self):
         elapsed=0 if self.first_ns is None else (self.last_ns-self.first_ns)/1e9
         return dict(frames=self.frames,capture_fps=(self.frames-1)/elapsed if elapsed else None,
-                    hand_ms=timing_summary(self.hand_times),hand_error=self.error)
+                    hand_ms=timing_summary(self.hand_times),hand_error=self.error,
+                    hand_detected_frames=self.detected_frames,hand_active_frames=self.active_frames)
 
     def close(self):
         if self.model is not None:self.model.close();self.model=None

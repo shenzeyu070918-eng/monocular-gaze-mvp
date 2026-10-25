@@ -59,3 +59,10 @@ export function textField(count,o,mask,width,height){
  }
  return f;
 }
+
+export function particleBudget(count,o){
+ const total=o.planet_particles+o.ring_particles;
+ const planet=Math.max(1,Math.min(count-1,Math.round(count*o.planet_particles/total)));
+ // Partial radiance compensation keeps the low tier readable without a white wash.
+ return {planet,ring:count-planet,intensity:Math.sqrt(total/count)};
+}

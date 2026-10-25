@@ -23,7 +23,7 @@ assert.equal(handPhysics({control:0,hands:[]}).scale,1);
 assert.equal(handPhysics({control:1,hands:[[.5,.5,.5,.1,0,0,0]],distance:0}).explode,0);
 assert.equal(handPhysics({control:1,hands:[[.5,.5,.5,.1,0,0,-1]],distance:0}).collapse,1);
 assert.equal(handPhysics({control:1,hands:[[.5,.5,.5,.1,0,0,1]],distance:0}).explode,.5);
-assert.equal(nextPattern(3),0);assert.equal(nextPattern(0),1);
+assert.equal(nextPattern(2),0);assert.equal(nextPattern(0),1);
 const spring=new Spring2D();for(let i=0;i<100;i++)spring.step([1,2],.016,2);
 assert.ok(Math.abs(spring.p[1]-2)<1e-6);
 assert.equal(usableFrame({viewport:2,capture_us:1000,completed_us:100000},2,10,400),true);
@@ -31,3 +31,10 @@ assert.equal(usableFrame({viewport:1,capture_us:1000,completed_us:1000},2,10,400
 assert.equal(usableFrame({viewport:2,capture_us:1000,completed_us:1000},2,401,400),false);
 assert.equal(usableFrame({viewport:2,capture_us:1000,completed_us:401000},2,1,400),false);
 console.log('galaxy intro gate, downgrade-only quality, hands, patterns and spring tests passed');
+
+const planetTier=new QualityController({...options,visual:{planet_particles:80000,ring_particles:150000}},230000,100000);planetTier.frame(0);
+for(let t=25;t<=3000;t+=25)planetTier.frame(t);assert.equal(planetTier.particles,100000);
+for(let t=3025;t<=6000;t+=25)planetTier.frame(t);assert.equal(planetTier.particles,100000);assert.ok(planetTier.ratio<1.5);
+console.log('230k planet -> 100k then pixel ratio downgrade passed');
+
+assert.equal(usableFrame({viewport:2,capture_us:1000,completed_us:1000},2,-10,400),false);

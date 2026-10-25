@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {planetField,ringField,galaxyField,textField,ringRadius,keplerSpeed,maskDistance,ringGap,ringLight,grain} from '../static/galaxy/particle-fields.mjs';
+import {planetField,ringField,galaxyField,textField,ringRadius,keplerSpeed,maskDistance,ringGap,ringLight,grain,particleBudget} from '../static/galaxy/particle-fields.mjs';
 const o={seed:918,radius:1.5,ring_inner_ratio:1.4,ring_outer_ratio:8,ring_density_power:1.5,ring_thickness:.035,galaxy_radius:5.2,galaxy_arm_width:.4,text_width:7.2,text_depth:.35,text_flow:.06};
 const sphere=planetField(16000,o);let inner=0,volumeMean=0;
 for(let i=0;i<sphere.count;i++){
@@ -43,3 +43,6 @@ assert.equal(ringLight(o.radius*o.ring_outer_ratio,gradient),.15);
 let rare=0;for(let i=0;i<10000;i++){const g=grain((i+.5)/10000,gradient);rare+=Number(g.rare);assert.ok(g.size>0&&g.light>0);}
 assert.equal(rare,150);assert.ok(grain(.99999,gradient).size>grain(.5,gradient).size*2);
 console.log('ring density gaps, radial light falloff, and 1.5% long-tail grain population passed');
+
+const full=particleBudget(230000,{planet_particles:80000,ring_particles:150000});assert.deepEqual(full,{planet:80000,ring:150000,intensity:1});
+const low=particleBudget(100000,{planet_particles:80000,ring_particles:150000});assert.equal(low.planet+low.ring,100000);assert.ok(Math.abs(low.planet/low.ring-8/15)<.0001);assert.ok(low.intensity>1&&low.intensity<2);

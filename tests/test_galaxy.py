@@ -60,10 +60,26 @@ class GalaxyTests(unittest.TestCase):
 
     def test_pattern_capture_time_and_transition_rearm(self):
         cycle=PatternCycle(GalaxySettings())
-        for ms in range(0,1501,100):self.assertEqual(cycle.feed([0,0],[10,10],ms*1_000_000),int(ms==1500))
-        for ms in range(1600,2700,100):self.assertEqual(cycle.feed([0,0],[10,10],ms*1_000_000),1)
-        self.assertEqual(cycle.feed([0,0],[10,10],2_600_000_000),1)
+        for ms in range(0,1501,100):self.assertEqual(cycle.feed([0,0],[10,10],ms*1_000_000,viewport_size=[1000,800]),int(ms==1500))
+        for ms in range(1600,2700,100):self.assertEqual(cycle.feed([0,0],[10,10],ms*1_000_000,viewport_size=[1000,800]),1)
+        self.assertEqual(cycle.feed([0,0],[10,10],2_600_000_000,viewport_size=[1000,800]),1)
         cycle.feed([0,0],[10,10],3_000_000_000,False);self.assertIsNone(cycle.anchor)
+
+    def test_pattern_only_corners_capture_gap_and_three_scenes(self):
+        cycle=PatternCycle(GalaxySettings())
+        for ms in range(0,3001,100):cycle.feed([500,400],[30,30],ms*1_000_000,viewport_size=[1000,800])
+        self.assertEqual(cycle.pattern,0)
+        for ms in range(3100,4601,100):cycle.feed([20,20],[30,30],ms*1_000_000,viewport_size=[1000,800])
+        self.assertEqual(cycle.pattern,1)
+        for ms in range(6000,7601,100):cycle.feed([980,20],[30,30],ms*1_000_000,viewport_size=[1000,800])
+        self.assertEqual(cycle.pattern,2)
+        for ms in range(9000,10601,100):cycle.feed([980,780],[30,30],ms*1_000_000,viewport_size=[1000,800])
+        self.assertEqual(cycle.pattern,0)
+        cycle.feed([20,780],[30,30],11_000_000_000,viewport_size=[1000,800])
+        cycle.feed([20,780],[30,30],13_000_000_000,viewport_size=[1000,800])
+        self.assertEqual(cycle.pattern,0)  # A capture gap is not dwell evidence.
+        cycle.feed([-5,780],[30,30],13_100_000_000,viewport_size=[1000,800])
+        self.assertIsNone(cycle.anchor)
 
     def test_processor_same_frame_no_raw_mutation_intro_and_numeric_whitelist(self):
         options=GalaxySettings();screen=ScreenRect(0,0,1512,982,2);mapping=viewport(screen,geometry())
@@ -75,12 +91,50 @@ class GalaxyTests(unittest.TestCase):
             now[0]+=100_000_000;processor.process(CapturedFrame(i,now[0],image),data)
         packet=bridge.publish.call_args.args[0];validate_frame(packet)
         self.assertEqual(packet['intro'],1);self.assertEqual(packet['pattern'],0)
+        self.assertEqual(packet['v'],2);self.assertEqual(packet['hand_detected'],1);self.assertEqual(packet['hand_openings'],[1.]);self.assertEqual(packet['hand_error'],0)
         self.assertEqual(packet['control'],1);self.assertEqual(data['raw'],[.8,.2])
         self.assertIs(model.detect.call_args.args[0],image)
         self.assertAlmostEqual(packet['xy'][1],.48*981-32)
-        for bad in (dict(image='data:image'),dict(raw=[.1,.2]),dict(xy=[np.inf,0]),dict(hands=[[0,0,'image']]),dict(intro=3),dict(hand_available=2),dict(distance=[]),dict(radius=1)):
+        for bad in (dict(image='data:image'),dict(raw=[.1,.2]),dict(xy=[np.inf,0]),dict(hands=[[0,0,'image']]),dict(intro=3),dict(hand_available=2),dict(distance=[]),dict(radius=1),dict(hand_detected=3),dict(hand_openings=[np.nan]),dict(hand_error=3),dict(hand_openings=[.1,.2]),dict(pattern=3),dict(v=1)):
             with self.assertRaises(ValueError):validate_frame(dict(packet,**bad))
         processor.stop();processor.process(CapturedFrame(9,now[0],image),data);model.close.assert_called_once()
+
+    def test_processor_diagnostics_before_takeover_missing_and_failed_model(self):
+        for fault,expected in (('none',0),('load',1),('detect',2)):
+            with self.subTest(fault=fault):
+                bridge=Mock();bridge.context.return_value=(viewport(ScreenRect(0,0,1512,982,2),geometry()),1,0)
+                model=Mock();model.detect.return_value=[[.5,.5,np.float64(.8),.2]]
+                if fault=='detect':model.detect.side_effect=ValueError('synthetic detection failure')
+                def factory(_):
+                    if fault=='load':raise ValueError('synthetic missing model')
+                    return model
+                processor=GalaxyProcessor(bridge,GalaxySettings(),[50,50],[0,0],model_factory=factory,clock_ns=lambda:3_000_000_000)
+                try:
+                    processor.process(CapturedFrame(1,3_000_000_000,np.zeros((3,3,3),np.uint8)),dict(valid=False,status='no_face'))
+                    packet=validate_frame(bridge.publish.call_args.args[0])
+                    self.assertEqual(packet['hand_error'],expected);self.assertEqual(packet['control'],0)
+                    self.assertEqual(packet['hand_detected'],1 if fault=='none' else 0)
+                    self.assertEqual(packet['hand_available'],int(fault=='none'))
+                    self.assertEqual(processor.report()['hand_detected_frames'],int(fault=='none'))
+                    self.assertFalse(packet['gaze_valid'])  # Hand detection runs even without a face.
+                finally:processor.close()
+                if fault!='load':model.close.assert_called_once()
+
+    def test_processor_corner_uses_local_viewport_and_resets_after_geometry_revision(self):
+        options=replace(GalaxySettings(),dwell_ms=300)
+        mapping=viewport(ScreenRect(0,0,1512,982,2),geometry());bridge=Mock();revision=[1]
+        bridge.context.side_effect=lambda:(mapping,revision[0],0)
+        model=Mock();model.detect.return_value=[]
+        processor=GalaxyProcessor(bridge,options,[50,50],[0,0],model_factory=lambda _:model,clock_ns=lambda:5_000_000_000)
+        image=np.zeros((3,3,3),np.uint8)
+        # y=.06 maps to 26.86 in the y=32 notch client; still the upper-left corner.
+        data=dict(valid=True,status='tracking',display=dict(position=[.05,.06],state='fixation'))
+        try:
+            for i in range(5):processor.process(CapturedFrame(i,3_000_000_000+i*100_000_000,image),data)
+            self.assertEqual(bridge.publish.call_args.args[0]['pattern'],1)
+            revision[0]=2;processor.process(CapturedFrame(6,3_500_000_000,image),data)
+            self.assertEqual(bridge.publish.call_args.args[0]['pattern'],0)
+        finally:processor.close()
 
     def test_slot_switches_and_closes_only_on_processing_thread(self):
         slot=DemoFrameSlot();a=Mock();b=Mock();slot.set(a);a.process.assert_not_called()
@@ -89,9 +143,11 @@ class GalaxyTests(unittest.TestCase):
         slot.set(None);slot.process(None,{});b.close.assert_called_once()
 
     def test_telemetry_rejects_text_and_unknown_fields(self):
-        row=dict(fps=60,p90_ms=16.7,frames=60,long_frames=0,particles=50000,pixel_ratio=1,downgrades=0)
+        row=dict(fps=60,p90_ms=16.7,frames=60,long_frames=0,particles=50000,pixel_ratio=1,downgrades=0,render_median_ms=.2,render_p90_ms=.3)
         self.assertEqual(telemetry(row)['fps'],60)
-        with self.assertRaises(ValueError):telemetry(dict(row,title='private'))
+        self.assertEqual(telemetry(dict(row,particles=230000))['particles'],230000)
+        for bad in ({'particles':230000.5},{'render_p90_ms':np.inf},{'render_median_ms':-1},{'title':'private'}):
+            with self.assertRaises(ValueError):telemetry(dict(row,**bad))
 
 
 if __name__=='__main__':unittest.main()

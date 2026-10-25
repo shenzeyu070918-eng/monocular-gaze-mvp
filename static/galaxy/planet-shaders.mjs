@@ -1,9 +1,11 @@
-// GPU-only prescribed orbital motion for the visual checkpoint; no gaze/hand forces.
+// Analytical GPU orbits; weak gaze forces operate only on display particles.
 export const particleVertex=`
 attribute vec4 aSeed;attribute float aFlow;
 uniform float time,intro,kind,radius,innerRatio,orbitSpeed,planetSpin,swirlAmplitude,swirlSpeed;
 uniform float wanderFraction,wanderDistance,pointSize,pointMin,pointMax,pixelRatio,referenceDistance,absorption,intensity,galaxySpin,coreIntensity,textWidth;
-uniform vec3 warmA,warmB,warmC,coolA,coolB,coolC;
+uniform vec3 warmA,warmB,warmC,coolA,coolB,coolC,well;
+uniform float wellRadius,eyeAlpha,wellAttraction,wellBrightness,sceneFade;
+uniform float scatter,handScale,scatterDistance,scatterHeight;
 uniform float outerRatio,ringLightPower,ringOuterLight,brightFraction,brightSize,brightIntensity,brightHalo,twinkleSpeed,rimStrength,rimPower;
 varying vec3 particleColor;varying float opacity,halo;
 vec3 palette(vec3 a,vec3 b,vec3 c,float t){return t<.5?mix(a,b,t*2.):mix(b,c,(t-.5)*2.);}
@@ -24,6 +26,8 @@ void main(){
   if(aSeed.w<wanderFraction){float drift=pow(max(0.,sin(fract(time*.045+aSeed.z)*3.14159265)),6.);
    p.xz*=1.+wanderDistance*radius*drift/max(r,.01);p.y+=drift*radius*.17*sin(phase);}
   float radial=clamp((r/radius-innerRatio)/(outerRatio-innerRatio),0.,1.);
+  vec3 delta=well-p;float wellFalloff=exp(-dot(delta,delta)/max(.001,2.*wellRadius*wellRadius))*eyeAlpha;
+  p+=delta*wellAttraction*wellFalloff;light*=1.+wellBrightness*wellFalloff;
   color=palette(coolC,coolB,coolA,pow(radial,.6));
   light*=ringOuterLight+(1.-ringOuterLight)*pow(1.-radial,ringLightPower);
  }else if(kind<2.5){
@@ -40,6 +44,14 @@ void main(){
   float gradient=clamp(p.x/textWidth+.5,0.,1.);
   color=mix(mix(coolB,vec3(.5,.27,.7),gradient),warmB,aSeed.z*.25);
  }
+ // Prescribed restoring shape stays on the GPU. Relaxing scatter returns each
+ // seed to its CURRENT orbit, instead of freezing or snapping to an old frame.
+ if(kind>.5&&kind<1.5){
+  vec2 radial=normalize(p.xz+vec2(.0001)),tangent=vec2(-radial.y,radial.x);
+  p.xz+=(radial*(.3+aSeed.w*.7)+tangent*(aSeed.x-.5))*scatter*scatterDistance*radius;
+  p.y+=sin(phase*3.)*scatter*scatterHeight*radius;
+ }
+ float displayScale=handScale;p*=displayScale;
  float assembly=intro*intro*(3.-2.*intro);
  vec3 chaos=(aSeed.xyz-.5)*vec3(22.,14.,16.);
  p=mix(chaos,p,assembly);
@@ -47,15 +59,16 @@ void main(){
  gl_Position=projectionMatrix*mv;
  float depth=max(.1,-mv.z),raw=pointSize*(referenceDistance/depth)*(.45+.5*sqrt(aSeed.y)+(brightSize-1.)*tail)*(1.+halo*2.);
  gl_PointSize=clamp(raw,pointMin,pointMax)*pixelRatio;
- opacity=min(1.,raw*raw)*(.25+.75*assembly);
+ opacity=min(1.,raw*raw)*(.25+.75*assembly)*sceneFade;
  // Analytic transmittance through the volume: back-ring particles are dimmed,
  // while the volume stays made of particles (there is no opaque sphere mesh).
  if(kind<1.5){
   vec3 ray=normalize(world.xyz-cameraPosition);float distanceToPoint=length(world.xyz-cameraPosition);
-  float b=dot(cameraPosition,ray),disc=b*b-dot(cameraPosition,cameraPosition)+radius*radius;
+  float effectiveRadius=radius*displayScale;
+  float b=dot(cameraPosition,ray),disc=b*b-dot(cameraPosition,cameraPosition)+effectiveRadius*effectiveRadius;
   if(disc>0.){float root=sqrt(disc),nearT=-b-root,farT=-b+root;
-   float travel=max(0.,min(distanceToPoint,farT)-max(0.,nearT));opacity*=exp(-absorption*travel/radius);
-   if(kind<.5)light*=1.+rimStrength*pow(1.-clamp(disc/(radius*radius),0.,1.),rimPower);}
+   float travel=max(0.,min(distanceToPoint,farT)-max(0.,nearT));opacity*=exp(-absorption*travel/effectiveRadius);
+   if(kind<.5)light*=1.+rimStrength*pow(1.-clamp(disc/(effectiveRadius*effectiveRadius),0.,1.),rimPower);}
  }
  float depthLight=clamp(pow(referenceDistance/depth,.55),.18,1.1);
  particleColor=color*light*shimmer*intensity*depthLight;

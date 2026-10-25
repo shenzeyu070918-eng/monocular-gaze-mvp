@@ -4,7 +4,7 @@ import math
 from numbers import Integral
 import numpy as np
 from .devices import finite
-from .planet import PlanetVisualSettings
+from .planet import PlanetVisualSettings,PlanetInteractionSettings
 
 
 @dataclass(frozen=True)
@@ -47,8 +47,11 @@ class GalaxySettings:
     field_of_view: float = 55.
     hand_model: str = 'models/hand_landmarker.task'
     visual: PlanetVisualSettings = PlanetVisualSettings()
+    interaction: PlanetInteractionSettings = PlanetInteractionSettings()
 
     def __post_init__(self):
+        if isinstance(self.interaction,dict):object.__setattr__(self,'interaction',PlanetInteractionSettings(**self.interaction))
+        if not isinstance(self.interaction,PlanetInteractionSettings):raise ValueError('galaxy.interaction 配置无效')
         if isinstance(self.visual,dict):object.__setattr__(self,'visual',PlanetVisualSettings(**self.visual))
         if not isinstance(self.visual,PlanetVisualSettings):raise ValueError('galaxy.visual 配置无效')
         if not isinstance(self.text,str) or not self.text.strip() or len(self.text)>80 or any(ord(c)<32 for c in self.text):
@@ -58,7 +61,7 @@ class GalaxySettings:
         integers={'hand_enter_frames','max_message_bytes','star_count'}
         for f in fields(self):
             v=getattr(self,f.name)
-            if f.name in ('text','hand_model','particle_count','visual'):continue
+            if f.name in ('text','hand_model','particle_count','visual','interaction'):continue
             if f.name in integers and (type(v) is not int or v<1):raise ValueError('galaxy.'+f.name+' 必须为正整数')
             finite(v,'galaxy.'+f.name,positive=True)
         if not 0<self.hand_closed<self.hand_open<1 or not 0<self.hand_confidence<=1:
@@ -68,22 +71,29 @@ class GalaxySettings:
 
 
 class PatternCycle:
+    """Three-scene corner dwell on distinct capture timestamps, never rAF time."""
     def __init__(self,options):
-        self.options=options;self.pattern=0;self.anchor=None;self.since=None;self.last=None;self.cool_until=0
+        self.options=options;self.pattern=0;self.anchor=None;self.since=None;self.last=None;self.cool_until=0;self.corner=None
 
-    def reset_window(self):self.anchor=None;self.since=None;self.last=None
+    def reset_window(self):self.anchor=None;self.since=None;self.last=None;self.corner=None
 
-    def feed(self,point,radii,capture_ns,valid=True):
+    def feed(self,point,radii,capture_ns,valid=True,*,viewport_size=None):
         if self.last is not None and capture_ns<=self.last:return self.pattern
         gap=self.last is not None and capture_ns-self.last>self.options.stale_ms*1e6
         self.last=capture_ns
-        if not valid or gap or capture_ns<self.cool_until:
-            self.anchor=None;self.since=None;return self.pattern
-        p=np.asarray(point,dtype=float);r=np.asarray(radii,dtype=float)
-        if self.anchor is None or np.linalg.norm((p-self.anchor)/r)>1:
-            self.anchor=p.copy();self.since=capture_ns
+        corner=None
+        if valid and viewport_size is not None:
+            p=np.asarray(point,dtype=float);r=np.asarray(radii,dtype=float);size=np.asarray(viewport_size,dtype=float)
+            if p.shape==r.shape==size.shape==(2,) and np.isfinite([p,r,size]).all() and min(r)>0 and min(size)>0:
+                uv=p/size;q=self.options.interaction.corner_ratio
+                if np.all(uv>=0) and np.all(uv<=1) and np.all((uv<=q)|(uv>=1-q)):
+                    corner=tuple(uv>.5)
+        if corner is None or gap or capture_ns<self.cool_until:
+            self.anchor=None;self.since=None;self.corner=None;return self.pattern
+        if self.anchor is None or self.corner!=corner or np.linalg.norm((p-self.anchor)/r)>1:
+            self.anchor=p.copy();self.since=capture_ns;self.corner=corner
         elif capture_ns-self.since>=self.options.dwell_ms*1e6:
-            self.pattern=(self.pattern+1)%4;self.anchor=None;self.since=None
+            self.pattern=(self.pattern+1)%3;self.anchor=None;self.since=None;self.corner=None
             self.cool_until=capture_ns+int(self.options.transition_s*1e9)
         return self.pattern
 

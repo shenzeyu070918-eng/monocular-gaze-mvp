@@ -3,7 +3,8 @@ import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
 import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
 import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
-import {planetField,ringField,galaxyField,textField,randomSource} from './particle-fields.mjs';
+import {planetField,ringField,galaxyField,textField,randomSource,particleBudget} from './particle-fields.mjs';
+import {PlanetDirector,HandDynamics} from './planet-controls.mjs';
 import {particleVertex,particleFragment,coreVertex,coreFragment} from './planet-shaders.mjs';
 
 function textMask(text){
@@ -16,18 +17,20 @@ function textMask(text){
 }
 
 export class PlanetRenderer{
- constructor(canvas,options){
-  this.o=options.visual;this.text=options.text;this.pixelRatio=Math.min(devicePixelRatio,options.pixel_ratio);this.items=[];this.sceneName='';
+ constructor(canvas,options,quality=null){
+  this.quality=quality;this.modelScale=1;
+  this.options=options;this.o=options.visual;this.text=options.text;this.director=null;this.hands=null;this.motionTime=0;this.fade=1;this.pending=null;this.pixelRatio=Math.min(devicePixelRatio,options.pixel_ratio);this.items=[];this.sceneName='';
   const context=canvas.getContext('webgl2',{alpha:false,antialias:false,powerPreference:'high-performance'});
   if(!context)throw new Error('需要WebGL2，请使用支持硬件加速的Chrome');
   if(!context.getExtension('EXT_color_buffer_float'))throw new Error('需要浮点颜色缓冲，请启用浏览器硬件加速');
   this.renderer=new THREE.WebGLRenderer({canvas,context,antialias:false});this.renderer.setClearColor(0x000000);
+  this.renderer.debug.onShaderError=()=>{throw new Error('GPU着色器编译失败，请更换浏览器或切回Qt备用');};
   this.renderer.toneMapping=THREE.ACESFilmicToneMapping;this.renderer.toneMappingExposure=this.o.exposure;
   this.scene=new THREE.Scene();this.camera=new THREE.PerspectiveCamera(this.o.field_of_view,1,.05,150);
   this.composer=new EffectComposer(this.renderer);this.composer.addPass(new RenderPass(this.scene,this.camera));
   this.bloom=new UnrealBloomPass(new THREE.Vector2(1,1),this.o.bloom_strength,this.o.bloom_radius,this.o.bloom_threshold);
   this.composer.addPass(this.bloom);this.composer.addPass(new OutputPass());
-  this.background();this.makeCore();this.setScene('planet');this.resize();
+  this.background();this.makeCore();this.setScene('planet');this.resize();this.placeCamera();
  }
  background(){
   const rand=randomSource(this.o.seed+9),n=this.o.background_stars,positions=new Float32Array(n*3),colors=new Float32Array(n*3);
@@ -54,34 +57,72 @@ export class PlanetRenderer{
   for(const [key,value] of Object.entries({outerRatio:o.ring_outer_ratio,ringLightPower:o.ring_light_power,ringOuterLight:o.ring_outer_light,
    brightFraction:o.bright_fraction,brightSize:o.bright_size,brightIntensity:o.bright_intensity,brightHalo:o.bright_halo,
    twinkleSpeed:o.twinkle_speed,rimStrength:o.rim_strength,rimPower:o.rim_power}))uniforms[key]={value};
+  Object.assign(uniforms,{well:{value:new THREE.Vector3()},wellRadius:{value:1},eyeAlpha:{value:0},wellAttraction:{value:this.options.interaction?.well_attraction??0},wellBrightness:{value:this.options.interaction?.well_brightness??0},sceneFade:{value:1},scatter:{value:0},handScale:{value:1},scatterDistance:{value:this.options.interaction?.scatter_distance??0},scatterHeight:{value:this.options.interaction?.scatter_height??0}});
   for(const [prefix,colors] of [['warm',o.planet_colors],['cool',o.ring_colors]])for(let i=0;i<3;i++)uniforms[prefix+'ABC'[i]]={value:new THREE.Color(colors[i])};
   const points=new THREE.Points(g,new THREE.ShaderMaterial({vertexShader:particleVertex,fragmentShader:particleFragment,uniforms,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending}));
   points.frustumCulled=false;this.scene.add(points);this.items.push(points);
  }
  setScene(name){
-  if(!['planet','galaxy','text'].includes(name))throw new Error('未知预览场景');if(name===this.sceneName)return;
+  if(!['planet','galaxy','text'].includes(name))throw new Error('未知场景');
+  const o=this.o,count=this.quality?.particles??(o.planet_particles+o.ring_particles);
+  if(name===this.sceneName&&this.count===count)return;this.count=count;
   for(const item of this.items){this.scene.remove(item);item.geometry.dispose();item.material.dispose();}this.items=[];this.sceneName=name;
-  const o=this.o,count=o.planet_particles+o.ring_particles;
-  if(name==='planet'){this.add(planetField(o.planet_particles,o),0,o.planet_intensity);this.add(ringField(o.ring_particles,o),1,o.ring_intensity);}
-  else if(name==='galaxy')this.add(galaxyField(count,o),2,o.galaxy_intensity);
-  else{const m=textMask(this.text);this.add(textField(count,o,m.mask,m.width,m.height),3,o.text_intensity);}
+  const budget=particleBudget(count,o);
+  if(name==='planet'){this.add(planetField(budget.planet,o),0,o.planet_intensity*budget.intensity);this.add(ringField(budget.ring,o),1,o.ring_intensity*budget.intensity);}
+  else if(name==='galaxy')this.add(galaxyField(count,o),2,o.galaxy_intensity*budget.intensity);
+  else{const m=textMask(this.text);this.add(textField(count,o,m.mask,m.width,m.height),3,o.text_intensity*budget.intensity);}
   this.core.visible=name!=='text';
  }
  resize(){
+  this.pixelRatio=Math.min(devicePixelRatio,this.quality?.ratio??this.options.pixel_ratio);
+  if(this.sceneName)this.setScene(this.sceneName);
+  for(const item of [...this.items,this.core])item.material.uniforms.pixelRatio.value=this.pixelRatio;
   this.renderer.setPixelRatio(this.pixelRatio);this.renderer.setSize(innerWidth,innerHeight,false);
   this.composer.setPixelRatio(this.pixelRatio);this.composer.setSize(innerWidth,innerHeight);
   this.camera.aspect=innerWidth/innerHeight;this.camera.updateProjectionMatrix();
  }
- render(time,intro=1,view='oblique'){
+ placeCamera(view='oblique',control=null){
   const o=this.o,planet=this.sceneName==='planet',text=this.sceneName==='text';
-  let pitch=text?0:o.camera_pitch_deg,distance=text?o.camera_distance:planet?o.camera_distance:o.galaxy_distance;
+  let pitch=text?0:o.camera_pitch_deg,distance=text?o.camera_distance:planet?o.camera_distance:o.galaxy_distance,yaw=o.camera_yaw_deg;
   if(view==='top')pitch=75;
   if(view==='close')distance=o.close_distance;
-  const p=THREE.MathUtils.degToRad(pitch),y=THREE.MathUtils.degToRad(o.camera_yaw_deg);
+  if(control){pitch=Math.max(-80,Math.min(80,pitch+control.pitch));yaw+=control.yaw;if(planet)distance+=(o.close_distance-distance)*control.zoom;}
+  const p=THREE.MathUtils.degToRad(pitch),y=THREE.MathUtils.degToRad(yaw);
   this.camera.position.set(Math.sin(y)*Math.cos(p)*distance,Math.sin(p)*distance,Math.cos(y)*Math.cos(p)*distance);
-  this.camera.lookAt(0,0,0);this.camera.rotateZ(THREE.MathUtils.degToRad(text?0:o.camera_roll_deg));
-  for(const item of this.items){item.material.uniforms.time.value=time;item.material.uniforms.intro.value=intro;}
-  this.core.material.uniforms.fade.value=intro;this.composer.render();
+  this.camera.lookAt(0,0,0);this.camera.rotateZ(THREE.MathUtils.degToRad(text?0:o.camera_roll_deg));this.camera.updateMatrixWorld();
  }
+ pick(xy){
+  // Viewport pixels -> graphics projection only; no screen/global coordinate mapping here.
+  const ray=new THREE.Raycaster();ray.setFromCamera(new THREE.Vector2(xy[0]/innerWidth*2-1,1-xy[1]/innerHeight*2),this.camera);
+  return {planet:ray.ray.intersectsSphere(new THREE.Sphere(new THREE.Vector3(),this.o.radius*this.modelScale)),
+   ring:ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),0),new THREE.Vector3())};
+ }
+ reset(){this.director?.reset();this.hands?.reset();this.modelScale=1;this.motionTime=0;this.fade=1;this.pending=null;this.setScene('planet');this.placeCamera();}
+ draw(frame,dt,time,intro){
+  if(!this.director){this.director=new PlanetDirector(this.options);this.hands=new HandDynamics(this.options);}
+  const scene=['planet','galaxy','text'][intro<1?0:frame?.pattern??(['planet','galaxy','text'].indexOf(this.sceneName))];
+  if(scene!==this.sceneName)this.pending=scene;
+  const step=dt*2/this.options.transition_s;
+  if(this.pending){this.fade=Math.max(0,this.fade-step);if(this.fade===0){this.setScene(this.pending);this.pending=null;this.director.dwell.reset();}}
+  else this.fade=Math.min(1,this.fade+step);
+  const hand=this.hands.update(frame,dt,intro);
+  this.modelScale=hand.scale;
+  const hit=frame?.gaze_valid?this.pick(frame.xy):null;
+  const control=this.director.update(frame,dt,[innerWidth,innerHeight],this.sceneName==='planet'&&!!hit?.planet,intro);
+  this.motionTime+=dt*(1+hand.spin);
+  this.placeCamera('oblique',control);
+  const well=control.eye?this.pick(frame.xy).ring:null;
+  for(const item of this.items){const u=item.material.uniforms;u.scatter.value=hand.scatter;u.handScale.value=hand.scale;u.eyeAlpha.value=intro<1?0:well?control.eyeAlpha:u.eyeAlpha.value*Math.exp(-dt/this.options.interaction.gaze_fade_s);if(well)u.well.value.copy(well).divideScalar(this.modelScale);
+   // Local perspective scale from error radius, using this same camera projection.
+   if(frame&&well)u.wellRadius.value=Math.max(...frame.radius)*2*Math.tan(THREE.MathUtils.degToRad(this.o.field_of_view/2))*this.camera.position.length()/innerHeight*this.options.interaction.well_radius_scale/this.modelScale;}
+  this.render(this.motionTime,intro,'oblique',control);
+ }
+ render(time,intro=1,view='oblique',control=null){
+  this.placeCamera(view,control);
+  for(const item of this.items){item.material.uniforms.time.value=time;item.material.uniforms.intro.value=intro;item.material.uniforms.sceneFade.value=control?this.fade:1;}
+  this.core.material.uniforms.fade.value=intro*(control?this.fade:1);this.composer.render();
+ }
+ close(){this.dispose();}
+
  dispose(){for(const item of [...this.items,this.stars,this.core,this.nebula]){item.geometry.dispose();item.material.dispose();}for(const pass of this.composer.passes)pass.dispose?.();this.composer.dispose();this.renderer.dispose();}
 }

@@ -31,7 +31,7 @@ class PreviewHandler(BaseHTTPRequestHandler):
         if self.headers.get('Host')!=f'127.0.0.1:{self.server.server_port}':self.respond(403);return
         path=unquote(urlsplit(self.path).path)
         if path=='/preview-config':
-            data=dict(text=self.options.text,pixel_ratio=self.options.pixel_ratio,intro_s=self.options.intro_s,visual=asdict(self.options.visual))
+            data=dict(text=self.options.text,pixel_ratio=self.options.pixel_ratio,intro_s=self.options.intro_s,low_fps=self.options.low_fps,low_fps_s=self.options.low_fps_s,min_pixel_ratio=self.options.min_pixel_ratio,visual=asdict(self.options.visual))
             self.respond(200,json.dumps(data,ensure_ascii=False,allow_nan=False).encode(),'application/json; charset=utf-8');return
         assets=self.root/'static/galaxy';target=None
         if path=='/':target=assets/'index.html'

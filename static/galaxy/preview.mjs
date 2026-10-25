@@ -1,6 +1,7 @@
+import {QualityController} from './logic.mjs';
 import {PlanetRenderer} from './planet-renderer.mjs';
 const query=new URLSearchParams(location.search),$=id=>document.getElementById(id);
-let renderer,frameId=0,scene=query.get('scene')||'planet',view=query.get('view')||'oblique',paused=query.has('still'),base=performance.now(),time=Number(query.get('t')||8),samples=[],intervals=[],last=null,report=0;
+let renderer,quality,frameId=0,scene=query.get('scene')||'planet',view=query.get('view')||'oblique',paused=query.has('still'),base=performance.now(),time=Number(query.get('t')||8),samples=[],intervals=[],last=null,report=0;
 const initialTime=Number.isFinite(time)&&time>=0?time:8;time=initialTime;
 const clean=query.has('clean'),debug=query.has('debug');
 document.body.classList.add('preview');document.title='粒子行星 · 无摄像头预览';$('fallback').hidden=true;
@@ -13,13 +14,14 @@ let options;
 function draw(now){
  const dt=last===null?null:now-last;last=now;
  if(!paused)time=(now-base)/1000;
+ if(!paused&&!document.hidden){if(quality.frame(now))renderer.resize();}else quality.frame(now,false);
  const intro=paused?1:Math.min(1,time/options.intro_s),began=performance.now();renderer.render(time,intro,view);
  samples.push(performance.now()-began);if(dt!==null)intervals.push(dt);
  if(now-report>=1000){
   const sorted=[...samples].sort((a,b)=>a-b),median=sorted[Math.floor(sorted.length/2)],p90=sorted[Math.floor((sorted.length-1)*.9)];
   const fps=intervals.length?1000*intervals.length/intervals.reduce((a,b)=>a+b,0):null;
   window.__galaxyPreview.metrics={submit_median_ms:median,submit_p90_ms:p90,fps,frames:intervals.length};
-  $('preview-stats').textContent=(options.visual.planet_particles+options.visual.ring_particles).toLocaleString()+' 粒子 · '+(paused?'静帧':debug?'FPS '+(fps?.toFixed(1)??'—')+' · 提交 '+median.toFixed(2)+' / P90 '+p90.toFixed(2)+' ms':'持续动画');
+  $('preview-stats').textContent=renderer.count.toLocaleString()+' 粒子 · '+(paused?'静帧':debug?'FPS '+(fps?.toFixed(1)??'—')+' · 提交 '+median.toFixed(2)+' / P90 '+p90.toFixed(2)+' ms · DPR '+renderer.pixelRatio.toFixed(2)+' · 降档 '+quality.downgrades:'持续动画');
   samples=[];intervals=[];report=now;
  }
  if(!paused)frameId=requestAnimationFrame(draw);
@@ -31,7 +33,7 @@ async function init(){
   $('message').textContent='正在准备本地粒子画面……';
   const response=await fetch('/preview-config',{cache:'no-store'});
   if(!response.ok)throw new Error('请先运行 python -m tools.preview_galaxy');
-  options=await response.json();renderer=new PlanetRenderer($('universe'),options);renderer.setScene(scene);
+  options=await response.json();quality=new QualityController(options,options.visual.planet_particles+options.visual.ring_particles,options.visual.low_particle_count);renderer=new PlanetRenderer($('universe'),options,quality);renderer.setScene(scene);
   window.__galaxyPreview={ready:true,get scene(){return scene;},get time(){return time;},get view(){return view;},metrics:null,
    freeze(t){paused=true;time=t;redraw();},setScene:chooseScene,setView(next){view=next;$('preview-view').value=next;redraw();}};
   $('gate').hidden=true;for(const control of panel.querySelectorAll('button,select'))control.disabled=false;
@@ -46,7 +48,7 @@ panel.addEventListener('click',async event=>{
 });
 $('preview-view').addEventListener('change',event=>{view=event.target.value;redraw();});
 addEventListener('resize',()=>{renderer?.resize();if(renderer)redraw();});
-document.addEventListener('visibilitychange',()=>{last=null;if(!document.hidden&&renderer)redraw();});
+document.addEventListener('visibilitychange',()=>{quality?.frame(performance.now(),false);last=null;if(!document.hidden&&renderer)redraw();});
 addEventListener('pagehide',()=>{cancelAnimationFrame(frameId);renderer?.dispose();});
 if(debug)$('preview-stats').classList.add('diagnostic');
 init();

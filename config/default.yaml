@@ -248,7 +248,7 @@ starfield:
 # M8b: controls are exploratory defaults, performance/gesture accuracy pending real hardware.
 galaxy:
   text: BME
-  particle_count: 50000  # 100000 enables the larger tier; downgrade never upgrades automatically.
+  particle_count: 50000  # Legacy config compatibility; current budget is visual planet + ring.
   pixel_ratio: 1.5
   min_pixel_ratio: 0.75
   low_fps: 50.0
@@ -267,6 +267,8 @@ galaxy:
   heartbeat_timeout_s: 5.0
   disconnect_grace_s: 0.5       # 区分正常关页和意外断连，等待专用Chrome退出状态
   max_message_bytes: 8192
+  # Legacy renderer options below are retained for old local.yaml files.
+  # Current HDR/point/camera settings are in visual; controls are in interaction.
   bloom_strength: 1.3
   bloom_radius: 0.55
   bloom_threshold: 0.5
@@ -284,10 +286,29 @@ galaxy:
   camera_z: 8.0
   field_of_view: 55.0
   hand_model: models/hand_landmarker.task
-  # PR #15 visual checkpoint: ?preview only. Live gaze/hand scene stays unchanged until approval.
+  # Particle planet: shared by live demo and camera-free ?preview.
+  interaction:
+    yaw_range_deg: 35
+    pitch_range_deg: 35
+    camera_spring_hz: 0.7
+    zoom_dwell_ms: 1500
+    zoom_spring_hz: 0.65
+    corner_ratio: 0.14
+    well_attraction: 0.12
+    well_brightness: 0.65
+    well_radius_scale: 1.5
+    gaze_fade_s: 0.5
+    hand_response_s: 0.55
+    scatter_distance: 4.0
+    scatter_height: 1.2
+    spin_boost: 3.0
+    hand_speed_scale: 0.6
+    min_hand_scale: 0.65
+    max_hand_scale: 1.5
   visual:
     planet_particles: 80000
     ring_particles: 150000
+    low_particle_count: 100000  # First downgrade; preserve planet/ring proportions.
     seed: 918
     radius: 1.5
     ring_inner_ratio: 1.4

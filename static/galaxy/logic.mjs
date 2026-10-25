@@ -1,6 +1,6 @@
 // Pure display logic: no camera, window geometry conversion, or network.
 export class QualityController {
-  constructor(o) { this.o=o; this.particles=o.particle_count; this.ratio=o.pixel_ratio; this.lowSince=null; this.last=null; this.samples=[]; this.downgrades=0; }
+  constructor(o,particles=o.particle_count,lowTier=50000) { this.o=o; this.particles=particles; this.lowTier=Math.min(particles,lowTier); this.ratio=o.pixel_ratio; this.lowSince=null; this.last=null; this.samples=[]; this.downgrades=0; }
   frame(now,visible=true) {
     if(!visible){this.last=null;this.lowSince=null;this.samples=[];return false;}
     if(this.last===null){this.last=now;return false;}
@@ -11,7 +11,7 @@ export class QualityController {
     if(this.lowSince===null)this.lowSince=now-dt;
     if(now-this.lowSince<this.o.low_fps_s*1000)return false;
     this.lowSince=now;
-    if(this.particles>50000)this.particles=50000;
+    if(this.particles>this.lowTier)this.particles=this.lowTier;
     else if(this.ratio>this.o.min_pixel_ratio)this.ratio=Math.max(this.o.min_pixel_ratio,this.ratio*.75);
     else return false;
     this.downgrades++;return true;
@@ -45,9 +45,9 @@ export class Spring2D {
     return this.p;
   }
 }
-export function nextPattern(id){return (id+1)%4;}
+export function nextPattern(id){return (id+1)%3;}
 export function usableFrame(frame,revision,ageMs,limit){
   if(!frame || frame.viewport!==revision)return false;
   const processingMs=(frame.completed_us-frame.capture_us)/1000;
-  return Number.isFinite(processingMs) && processingMs>=0 && processingMs+ageMs<=limit;
+  return Number.isFinite(ageMs)&&ageMs>=0&&Number.isFinite(processingMs) && processingMs>=0 && processingMs+ageMs<=limit;
 }

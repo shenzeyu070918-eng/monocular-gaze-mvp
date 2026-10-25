@@ -8,6 +8,7 @@ from .devices import finite
 class PlanetVisualSettings:
     planet_particles: int = 80000
     ring_particles: int = 150000
+    low_particle_count: int = 100000
     seed: int = 918
     radius: float = 1.5
     ring_inner_ratio: float = 1.4
@@ -65,7 +66,7 @@ class PlanetVisualSettings:
     ring_colors: tuple = ('#437b9f','#83c4d7','#effaff')
 
     def __post_init__(self):
-        integers={'planet_particles','ring_particles','background_stars','seed'}
+        integers={'planet_particles','ring_particles','background_stars','seed','low_particle_count'}
         angles={'camera_pitch_deg','camera_yaw_deg','camera_roll_deg'}
         zero_ok={'seed','swirl_amplitude','wander_fraction','bloom_strength','nebula_intensity','rim_strength','bright_fraction','bright_halo','ring_gap_depth'}
         for f in fields(self):
@@ -83,10 +84,43 @@ class PlanetVisualSettings:
             if f.name not in angles and (value<0 or (value==0 and f.name not in zero_ok)):raise ValueError('视觉参数必须为正数')
         if not 1<self.ring_inner_ratio<self.ring_outer_ratio:raise ValueError('星环内外半径顺序无效')
         if self.planet_particles+self.ring_particles>1_000_000:raise ValueError('粒子总数超过100万上限')
+        if not 2<=self.low_particle_count<=1_000_000:raise ValueError('低档粒子数超出上限')
         if not 0<self.point_size_min<=self.point_size_max or not 0<self.field_of_view<150:raise ValueError('点大小/视角无效')
         if not self.radius<self.close_distance<=self.camera_distance:raise ValueError('镜头必须在球体外')
         if abs(self.camera_pitch_deg)>85 or abs(self.camera_yaw_deg)>180 or abs(self.camera_roll_deg)>90:raise ValueError('镜头角度超出范围')
         if not 0<=self.wander_fraction<=.2 or self.ring_density_power>3:raise ValueError('游离比例/密度衰减无效')
 
         if any(not self.ring_inner_ratio<c<self.ring_outer_ratio for c in self.ring_gap_centers):raise ValueError('环缝必须在环内')
-        if not 0<=self.bright_fraction<=.05 or not 0<self.ring_outer_light<=1 or not 0<=self.ring_gap_depth<1:raise ValueError('亮颗粒比例/环渐变无效')
+        if not 0<self.ring_gap_width<=.5:raise ValueError('环缝宽度必须在(0, 0.5]个球半径内')
+        if not 0<=self.bright_fraction<=.05 or not 0<self.ring_outer_light<=1 or not 0<=self.ring_gap_depth<=.95:raise ValueError('亮颗粒比例/环渐变无效')
+
+
+@dataclass(frozen=True)
+class PlanetInteractionSettings:
+    yaw_range_deg: float = 35.
+    pitch_range_deg: float = 35.
+    camera_spring_hz: float = .7
+    zoom_dwell_ms: float = 1500.
+    zoom_spring_hz: float = .65
+    corner_ratio: float = .14
+    well_attraction: float = .12
+    well_brightness: float = .65
+    well_radius_scale: float = 1.5
+    gaze_fade_s: float = .5
+    hand_response_s: float = .55
+    scatter_distance: float = 4.
+    scatter_height: float = 1.2
+    spin_boost: float = 3.
+    hand_speed_scale: float = .6
+    min_hand_scale: float = .65
+    max_hand_scale: float = 1.5
+
+    def __post_init__(self):
+        for f in fields(self):
+            v=finite(getattr(self,f.name),'galaxy.interaction.'+f.name)
+            if v<0 or v==0 and f.name not in {'yaw_range_deg','pitch_range_deg','well_attraction','well_brightness','spin_boost'}:
+                raise ValueError('交互参数必须为正数（可禁用项允许零）')
+        if not 0<self.corner_ratio<.5 or max(self.yaw_range_deg,self.pitch_range_deg)>75:
+            raise ValueError('角落范围/相机角度无效')
+        if not 0<self.min_hand_scale<=1<=self.max_hand_scale:
+            raise ValueError('手势尺度无效')

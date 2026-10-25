@@ -11,6 +11,7 @@ class DemoSession:
         self._token=None;self._deferred=[];self.debug=debug;self._mapping_reason=None
         self.drift=None;self._mapping=None
         self._viewport=None;self._coordinate_blocked_since=None
+        self.galaxy=None;self._galaxy_dialog=None;self._qscreen=None
 
     @property
     def active(self):return self.run is not None
@@ -28,6 +29,7 @@ class DemoSession:
             raise ValueError('请先完成条件匹配的悬浮层九点校准或点击粗校准')
         if s.controller.snapshot().status!='running':raise ValueError('请先恢复摄像头')
         settings=s.settings;rect=self.overlay.rect_info
+        self._qscreen=qscreen
         radius=s.radius if s.radius is not None else settings.overlay.radius_cm
         radii=rect.radii(radius,settings.geometry,settings.overlay.fallback_radius_px)
         if app=='stars':
@@ -64,11 +66,18 @@ class DemoSession:
         if self._context()!=self._token:self.cancel('conditions_changed');return
         if not active:self.cancel('camera_paused');return
         run=self.run
+        if self.galaxy is not None:
+            self._galaxy_tick();return
         if run.app=='stars' and run.worker.error:
             self.notice(run.worker.error,True);self.cancel('prediction_error');return
         mapping=self.window.coordinates()
         coordinate_ready=self._prepare_coordinates(mapping,now_ns)
         run.advance(now_ns)
+        if run.app=='galaxy' and run.phase=='playing':
+            from .galaxy_session import GalaxySession
+            self.window.hide()
+            self.galaxy=GalaxySession(self.session,run.radii,self.drift.offset,debug=self.debug)
+            self._events();return
         if prediction is not None and eligible:
             valid=display.tracking and coordinate_ready and not self.panel.isVisible()
             if run.phase=='practice':
@@ -129,11 +138,46 @@ class DemoSession:
 
     def repractice(self):
         if not self.active:return False
+        if self.galaxy is not None:self.galaxy.close();self.galaxy=None
         if self.speech is not None:self.speech.stop()
         self.drift.restart();self.run.repractice(self.clock())
         self._practice_status('请看着练习按钮中间的点；新的结果替换旧偏移')
         self.panel.hide();self.window.open()
         return True
+
+    def _galaxy_tick(self):
+        for kind,value in self.galaxy.poll():
+            if kind=='stop':self.cancel('window_closed');return
+            if kind=='disconnected':kind,value='error','本地连接已断开，可重试或切回 Qt 星空'
+            if kind=='fallback':self._galaxy_fallback();return
+            if kind=='warning':self.notice('眼手星系：'+str(value),False)
+            if kind=='geometry':
+                message='星系网页实际客户区：'+str(value)
+                logger=getattr(self.session,'geometry_logger',None)
+                if logger is not None:logger(message)
+            if kind=='error' and self._galaxy_dialog is None:
+                from PySide6.QtWidgets import QMessageBox
+                value={1:'页面连接不可用',2:'WebGL2或GPU浮点渲染不可用',3:'本地连接断开'}.get(value,value)
+                self.galaxy.close();self.panel.present()
+                self.notice('眼手星系不可用：'+str(value),True)
+                box=QMessageBox(self.panel);box.setWindowTitle('眼手星系')
+                box.setText('星系连接或WebGL不可用。是否切回Qt星空？\n'+str(value))
+                fallback=box.addButton('切回 Qt 星空',QMessageBox.ButtonRole.AcceptRole)
+                box.addButton('退出 Demo',QMessageBox.ButtonRole.RejectRole)
+                self._galaxy_dialog=box
+                def chosen(button):
+                    if not self.active:return
+                    use_qt=button is fallback
+                    self._galaxy_dialog=None
+                    if use_qt:self._galaxy_fallback()
+                    else:self.cancel('window_closed')
+                box.buttonClicked.connect(chosen);box.open()
+                box.finished.connect(lambda *_:self.cancel('window_closed') if self._galaxy_dialog is box and self.active else None)
+
+    def _galaxy_fallback(self):
+        screen=self._qscreen
+        self.cancel('window_closed')
+        self.start('stars',screen)
 
     def _speak(self,text):
         if self.speech is None:
@@ -167,6 +211,9 @@ class DemoSession:
 
     def cancel(self,reason='escape',*,restore=True):
         if not self.active:return
+        if self._galaxy_dialog is not None:
+            dialog,self._galaxy_dialog=self._galaxy_dialog,None;dialog.close()
+        if self.galaxy is not None:self.galaxy.close();self.galaxy=None
         self.run.close(self.clock(),reason);self._events(final=True)
         undone=bool(self.run.selections and self.run.selections[-1]['false_activation'] is True)
         if self.speech is not None:self.speech.stop();self.speech=None

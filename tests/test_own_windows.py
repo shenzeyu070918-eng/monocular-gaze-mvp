@@ -25,6 +25,11 @@ class OwnWindowsTests(unittest.TestCase):
             self.assertEqual(cache.reason((450,450)),'own_ui')
             panel.hide();app.processEvents();cache.refresh()
             self.assertIsNone(cache.reason((450,450)))
+            cache.external_rectangles=lambda:((0,0,1512,982),)  # Only our active Galaxy viewport.
+            self.assertEqual(cache.reason((450,450)),'own_ui')
+            self.assertIsNone(cache.reason((1600,450)))
+            cache.external_rectangles=lambda:()
+            self.assertIsNone(cache.reason((450,450)))
         finally:
             cache.close();panel.close();overlay.close();panel.deleteLater();overlay.deleteLater();app.processEvents()
 

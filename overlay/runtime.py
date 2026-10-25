@@ -9,7 +9,7 @@ from .state import RingState
 from .screens import BuiltinScreen,ScreenMonitor,SCREEN_CHANGED
 
 
-def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,permission_check,*,controls=None,profile_seconds=None):
+def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,permission_check,*,controls=None,profile_seconds=None,demo_debug=False):
     notice=permission_check()
     if notice:
         print(notice,file=sys.stderr)
@@ -22,6 +22,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
     painted=None;radius_key=object();radii=None;ui_values={}
     clicks=None;own_windows=None;heatmap=None;heat_timer=None;heat_error=None;heatmap_rendered=False
     pending_screen=None;screen_error=None;screen_mismatch_seen=False;detached_visible=None
+    demo=None;demo_dialog=None
 
     def update(widget,method,value):
         key=(widget,method)
@@ -46,6 +47,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         from .session import OverlaySession
         session=OverlaySession(settings,window.rect_info,notice=notice,restore=restore,
                                results=controls.panel.results.setPlainText)
+        session.geometry_logger=getattr(controls,'log_detail',None)
         controller=OverlayController(settings,result_sink=session.sink,shutdown=session.close)
         session.controller=controller
         heatmap=getattr(session,'heatmap',None)
@@ -54,6 +56,8 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
     def begin_close():
         nonlocal closing,shutdown_requested
         closing=True;shutdown_requested=True;ring.clear()
+        if demo_dialog is not None:demo_dialog.reject()
+        if demo is not None:demo.cancel('overlay_closed',restore=False)
         if heatmap is not None:heatmap.set_enabled(False)
         if session is not None and hasattr(session,'set_running'):session.set_running(False)
         if session is not None:session.cancel('overlay_closed')
@@ -75,6 +79,8 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
     def pause_or_resume():
         nonlocal paused_requested
         if shutdown_requested or screen_changed:return
+        if demo_dialog is not None:demo_dialog.reject()
+        if demo is not None:demo.cancel('camera_paused')
         if session is not None:
             if hasattr(session,'set_running'):session.set_running(False)
             session.cancel('camera_paused');session.recording.manual(False)
@@ -102,8 +108,11 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             except Exception as exc:
                 selection=None;error='屏幕坐标适配失败：'+str(exc)
         restore_visible=restore_visible if screen_changed else (window.isVisible() if detached_visible is None else detached_visible)
+        if demo is not None and demo.active:
+            restore_visible=demo._saved[0];demo.cancel('screen_changed',restore=False)
         detached_visible=None
         screen_changed=True;screen_error=error;pending_screen=selection
+        if demo_dialog is not None:demo_dialog.reject()
         paused_requested=True;ring.clear();window.hide()
         if session is not None and hasattr(session,'set_running'):session.set_running(False)
         controller.request('paused')
@@ -118,6 +127,8 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
     initial=getattr(window,'screen_selection',BuiltinScreen(getattr(controls,'screen',None),window.rect_info,'startup'))
     def detach():
         nonlocal detached_visible
+        if demo is not None and demo.active:
+            detached_visible=demo._saved[0];demo.cancel('screen_changed',restore=False)
         if detached_visible is None:detached_visible=window.isVisible()
         window.hide()  # Qt must not migrate a visible gaze overlay onto an external primary.
     screen_monitor=ScreenMonitor(app,initial,changed,delay_ms=settings.overlay.screen_debounce_ms,
@@ -128,6 +139,32 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         from PySide6.QtGui import QDesktopServices
         from PySide6.QtWidgets import QFileDialog
         actions,panel=controls.actions,controls.panel
+        from .demo_session import DemoSession
+        demo=DemoSession(session,window,panel,notice=notice,debug=demo_debug)
+        session.calibration_completed=window.show_calibration_notice
+        actions['presentation'].setChecked(settings.overlay.presentation)
+        actions['presentation'].setEnabled(True)
+        actions.connect('presentation',window.set_presentation)
+        def start_demo():
+            nonlocal demo_dialog
+            if demo.active:return
+            if demo_dialog is not None:
+                demo_dialog.raise_();demo_dialog.activateWindow();return
+            chooser=QMessageBox(panel)
+            chooser.setWindowTitle('眼控 Demo');chooser.setText('请选择体验内容。进入后先练习一次，Esc 随时退出。')
+            board=chooser.addButton('沟通板',QMessageBox.ButtonRole.AcceptRole)
+            stars=chooser.addButton('星空凝视',QMessageBox.ButtonRole.AcceptRole)
+            chooser.addButton(QMessageBox.StandardButton.Cancel)
+            demo_dialog=chooser
+            try:chooser.exec()
+            finally:demo_dialog=None
+            if chooser.clickedButton() not in (board,stars):return
+            try:
+                demo.start('board' if chooser.clickedButton() is board else 'stars',controls.screen)
+                if own_windows is not None:own_windows.refresh()
+            except Exception as exc:notice('无法进入 Demo：'+str(exc),True)
+        actions.connect('demo',start_demo)
+        actions.connect('demo_practice',demo.repractice)
         redo_dialog=None
         def offer_redo(quality,decide):
             nonlocal redo_dialog
@@ -146,6 +183,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         session.dismiss_redo=lambda:redo_dialog.reject() if redo_dialog is not None and redo_dialog.isVisible() else None
         def start_task(kind):
             nonlocal restore_visible
+            if demo.active:raise ValueError('请先按 Esc 结束 Demo')
             restore_visible=window.isVisible()
             try:
                 window.hide();panel.hide()
@@ -285,6 +323,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             window.setVisible(restore_visible)
             notice(SCREEN_CHANGED+'；旧热图已清空。请恢复摄像头后重新校准。',True)
         if view.error and view.error!=last_error:
+            if demo is not None:demo.cancel('prediction_error')
             last_error=view.error
             window.set_status('未校准 · 采集失败，请查看提示',force=True)
             print('悬浮层：'+view.error,file=sys.stderr)
@@ -311,6 +350,8 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         if active and view.result is not None and eligible:ring.accept(view.result,now)
         elif not active:ring.clear()
         display=ring.view(now)
+        if demo is not None and demo.active:
+            demo.tick(view.result,display,now,active=active,eligible=eligible)
         radius=None if session is None else session.radius
         radius=settings.overlay.radius_cm if radius is None else radius
         radius_text=None if session is None else session.radius_text
@@ -349,13 +390,16 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             if hasattr(session,'autocal'):
                 update(panel.autocal,'setText',session.autocal_text)
                 if actions['autocal'].isChecked()!=session.autocal.enabled:actions['autocal'].setChecked(session.autocal.enabled)
-                update(actions['autocal'],'setEnabled',active and session.latest is not None and not session.active and not shutdown_requested)
+                update(actions['autocal'],'setEnabled',active and session.latest is not None and not session.active and not (demo is not None and demo.active) and not shutdown_requested)
                 update(actions['check'],'setText','精度核对（A/C）' if session._active_group=='C' else '精度核对（A/B）')
             click_active=clicks is not None and clicks.active
-            ready=active and session.latest is not None and not session.active and not session.profiles.busy and not click_active
+            demo_active=demo is not None and demo.active
+            ready=active and session.latest is not None and not session.active and not demo_active and not session.profiles.busy and not click_active
+            update(actions['demo'],'setEnabled',ready)
+            update(actions['demo_practice'],'setEnabled',demo_active and active)
             for name in ('calibrate','check'):update(actions[name],'setEnabled',ready)
             update(actions['load_web'],'setEnabled',ready)
-            update(actions['reset'],'setEnabled',not session.active and not click_active and not session.profiles.busy and session.profiles.profile is not None)
+            update(actions['reset'],'setEnabled',not session.active and not demo_active and not click_active and not session.profiles.busy and session.profiles.profile is not None)
             record=session.recording.status()
             record_text=('失败（已停止）：'+record['error'] if record['error'] else
                          '正在准备' if record.get('preparing') else
@@ -375,15 +419,15 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
                 if actions['clicks'].isChecked()!=enabled:actions['clicks'].setChecked(enabled)
                 update(actions['clicks'],'setEnabled',active and session.latest is not None and not shutdown_requested and
                        (not click_active or clicks.state=='collecting'))
-                update(actions['click_session'],'setEnabled',active and session.latest is not None and not session.active and
+                update(actions['click_session'],'setEnabled',active and session.latest is not None and not session.active and not demo_active and
                        not session.profiles.busy and (not click_active or clicks.state in {'collecting','awaiting_check'}))
                 update(actions['click_session'],'setText','结束采集并核对' if clicks.state=='collecting' else
                        '重试末尾精度核对' if clicks.state=='awaiting_check' else '开始点击采集会话（先九点）')
                 update(actions['abort_click_session'],'setEnabled',click_active)
             else:
                 for name in ('clicks','click_session','abort_click_session'):update(actions[name],'setEnabled',False)
-            update(actions['web'],'setEnabled',not shutdown_requested and not session.active)
-            update(actions['toggle'],'setEnabled',not session.active and not shutdown_requested)
+            update(actions['web'],'setEnabled',not shutdown_requested and not session.active and not demo_active)
+            update(actions['toggle'],'setEnabled',not session.active and not demo_active and not shutdown_requested)
     profiler=None;timer_tick=tick;profiled_label=None;heatmap_callback=heatmap_update;original_paint=window._paint_heatmap
     profile_origin=None
     if profile_seconds is not None:
@@ -409,6 +453,9 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
                         predicted_frames=report.get('predicted_frames'),valid_predictions=report.get('valid_predictions'),
                         camera=asdict(settings.camera),refresh_ms=settings.overlay.refresh_ms,
                         profile_loaded=session is not None and session.profiles.profile is not None,
+                        demo_active=demo is not None and demo.active,
+                        demo_app=demo.run.app if demo is not None and demo.active else None,
+                        presentation=window._presentation,
                         heatmap_enabled=heatmap is not None and heatmap.enabled,heatmap_viewing=heatmap is not None and heatmap.viewing,
                         heatmap_display_mode=settings.heatmap.display_mode,heatmap_update_hz=settings.heatmap.view_update_hz,
                         heatmap_background_update_hz=settings.heatmap.update_hz,heatmap_alpha_threshold=settings.heatmap.alpha_threshold,
@@ -431,6 +478,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         controller.request('running')
         return app.exec()
     finally:
+        if demo is not None:demo.cancel('overlay_closed',restore=False)
         if heat_timer is not None:heat_timer.stop()
         window._paint_heatmap=original_paint
         if profiler is not None:

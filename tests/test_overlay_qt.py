@@ -236,9 +236,9 @@ class QtAdapterTests(unittest.TestCase):
                      patch('overlay.screens.startup_screen',side_effect=lambda app,**kwargs:BuiltinScreen(app.screens()[0],logical_rect(app.screens()[0]),'fake')), \
                      patch.object(QSystemTrayIcon,'isSystemTrayAvailable',return_value=available), \
                      patch('gaze_core.capture.CameraPipeline',side_effect=AssertionError('camera must stay closed')), \
-                     redirect_stdout(io.StringIO()) as output,redirect_stderr(io.StringIO()):
-                    self.assertEqual(main(['--diagnostic','--duration','.02']),code)
-                    text=output.getvalue()
+                     redirect_stdout(io.StringIO()) as output,redirect_stderr(io.StringIO()) as errors:
+                    self.assertEqual(main(['--diagnostic','--duration','.02','--verbose']),code)
+                    text=output.getvalue()+errors.getvalue()
                     for field in ('按 Ctrl+C 退出',f'isSystemTrayAvailable={available}',
                                   'tray.isVisible()='+('True' if available else 'False'),'tray.geometry()='):
                         self.assertIn(field,text)

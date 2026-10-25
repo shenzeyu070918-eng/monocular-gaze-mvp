@@ -39,6 +39,14 @@ class OverlaySession:
         self._coarse_mode_text='';self._autocal_text_key=None;self._autocal_text='点击自动粗校准：关闭'
         self._autocal_error=None;self._autocal_reason=None
         self._active_c_radius=None
+        self._demo_active=False
+        self.calibration_completed=None
+        self.geometry_logger=None
+
+    def set_demo_active(self,active):
+        # Same ownership rule as other interactive windows, without enabling
+        # calibration's full-speed inference or altering its raw sample path.
+        self._demo_active=bool(active);self._sync_autocal_capture()
 
     def bind_clicks(self,*,start_task,exclude=None,own_handles=None,listener_factory=None):
         from .click_session import ClickSession
@@ -81,7 +89,7 @@ class OverlaySession:
         if self.autocal.error:raise RuntimeError(self.autocal.error)
 
     def _sync_autocal_capture(self):
-        self.autocal.set_frozen(self.active or not self._running)
+        self.autocal.set_frozen(self.active or self._demo_active or not self._running)
         try:
             if self._click_hub is not None:
                 self._click_hub.set_running(self._running)
@@ -260,7 +268,9 @@ class OverlaySession:
                     conditions=deepcopy(self.profiles.conditions) if previous is None or changed else previous[2]
                     self._metadata_snapshot=(deepcopy(camera),identity,conditions)
             if self.task is not None:
-                try:self.task.ingest(prediction)
+                try:
+                    if not hasattr(self.task_window,'accept_prediction') or self.task_window.accept_prediction(prediction):
+                        self.task.ingest(prediction)
                 except (ValueError,TypeError) as exc:
                     self.notice('任务取样失败：'+str(exc),True);self.cancel('invalid_sample')
         error=self.buffer.error or report.get('result_sink_error')
@@ -272,8 +282,10 @@ class OverlaySession:
             self._record_error=status['error'];self.notice('录制失败：'+status['error'],True)
             self.cancel('recording_failed')
         if self.task is not None:
-            self.task.advance(self.clock_ns());self._events();self.task_window.refresh()
-        self.profiles.poll(frozen=self.task is not None or self._pending_calibration is not None)
+            if not hasattr(self.task_window,'accept_prediction') or self.task_window.accept_prediction():
+                self.task.advance(self.clock_ns())
+            self._events();self.task_window.refresh()
+        self.profiles.poll(frozen=self._demo_active or self.task is not None or self._pending_calibration is not None)
         self._sync_autocal_capture();self._sync_correction()
         if self.autocal.error and self.autocal.error!=self._autocal_error:
             self._autocal_error=self.autocal.error;self.notice(self.autocal.error,True)
@@ -289,6 +301,9 @@ class OverlaySession:
                                     pipeline='python',conditions_fingerprint=conditions_id(self.profiles.conditions),**self._calibration_metadata())
                 self.recording.end_task(saved['task_id'],'completed')
                 self.notice('九点档案已保存；'+self.radius_text,False)
+                if self.calibration_completed is not None:
+                    try:self.calibration_completed()
+                    except Exception as exc:self.notice('九点档案已保存；完成提示未显示：'+str(exc),False)
                 if self.clicks is not None:self.clicks.baseline_ready(self.profiles.profile)
             else:
                 self.recording.end_task(saved['task_id'],'profile_save_failed')
@@ -316,7 +331,7 @@ class OverlaySession:
         if self._click_hub is not None:self._click_hub.sync()
         runner=TaskRunner(kind,self.settings,matrix=self._active_matrix,calibration_id=self._active_id,clock_ns=self.clock_ns,
                           screen_size=(self.screen.width,self.screen.height),corrected_group='C' if self._active_group=='C' else 'B')
-        window=window_factory(runner,qscreen,self.settings.overlay,clock_ns=self.clock_ns)
+        window=self._make_task_window(window_factory,runner,qscreen)
         if not self.recording.begin_task(runner.task_id):
             window.close();window.deleteLater()
             raise ValueError(self.recording.status()['error'] or '录制会话无法开启')
@@ -334,6 +349,16 @@ class OverlaySession:
             self._dispose()
             raise
         return runner
+
+    def _make_task_window(self,factory,runner,screen):
+        window=factory(runner,screen,self.settings.overlay,clock_ns=self.clock_ns)
+        # Set before showFullScreen/first paint. Test/custom windows keep their
+        # established constructor interface; native windows use full QScreen.
+        if hasattr(window,'screen_rect'):
+            window.screen_rect=self.screen
+            window._invalidate_coordinates()
+        window.geometry_logger=self.geometry_logger
+        return window
 
     def cancel(self,reason='cancelled'):
         self._task_inference(False)
@@ -429,7 +454,7 @@ class OverlaySession:
             runner=TaskRunner('calibrate',self.settings,clock_ns=self.clock_ns,task_id=first['task_id'],
                               screen_size=(self.screen.width,self.screen.height),redo_from=first,
                               redo_target_ids=[p['target_id'] for p in first['quality']['points'] if p['redo']])
-            window=self._window_factory(runner,self._qscreen,self.settings.overlay,clock_ns=self.clock_ns)
+            window=self._make_task_window(self._window_factory,runner,self._qscreen)
             self._first_calibration=first;self.task,self.task_window=runner,window
             self.buffer.clear();window.completed.connect(self._completed);window.cancelled.connect(self._cancelled)
             self._task_inference(True)

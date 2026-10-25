@@ -16,16 +16,17 @@ class ControlPanel(QWidget):
         self.recording = QLabel('录制：关闭')
         self.clicks = QLabel('点击采集：关闭 · 已记录 0 · 排除 0')
         self.autocal=QLabel('点击自动粗校准：关闭')
+        self.demo_status=QLabel('Demo 练习修正：未开始')
         from gaze_core.heatmap import NOTICE
         self.heatmap=QLabel('热力图：关闭')
         self.heatmap_sigma=QLabel('核尺度 sigma：等待相机条件')
         self.heatmap_notice=QLabel(NOTICE)
         self.hotkeys = QLabel('系统热键：等待注册')
         self.notice = QLabel('托盘不可见时请保留此面板。关闭仅隐藏，退出请使用退出按钮或终端 Ctrl+C。')
-        for label in (self.mode, self.radius, self.recording, self.clicks,self.autocal, self.heatmap,self.heatmap_sigma,self.heatmap_notice,self.hotkeys, self.notice):
+        for label in (self.mode, self.radius, self.recording, self.clicks,self.autocal,self.demo_status, self.heatmap,self.heatmap_sigma,self.heatmap_notice,self.hotkeys, self.notice):
             label.setWordWrap(True); layout.addWidget(label)
         self.buttons = {}
-        for name in ('calibrate','check','load_web','reset','record','clicks','click_session','abort_click_session','autocal',
+        for name in ('demo','demo_practice','presentation','calibrate','check','load_web','reset','record','clicks','click_session','abort_click_session','autocal',
                      'heatmap_toggle','heatmap_view','heatmap_clear','heatmap_export','toggle','pause','web','quit'):
             button = QToolButton(self); button.setDefaultAction(actions[name])
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)

@@ -12,6 +12,7 @@ import time
 import uuid
 
 from .config import ROOT, load_settings
+from .starfield_recording import STARFIELD_FIELDS
 
 SCHEMA_VERSION = 1
 SCREEN_FIELDS = {'width_cm', 'height_cm', 'measured', 'width_px', 'height_px', 'device_pixel_ratio',
@@ -39,7 +40,12 @@ EVENT_FIELDS = {
                       'check_task_id', 'reason', 'collection_start_ns', 'collection_end_ns',
                       'max_fps', 'inference_frame_count', 'actual_inference_fps'},
     'calibration_quality': {'task_id','calibration_id','phase','quality','browser_time_ms'},
+    'demo_selection': {'run_id','app','group','action','selection_id','target_id','target','stage',
+                       'dwell_ms','selection_ms','reaction_ms','capture_ns','false_activation','scored','hit_expand_ratio'},
+    'demo_summary': {'run_id','app','group','reason','completed','score','selection_count','false_activation_count',
+                     'pending_count','reaction_count','mean_reaction_ms','mean_selection_ms','elapsed_ms','hit_expand_ratio'},
 }
+EVENT_FIELDS.update({kind: set(fields) for kind, fields in STARFIELD_FIELDS.items()})
 for _event_fields in EVENT_FIELDS.values():
     _event_fields.add('event_ns')
 for _kind in ('calibration', 'evaluation_summary', 'calibration_quality'):
@@ -78,12 +84,15 @@ def _json_numbers(value, field=''):
     if isinstance(value, dict):
         return {key: _json_numbers(item, key) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
+        if field == 'constellation_ids':
+            return [_json_numbers(item, 'constellation_id') for item in value]
         return [_json_numbers(item) for item in value]
     if value is None or isinstance(value, (str, bool)):
         return value
     converted = number(value, field or '数值')
     if isinstance(value, Integral) and (field.endswith(('_ns','_count','_frames','_targets')) or field in {
-            'schema_version', 'seq', 'frame_id', 'index', 'round', 'matrix_revision', 'camera_index', 'configured_camera_index', 'sample_count', 'written_lines', 'failed_records'}):
+            'schema_version', 'seq', 'frame_id', 'index', 'round', 'matrix_revision', 'camera_index', 'configured_camera_index', 'sample_count', 'written_lines', 'failed_records',
+            'event_code', 'constellation_id', 'completed', 'reason_code'}):
         return int(value)
     return converted
 
@@ -273,7 +282,15 @@ def validate_payload(kind, fields, source):
             value = fields['estimated_distance_sample_count']
             if isinstance(value, bool) or not isinstance(value, Integral) or value < 0:
                 raise ValueError('estimated_distance_sample_count 必须为非负整数')
-        if kind == 'target':
+        if kind in STARFIELD_FIELDS:
+            if source != 'python':raise ValueError('星空仅使用 Python 管线')
+            from .starfield_recording import validate_starfield_event
+            validate_starfield_event(kind, fields)
+        elif kind in {'demo_selection','demo_summary'}:
+            if source!='python':raise ValueError('Demo 仅使用 Python 管线')
+            from .demo import validate_demo_event
+            validate_demo_event(kind,fields)
+        elif kind == 'target':
             if fields.get('action') not in {'appear','switch','end'} or fields.get('task_type') not in {'calibrate','evaluate','jump'}:
                 raise ValueError('target 类型或动作无效')
             if 'target_id' in fields:text_value(fields['target_id'],'target_id')

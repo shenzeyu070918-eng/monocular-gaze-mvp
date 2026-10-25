@@ -15,7 +15,8 @@ class HandModel:
         if not path.is_absolute():path=ROOT/path
         if not path.is_file():raise ValueError('缺少手势模型，请运行 setup_mvp.py --overlay；运行中不会下载')
         self.mp=mp;self.model=vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(
-            base_options=mp.tasks.BaseOptions(model_asset_path=str(path)),running_mode=vision.RunningMode.VIDEO,
+            # Avoid MediaPipe's native Windows path decoding; keep model I/O in Python.
+            base_options=mp.tasks.BaseOptions(model_asset_buffer=path.read_bytes()),running_mode=vision.RunningMode.VIDEO,
             num_hands=2,min_hand_detection_confidence=options.hand_confidence,
             min_hand_presence_confidence=options.hand_confidence,min_tracking_confidence=options.hand_confidence))
         self.last_ms=-1

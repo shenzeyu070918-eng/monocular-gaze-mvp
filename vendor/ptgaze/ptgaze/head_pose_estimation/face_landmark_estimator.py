@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 import numpy as np
 from omegaconf import DictConfig
 
@@ -43,7 +44,9 @@ class LandmarkEstimator:
             # their real spacing. Millisecond rounding must still increase strictly.
             self._mp_timestamp_ms = -1
             options = vision.FaceLandmarkerOptions(
-                base_options=BaseOptions(model_asset_path=config.face_detector.mediapipe_model_path),
+                # Python handles Unicode paths; MediaPipe's native path loader
+                # can fail on Windows when the project path contains Chinese.
+                base_options=BaseOptions(model_asset_buffer=Path(config.face_detector.mediapipe_model_path).read_bytes()),
                 running_mode=vision.RunningMode.IMAGE if self._mp_static else vision.RunningMode.VIDEO,
                 num_faces=config.face_detector.mediapipe_max_num_faces,
             )

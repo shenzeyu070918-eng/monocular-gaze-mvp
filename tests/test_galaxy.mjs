@@ -20,6 +20,9 @@ assert.equal(intro.progress(1100),.5);assert.equal(intro.interactive(2099),false
 assert.equal(handPhysics({control:1,hands:[[.5,.5,0,0,0,0,-1]],distance:0}).collapse,1);
 assert.equal(handPhysics({control:1,hands:[[.5,.5,1,0,0,0,1]],distance:0}).explode,1);
 assert.equal(handPhysics({control:0,hands:[]}).scale,1);
+assert.equal(handPhysics({control:1,hands:[[.5,.5,.5,.1,0,0,0]],distance:0}).explode,0);
+assert.equal(handPhysics({control:1,hands:[[.5,.5,.5,.1,0,0,-1]],distance:0}).collapse,1);
+assert.equal(handPhysics({control:1,hands:[[.5,.5,.5,.1,0,0,1]],distance:0}).explode,.5);
 assert.equal(nextPattern(3),0);assert.equal(nextPattern(0),1);
 const spring=new Spring2D();for(let i=0;i<100;i++)spring.step([1,2],.016,2);
 assert.ok(Math.abs(spring.p[1]-2)<1e-6);

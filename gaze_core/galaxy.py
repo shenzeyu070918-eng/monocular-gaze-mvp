@@ -4,6 +4,7 @@ import math
 from numbers import Integral
 import numpy as np
 from .devices import finite
+from .planet import PlanetVisualSettings
 
 
 @dataclass(frozen=True)
@@ -45,8 +46,11 @@ class GalaxySettings:
     camera_z: float = 8.
     field_of_view: float = 55.
     hand_model: str = 'models/hand_landmarker.task'
+    visual: PlanetVisualSettings = PlanetVisualSettings()
 
     def __post_init__(self):
+        if isinstance(self.visual,dict):object.__setattr__(self,'visual',PlanetVisualSettings(**self.visual))
+        if not isinstance(self.visual,PlanetVisualSettings):raise ValueError('galaxy.visual 配置无效')
         if not isinstance(self.text,str) or not self.text.strip() or len(self.text)>80 or any(ord(c)<32 for c in self.text):
             raise ValueError('galaxy.text 必须为1–80字的单行文字')
         if self.particle_count not in (50000,100000) or type(self.particle_count) is not int:
@@ -54,7 +58,7 @@ class GalaxySettings:
         integers={'hand_enter_frames','max_message_bytes','star_count'}
         for f in fields(self):
             v=getattr(self,f.name)
-            if f.name in ('text','hand_model','particle_count'):continue
+            if f.name in ('text','hand_model','particle_count','visual'):continue
             if f.name in integers and (type(v) is not int or v<1):raise ValueError('galaxy.'+f.name+' 必须为正整数')
             finite(v,'galaxy.'+f.name,positive=True)
         if not 0<self.hand_closed<self.hand_open<1 or not 0<self.hand_confidence<=1:

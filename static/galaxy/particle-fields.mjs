@@ -10,10 +10,16 @@ export function planetField(count,o){
  for(let i=0;i<count;i++){const d=direction(rand),r=o.radius*Math.cbrt(rand());f.position.set(d.map(x=>x*r),i*3);noiseSeed(f,i,rand);}
  return f;
 }
+export function ringGap(radius,o){
+ let density=1;for(const center of o.ring_gap_centers??[])density*=1-o.ring_gap_depth*Math.exp(-.5*((radius/o.radius-center)/o.ring_gap_width)**2);return density;
+}
+export function ringLight(radius,o){const u=Math.max(0,Math.min(1,(radius/o.radius-o.ring_inner_ratio)/(o.ring_outer_ratio-o.ring_inner_ratio)));return o.ring_outer_light+(1-o.ring_outer_light)*(1-u)**o.ring_light_power;}
+export function grain(seed,o){const tail=seed>1-o.bright_fraction?(seed-(1-o.bright_fraction))/o.bright_fraction:0;return {rare:tail>0,size:.45+.5*Math.sqrt(seed)+(o.bright_size-1)*tail,light:.55+.8*seed**2.2+(o.bright_intensity-1)*tail};}
 export function ringField(count,o){
  const f=field(count),rand=randomSource(o.seed+1),inner=o.radius*o.ring_inner_ratio,outer=o.radius*o.ring_outer_ratio;
  for(let i=0;i<count;i++){
-  const r=ringRadius(rand(),inner,outer,o.ring_density_power),a=rand()*Math.PI*2;
+  let r;do{r=ringRadius(rand(),inner,outer,o.ring_density_power);}while(rand()>ringGap(r,o));
+  const a=rand()*Math.PI*2;
   const y=(rand()+rand()+rand()-1.5)*o.radius*o.ring_thickness;
   f.position.set([r*Math.cos(a),y,r*Math.sin(a)],i*3);noiseSeed(f,i,rand);
  }

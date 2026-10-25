@@ -51,6 +51,9 @@ export class PlanetRenderer{
    orbitSpeed:{value:o.orbit_speed},planetSpin:{value:o.planet_spin},swirlAmplitude:{value:o.swirl_amplitude},swirlSpeed:{value:o.swirl_speed},
    wanderFraction:{value:o.wander_fraction},wanderDistance:{value:o.wander_distance},pointSize:{value:o.point_size},pointMin:{value:o.point_size_min},pointMax:{value:o.point_size_max},
    pixelRatio:{value:this.pixelRatio},referenceDistance:{value:o.camera_distance},absorption:{value:o.absorption},intensity:{value:intensity},galaxySpin:{value:o.galaxy_spin},coreIntensity:{value:o.galaxy_core_intensity},textWidth:{value:o.text_width}};
+  for(const [key,value] of Object.entries({outerRatio:o.ring_outer_ratio,ringLightPower:o.ring_light_power,ringOuterLight:o.ring_outer_light,
+   brightFraction:o.bright_fraction,brightSize:o.bright_size,brightIntensity:o.bright_intensity,brightHalo:o.bright_halo,
+   twinkleSpeed:o.twinkle_speed,rimStrength:o.rim_strength,rimPower:o.rim_power}))uniforms[key]={value};
   for(const [prefix,colors] of [['warm',o.planet_colors],['cool',o.ring_colors]])for(let i=0;i<3;i++)uniforms[prefix+'ABC'[i]]={value:new THREE.Color(colors[i])};
   const points=new THREE.Points(g,new THREE.ShaderMaterial({vertexShader:particleVertex,fragmentShader:particleFragment,uniforms,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending}));
   points.frustumCulled=false;this.scene.add(points);this.items.push(points);

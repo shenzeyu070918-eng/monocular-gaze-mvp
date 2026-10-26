@@ -19,6 +19,8 @@ RENDER_CHECKS|={f'galaxy-time-{t}-{view}.png' for t in (8,60,300,600) for view i
 RENDER_CHECKS|={'galaxy-default.png','galaxy-fly-in.png','text-letter-focus.png','active-checks.json','assembly.gif','assembly.png'}
 RENDER_CHECKS|={f'{scene}-eye-burst.{suffix}' for scene in ('planet','galaxy','text') for suffix in ('gif','png')}
 
+RENDER_CHECKS|={f'{scene}-charge-{percent}.png' for scene in ('planet','galaxy','text') for percent in (0,50,100)}|{'charge-contact.png','charge-checks.json'}
+
 REFERENCES={'particle_planet_frames.png','particle_planet_closeup.png','render_check.png',
             'render_closeup.png','render_galaxy.png','render_text.png','render_comparison.png','render_comparison.html'}
 

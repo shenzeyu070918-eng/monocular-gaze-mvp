@@ -74,3 +74,11 @@ export function checkSpotlights(renderer){
  }
  return results;
 }
+
+export function checkChargeCore(renderer){
+ renderer.setScene('galaxy');renderer.resetControls();renderer.placeCamera();
+ const base=readDisplayVertices(renderer,[8],{chargeLevel:0,chargePhase:0},true),charged=readDisplayVertices(renderer,[8],{chargeLevel:1,chargePhase:600},true);
+ let delta=0;for(let n=0;n<base.samples[0].length;n++)delta=Math.max(delta,Math.abs(base.samples[0][n]-charged.samples[0][n]));
+ if(delta>1e-6)throw new Error('蓄力改变了旋臂位置/螺距');
+ return {source:'actual_particle_vertex_shader',main_arm_samples:base.chosen.length,charged_main_arm_max_displacement:delta};
+}

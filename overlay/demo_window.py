@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QWidget
 
 class DemoWindow(QWidget):
     cancelled=Signal(str)
+    calibration_requested=Signal()
 
     def __init__(self,run,screen,options,*,clock_ns=time.perf_counter_ns,screen_rect=None,debug=False):
         super().__init__(None,Qt.WindowType.Window|Qt.WindowType.FramelessWindowHint|Qt.WindowType.WindowStaysOnTopHint)
@@ -131,6 +132,8 @@ class DemoWindow(QWidget):
     def keyPressEvent(self,event):
         if event.key()==Qt.Key.Key_Escape:
             self.cancelled.emit('escape');event.accept();return
+        if event.key()==Qt.Key.Key_C and not event.isAutoRepeat() and event.modifiers()==Qt.KeyboardModifier.NoModifier and self.run.phase=='practice' and getattr(self,'calibration_available',False):
+            self.calibration_requested.emit();event.accept();return
         super().keyPressEvent(event)
 
     def closeEvent(self,event):
@@ -193,7 +196,9 @@ class DemoWindow(QWidget):
             for button in run.buttons:self._button(painter,button,now)
         painter.setFont(self.heading_font);painter.setPen(QColor('white'))
         footer=(run.practice_message+' · ' if run.phase=='practice' and run.practice_message else '')+('语音不可用，仅显示文字。 ' if run.speech_failed else '')+'Esc 退出；触发后 1 秒内可撤销'
-        painter.drawText(QRectF(o.padding_px,self.height()-o.footer_px,self.width()-2*o.padding_px,o.footer_px),Qt.AlignmentFlag.AlignCenter,footer)
+        if run.phase=='practice' and getattr(self,'calibration_available',False):footer=run.practice_message+' · Esc 退出'
+        footer_height=o.footer_px*(2 if run.phase=='practice' and getattr(self,'calibration_available',False) else 1)
+        painter.drawText(QRectF(o.padding_px,self.height()-footer_height,self.width()-2*o.padding_px,footer_height),Qt.AlignmentFlag.AlignCenter|Qt.TextFlag.TextWordWrap,footer)
         if self.options.show_gaze_ring and self.position is not None and self.ring_opacity>0:
             painter.setOpacity(self.ring_opacity);painter.setPen(QPen(QColor(o.progress_color),o.progress_px))
             painter.setBrush(Qt.BrushStyle.NoBrush);x,y=self.position;rx,ry=run.radii

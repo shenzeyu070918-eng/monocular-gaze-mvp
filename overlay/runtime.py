@@ -141,7 +141,10 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         actions,panel=controls.actions,controls.panel
         from .demo_session import DemoSession
         demo=DemoSession(session,window,panel,notice=notice,debug=demo_debug)
-        session.calibration_completed=window.show_calibration_notice
+        def calibration_completed():
+            try:window.show_calibration_notice()
+            finally:demo.calibration_succeeded(controls.screen)
+        session.calibration_completed=calibration_completed
         actions['presentation'].setChecked(settings.overlay.presentation)
         actions['presentation'].setEnabled(True)
         actions.connect('presentation',window.set_presentation)
@@ -192,6 +195,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
             except Exception as exc:
                 restore();notice('无法开始任务：'+str(exc),True)
                 raise
+        demo.start_calibration=lambda:start_task('calibrate')
         if hasattr(session,'bind_clicks'):
             from .own_windows import OwnWindows
             own_windows=OwnWindows(app,ignore=(window,))
@@ -356,8 +360,9 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         if active and view.result is not None and eligible:ring.accept(view.result,now)
         elif not active:ring.clear()
         display=ring.view(now)
-        if demo is not None and demo.active:
-            demo.tick(view.result,display,now,active=active,eligible=eligible)
+        if demo is not None:
+            demo.poll_calibration_return(active=active)
+            if demo.active:demo.tick(view.result,display,now,active=active,eligible=eligible)
         radius=None if session is None else session.radius
         radius=settings.overlay.radius_cm if radius is None else radius
         radius_text=None if session is None else session.radius_text

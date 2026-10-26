@@ -51,6 +51,7 @@ export class PlanetRenderer{
  }
  add(field,kind,intensity){
   const o=this.o,g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(field.position,3));g.setAttribute('aSeed',new THREE.BufferAttribute(field.seed,4));g.setAttribute('aFlow',new THREE.BufferAttribute(field.flow,1));
+  if(field.color)g.setAttribute('aGalaxy',new THREE.BufferAttribute(field.color,4));
   const uniforms={time:{value:0},intro:{value:1},kind:{value:kind},radius:{value:o.radius},innerRatio:{value:o.ring_inner_ratio},
    orbitSpeed:{value:o.orbit_speed},planetSpin:{value:o.planet_spin},swirlAmplitude:{value:o.swirl_amplitude},swirlSpeed:{value:o.swirl_speed},
    wanderFraction:{value:o.wander_fraction},wanderDistance:{value:o.wander_distance},pointSize:{value:o.point_size},pointMin:{value:o.point_size_min},pointMax:{value:o.point_size_max},
@@ -60,12 +61,14 @@ export class PlanetRenderer{
    twinkleSpeed:o.twinkle_speed,rimStrength:o.rim_strength,rimPower:o.rim_power}))uniforms[key]={value};
   Object.assign(uniforms,{well:{value:new THREE.Vector3()},wellRadius:{value:1},eyeAlpha:{value:0},wellAttraction:{value:this.options.interaction?.well_attraction??0},wellBrightness:{value:this.options.interaction?.well_brightness??0},sceneFade:{value:1},scatter:{value:0},handScale:{value:1},scatterDistance:{value:this.options.interaction?.scatter_distance??0},scatterHeight:{value:this.options.interaction?.scatter_height??0},scatterScale:{value:o.radius}});
   const i=this.options.interaction;
+  Object.assign(uniforms,{galaxyDrift:{value:o.galaxy_drift_fraction},galaxyDriftSpeed:{value:o.galaxy_drift_speed},galaxyPitchCot:{value:1/Math.tan(THREE.MathUtils.degToRad(o.galaxy_pitch_deg))}});
   if(kind===3)uniforms.pointMax.value=o.text_point_size_max;
   Object.assign(uniforms,{sceneRotation:{value:0},textCurl:{value:i.text_scatter_curl},textStagger:{value:i.text_scatter_stagger}});
   if(kind===2){uniforms.scatterDistance.value=i.galaxy_scatter_distance;uniforms.scatterHeight.value=i.galaxy_scatter_height;uniforms.scatterScale.value=o.galaxy_radius;}
   if(kind===3){uniforms.scatterDistance.value=i.text_scatter_distance;uniforms.scatterHeight.value=i.text_scatter_height;uniforms.scatterScale.value=o.text_width/2;uniforms.wellBrightness.value=i.text_well_brightness;}
   for(const [prefix,colors] of [['warm',o.planet_colors],['cool',o.ring_colors]])for(let i=0;i<3;i++)uniforms[prefix+'ABC'[i]]={value:new THREE.Color(colors[i])};
   const points=new THREE.Points(g,new THREE.ShaderMaterial({vertexShader:particleVertex,fragmentShader:particleFragment,uniforms,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending}));
+  points.material.defaultAttributeValues.aGalaxy=[0,0,0,0];
   points.frustumCulled=false;this.scene.add(points);this.items.push(points);
  }
  setScene(name){

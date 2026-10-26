@@ -1,8 +1,10 @@
+import {galaxyMotionGLSL} from './galaxy-motion.mjs';
 // Analytical GPU orbits; weak gaze forces operate only on display particles.
 export const particleVertex=`
-attribute vec4 aSeed;attribute float aFlow;
+attribute vec4 aSeed,aGalaxy;attribute float aFlow;
 uniform float time,intro,kind,radius,innerRatio,orbitSpeed,planetSpin,swirlAmplitude,swirlSpeed;
 uniform float wanderFraction,wanderDistance,pointSize,pointMin,pointMax,pixelRatio,referenceDistance,absorption,intensity,galaxySpin,coreIntensity,textWidth;
+uniform float galaxyDrift,galaxyDriftSpeed,galaxyPitchCot;
 uniform vec3 warmA,warmB,warmC,coolA,coolB,coolC,well;
 uniform float wellRadius,eyeAlpha,wellAttraction,wellBrightness,sceneFade;
 uniform float scatter,handScale,scatterDistance,scatterHeight,scatterScale,sceneRotation,textCurl,textStagger;
@@ -10,6 +12,7 @@ uniform float outerRatio,ringLightPower,ringOuterLight,brightFraction,brightSize
 varying vec3 particleColor;varying float opacity,halo;
 vec3 palette(vec3 a,vec3 b,vec3 c,float t){return t<.5?mix(a,b,t*2.):mix(b,c,(t-.5)*2.);}
 vec3 turnY(vec3 p,float a){float c=cos(a),s=sin(a);return vec3(c*p.x+s*p.z,p.y,-s*p.x+c*p.z);}
+${galaxyMotionGLSL}
 void main(){
  vec3 p=position;float r=length(p.xz);float phase=aSeed.x*6.2831853;float tail=max(0.,(aSeed.y-(1.-brightFraction))/max(brightFraction,.00001));
  float shimmer=1.-(.08+tail*.17)*(1.-sin(time*twinkleSpeed+phase*9.));halo=brightHalo*tail;
@@ -29,12 +32,9 @@ void main(){
   color=palette(coolC,coolB,coolA,pow(radial,.6));
   light*=ringOuterLight+(1.-ringOuterLight)*pow(1.-radial,ringLightPower);
  }else if(kind<2.5){
-  p=turnY(p,time*galaxySpin/pow(max(r,.6),.6)+sceneRotation);
+  p=galaxyMotion(p,aSeed,time,galaxySpin,galaxyDrift,galaxyDriftSpeed,galaxyPitchCot,sceneRotation);
   p.y+=sin(time*.3+phase)*radius*.017;
-  float core=exp(-r*r/(radius*radius*.55));
-  color=mix(mix(vec3(.07,.2,.65),vec3(.43,.13,.65),aSeed.z),mix(warmA,warmB,aSeed.z*.55),core);
-  float dust=.5+.5*sin(atan(p.z,p.x)*4.-r*3.8);
-  light*=mix(.2,1.,smoothstep(.08,.4,dust))*mix(1.,coreIntensity,core);
+  color=aGalaxy.rgb;light*=aGalaxy.a;
  }else{
   // aFlow is bounded by distance INSIDE the filled glyph, keeping its body full.
   p.xy+=vec2(sin(time*.7+phase),cos(time*.63+phase*1.7))*aFlow*.65;

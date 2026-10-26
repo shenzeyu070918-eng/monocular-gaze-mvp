@@ -24,6 +24,11 @@ class PlanetVisualTests(unittest.TestCase):
         self.assertEqual(changed.visual.camera_pitch_deg,35);self.assertIsInstance(changed.visual,PlanetVisualSettings)
         self.assertEqual(changed.hand_confidence,options.hand_confidence)
 
+    def test_frontend_galaxy_fixture_matches_visual_defaults(self):
+        from dataclasses import asdict
+        fixture=Path(__file__).parent/'fixtures/galaxy-visual.json'
+        self.assertEqual(json.loads(fixture.read_text()),json.loads(json.dumps(asdict(PlanetVisualSettings()))))
+
     def test_interaction_config_merges_and_rejects_invalid_limits(self):
         options=load_settings(use_local=False).galaxy
         self.assertEqual(options.interaction,PlanetInteractionSettings())
@@ -34,7 +39,7 @@ class PlanetVisualTests(unittest.TestCase):
     def test_bad_visual_geometry_counts_colors_and_nonfinite_values_are_rejected(self):
         for fields in ({'planet_particles':True},{'ring_particles':1.5},{'planet_particles':-1},
                        {'galaxy_close_distance':11},{'text_close_distance':8},{'text_distance':0},{'text_viewport_fraction':.91},{'text_point_size_max':6},{'text_point_size_max':.2},{'ring_inner_ratio':.9},{'ring_outer_ratio':1.1},{'close_distance':1.},
-                       {'bloom_strength':float('nan')},{'planet_colors':['red']},{'camera_pitch_deg':90},{'ring_gap_width':10},{'ring_gap_depth':1},{'low_particle_count':1}):
+                       {'bloom_strength':float('nan')},{'planet_colors':['red']},{'camera_pitch_deg':90},{'ring_gap_width':10},{'ring_gap_depth':1},{'low_particle_count':1},{'galaxy_pitch_deg':0},{'galaxy_pitch_deg':40},{'galaxy_diffuse_fraction':.2},{'galaxy_diffuse_fraction':.4},{'galaxy_drift_fraction':.1},{'galaxy_dust_depth':1},{'galaxy_bulge_flattening':2},{'galaxy_knot_clusters':1.5},{'galaxy_knot_fraction':.1}):
             with self.subTest(fields=fields),self.assertRaises(ValueError):replace(PlanetVisualSettings(),**fields)
 
 

@@ -52,13 +52,33 @@ class PlanetVisualSettings:
     bloom_radius: float = .25
     background_stars: int = 600
     nebula_intensity: float = .012
-    galaxy_intensity: float = 1.6
-    galaxy_core_intensity: float = .32
+    galaxy_intensity: float = 2.2
+    galaxy_core_intensity: float = .85
     galaxy_distance: float = 10.4
     galaxy_close_distance: float = 9.6
     galaxy_radius: float = 5.2
-    galaxy_arm_width: float = .4
+    galaxy_arm_width: float = .55
     galaxy_spin: float = .1
+    galaxy_pitch_deg: float = 15.
+    galaxy_disk_scale: float = .34       # Exponential scale length / outer radius.
+    galaxy_diffuse_fraction: float = .30 # Of the non-bulge, non-knot disk.
+    galaxy_diffuse_brightness: float = 1.6
+    galaxy_bulge_fraction: float = .22
+    galaxy_bulge_radius: float = .32     # In galaxy-radius units.
+    galaxy_bulge_flattening: float = .55
+    galaxy_branch_fraction: float = .12 # Of arm particles; short secondary segments.
+    galaxy_outer_brightness: float = .28
+    galaxy_fragmentation: float = .6
+    galaxy_dust_depth: float = .7
+    galaxy_knot_fraction: float = .009
+    galaxy_knot_clusters: int = 18
+    galaxy_knot_size: float = .013      # In galaxy-radius units.
+    galaxy_drift_fraction: float = .006 # Bounded periodic displacement ALONG log arms.
+    galaxy_drift_speed: float = .35
+    galaxy_stability_tolerance_deg: float = 2.
+    galaxy_face_fill: float = .9
+    galaxy_arm_colors: tuple = ('#649ac4','#b3e0ed','#a89ad0')
+    galaxy_knot_colors: tuple = ('#ed78b8','#ffc0df','#d858a5')
     text_distance: float = 7.8
     text_close_distance: float = 5.8
     text_viewport_fraction: float = .9
@@ -71,9 +91,9 @@ class PlanetVisualSettings:
     ring_colors: tuple = ('#437b9f','#83c4d7','#effaff')
 
     def __post_init__(self):
-        integers={'planet_particles','ring_particles','background_stars','seed','low_particle_count'}
+        integers={'planet_particles','ring_particles','background_stars','seed','low_particle_count','galaxy_knot_clusters'}
         angles={'camera_pitch_deg','camera_yaw_deg','camera_roll_deg'}
-        zero_ok={'seed','swirl_amplitude','wander_fraction','bloom_strength','nebula_intensity','rim_strength','bright_fraction','bright_halo','ring_gap_depth'}
+        zero_ok={'seed','swirl_amplitude','wander_fraction','bloom_strength','nebula_intensity','rim_strength','bright_fraction','bright_halo','ring_gap_depth','galaxy_drift_fraction','galaxy_fragmentation','galaxy_dust_depth','galaxy_knot_fraction','galaxy_branch_fraction'}
         for f in fields(self):
             value=getattr(self,f.name)
             if f.name=='ring_gap_centers':
@@ -97,6 +117,14 @@ class PlanetVisualSettings:
         if abs(self.camera_pitch_deg)>85 or abs(self.camera_yaw_deg)>180 or abs(self.camera_roll_deg)>90:raise ValueError('镜头角度超出范围')
         if not 0<=self.wander_fraction<=.2 or self.ring_density_power>3:raise ValueError('游离比例/密度衰减无效')
 
+        if not 5<=self.galaxy_pitch_deg<=35:raise ValueError('银河螺距角须在5–35度内')
+        if not .25<=self.galaxy_diffuse_fraction<=.35:raise ValueError('银河弥散星盘比例须在25%–35%内')
+        if not .05<=self.galaxy_bulge_fraction<=.4 or not 0<=self.galaxy_knot_fraction<=.03:raise ValueError('银河核球/亮团比例无效')
+        if not .1<=self.galaxy_disk_scale<=1 or not .1<=self.galaxy_bulge_radius<=.5 or not 0<self.galaxy_bulge_flattening<=1:raise ValueError('银河尺度/核球形状无效')
+        if not 0<=self.galaxy_branch_fraction<=.3 or not 0<self.galaxy_outer_brightness<=1:raise ValueError('银河支臂/外缘亮度无效')
+        if not 0<=self.galaxy_dust_depth<=.95 or not 0<=self.galaxy_fragmentation<=.9:raise ValueError('银河尘埃/碎片程度无效')
+        if not 1<=self.galaxy_knot_clusters<=100 or not 0<self.galaxy_knot_size<=.1:raise ValueError('银河亮团数量/尺度无效')
+        if not 0<=self.galaxy_drift_fraction<=.02 or not 0<self.galaxy_face_fill<=.95 or not 0<self.galaxy_stability_tolerance_deg<=5:raise ValueError('银河漂移/取景/检查阈值无效')
         if any(not self.ring_inner_ratio<c<self.ring_outer_ratio for c in self.ring_gap_centers):raise ValueError('环缝必须在环内')
         if not 0<self.ring_gap_width<=.5:raise ValueError('环缝宽度必须在(0, 0.5]个球半径内')
         if not 0<=self.bright_fraction<=.05 or not 0<self.ring_outer_light<=1 or not 0<=self.ring_gap_depth<=.95:raise ValueError('亮颗粒比例/环渐变无效')

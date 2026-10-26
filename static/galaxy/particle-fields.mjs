@@ -1,5 +1,7 @@
 // Seeded volumes, not meshes/outline samples. No browser or input dependencies.
-export function randomSource(seed){let s=seed>>>0;return()=>{s=(Math.imul(s,1664525)+1013904223)>>>0;return s/4294967296;};}
+import {randomSource} from './particle-random.mjs';
+export {randomSource} from './particle-random.mjs';
+export {galaxyField} from './galaxy-field.mjs';
 function field(count){return {count,position:new Float32Array(count*3),seed:new Float32Array(count*4),flow:new Float32Array(count)};}
 function direction(rand){const y=rand()*2-1,a=rand()*Math.PI*2,r=Math.sqrt(1-y*y);return [r*Math.cos(a),y,r*Math.sin(a)];}
 function noiseSeed(f,i,rand){for(let j=0;j<4;j++)f.seed[i*4+j]=rand();}
@@ -22,19 +24,6 @@ export function ringField(count,o){
   const a=rand()*Math.PI*2;
   const y=(rand()+rand()+rand()-1.5)*o.radius*o.ring_thickness;
   f.position.set([r*Math.cos(a),y,r*Math.sin(a)],i*3);noiseSeed(f,i,rand);
- }
- return f;
-}
-export function galaxyField(count,o){
- const f=field(count),rand=randomSource(o.seed+2);
- for(let i=0;i<count;i++){
-  const bulge=rand()<.12;
-  if(bulge){const d=direction(rand),r=Math.cbrt(rand())*o.radius*.85;f.position.set([d[0]*r,d[1]*r*.6,d[2]*r],i*3);}
-  else{
-   const r=o.galaxy_radius*Math.sqrt(rand()),a=r*.95+(i%4)*Math.PI/2+(rand()+rand()-1)*o.galaxy_arm_width;
-   f.position.set([Math.cos(a)*r,(rand()+rand()-1)*o.radius*.1,Math.sin(a)*r],i*3);
-  }
-  noiseSeed(f,i,rand);
  }
  return f;
 }

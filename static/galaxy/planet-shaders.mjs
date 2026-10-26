@@ -5,7 +5,7 @@ uniform float time,intro,kind,radius,innerRatio,orbitSpeed,planetSpin,swirlAmpli
 uniform float wanderFraction,wanderDistance,pointSize,pointMin,pointMax,pixelRatio,referenceDistance,absorption,intensity,galaxySpin,coreIntensity,textWidth;
 uniform vec3 warmA,warmB,warmC,coolA,coolB,coolC,well;
 uniform float wellRadius,eyeAlpha,wellAttraction,wellBrightness,sceneFade;
-uniform float scatter,handScale,scatterDistance,scatterHeight;
+uniform float scatter,handScale,scatterDistance,scatterHeight,scatterScale;
 uniform float outerRatio,ringLightPower,ringOuterLight,brightFraction,brightSize,brightIntensity,brightHalo,twinkleSpeed,rimStrength,rimPower;
 varying vec3 particleColor;varying float opacity,halo;
 vec3 palette(vec3 a,vec3 b,vec3 c,float t){return t<.5?mix(a,b,t*2.):mix(b,c,(t-.5)*2.);}
@@ -26,8 +26,6 @@ void main(){
   if(aSeed.w<wanderFraction){float drift=pow(max(0.,sin(fract(time*.045+aSeed.z)*3.14159265)),6.);
    p.xz*=1.+wanderDistance*radius*drift/max(r,.01);p.y+=drift*radius*.17*sin(phase);}
   float radial=clamp((r/radius-innerRatio)/(outerRatio-innerRatio),0.,1.);
-  vec3 delta=well-p;float wellFalloff=exp(-dot(delta,delta)/max(.001,2.*wellRadius*wellRadius))*eyeAlpha;
-  p+=delta*wellAttraction*wellFalloff;light*=1.+wellBrightness*wellFalloff;
   color=palette(coolC,coolB,coolA,pow(radial,.6));
   light*=ringOuterLight+(1.-ringOuterLight)*pow(1.-radial,ringLightPower);
  }else if(kind<2.5){
@@ -44,12 +42,23 @@ void main(){
   float gradient=clamp(p.x/textWidth+.5,0.,1.);
   color=mix(mix(coolB,vec3(.5,.27,.7),gradient),warmB,aSeed.z*.25);
  }
+ // The same weak force follows the ray/plane hit in ring, galaxy and text.
+ if(kind>.5){
+  vec3 delta=well-p;float wellFalloff=exp(-dot(delta,delta)/max(.001,2.*wellRadius*wellRadius))*eyeAlpha;
+  p+=delta*wellAttraction*wellFalloff;light*=1.+wellBrightness*wellFalloff;
+ }
  // Prescribed restoring shape stays on the GPU. Relaxing scatter returns each
  // seed to its CURRENT orbit, instead of freezing or snapping to an old frame.
- if(kind>.5&&kind<1.5){
+ if(kind>.5&&kind<2.5){
   vec2 radial=normalize(p.xz+vec2(.0001)),tangent=vec2(-radial.y,radial.x);
-  p.xz+=(radial*(.3+aSeed.w*.7)+tangent*(aSeed.x-.5))*scatter*scatterDistance*radius;
-  p.y+=sin(phase*3.)*scatter*scatterHeight*radius;
+  p.xz+=(radial*(.3+aSeed.w*.7)+tangent*(aSeed.x-.5))*scatter*scatterDistance*scatterScale;
+  p.y+=sin(phase*3.)*scatter*scatterHeight*scatterScale;
+ }
+ if(kind>2.5){
+  // Start from this frame's flowing glyph, not a cached/rest pose.
+  vec3 outward=normalize(p+vec3(.0001));
+  p+=outward*(.3+aSeed.w*.7)*scatter*scatterDistance*scatterScale;
+  p.z+=sin(phase*3.)*scatter*scatterHeight*scatterScale;
  }
  float displayScale=handScale;p*=displayScale;
  float assembly=intro*intro*(3.-2.*intro);

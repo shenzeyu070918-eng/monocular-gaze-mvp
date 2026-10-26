@@ -11,6 +11,8 @@ from urllib.parse import unquote,urlsplit
 from gaze_core.config import ROOT,DEFAULT_CONFIG,load_settings
 
 RENDER_CHECKS={f'{scene}-{state}.png' for scene in ('planet','galaxy','text') for state in ('base','scatter','well','zoom')}|{'index.html','manifest.json','contact-sheet.png'}
+RENDER_CHECKS|={f'{scene}-{name}' for scene in ('galaxy','text') for name in ('scatter-return.gif','scatter-return.png','views.png')}
+RENDER_CHECKS|={f'{scene}-view-{edge}-{zoom}.png' for scene in ('galaxy','text') for edge in ('tl','tr','bl','br','top','bottom') for zoom in ('far','near')}
 
 REFERENCES={'particle_planet_frames.png','particle_planet_closeup.png','render_check.png',
             'render_closeup.png','render_galaxy.png','render_text.png','render_comparison.png','render_comparison.html'}

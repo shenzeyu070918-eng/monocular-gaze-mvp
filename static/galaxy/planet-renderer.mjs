@@ -4,6 +4,7 @@ import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
 import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 import {planetField,ringField,galaxyField,textField,randomSource,particleBudget} from './particle-fields.mjs';
+import {coreTarget,projectedRadius} from './zoom-hit.mjs';
 import {sceneHit,scenePose} from './scene-geometry.mjs';
 import {AssemblyTransition} from './assembly.mjs';
 import {BurstEnvelope} from './burst.mjs';
@@ -25,7 +26,7 @@ function textMask(text){
 
 export class PlanetRenderer{
  constructor(canvas,options,quality=null){
-  this.quality=quality;this.modelScale=1;this.raycaster=new THREE.Raycaster();this.pointer=new THREE.Vector2();this.depthPoint=new THREE.Vector3();this.origin=[0,0,0];this.direction=[0,0,0];
+  this.quality=quality;this.modelScale=1;this.raycaster=new THREE.Raycaster();this.pointer=new THREE.Vector2();this.depthPoint=new THREE.Vector3();this.coreProjection=new THREE.Vector3();this.feedbackCenter=[0,0];this.origin=[0,0,0];this.direction=[0,0,0];
   this.assembly=new AssemblyTransition(options);this.burst=new BurstEnvelope(options);this.clockMs=0;this.emptyLetters=new Float32Array(MAX_LETTERS);
   this.options=options;this.o=options.visual;this.text=options.text;this.director=null;this.hands=null;this.motionTime=0;this.fade=1;this.pending=null;this.pixelRatio=Math.min(devicePixelRatio,options.pixel_ratio);this.items=[];this.sceneName='';
   const context=canvas.getContext('webgl2',{alpha:false,antialias:false,powerPreference:'high-performance'});
@@ -107,12 +108,12 @@ export class PlanetRenderer{
   this.camera.position.set(Math.sin(y)*Math.cos(p)*distance,Math.sin(p)*distance,Math.cos(y)*Math.cos(p)*distance);
   this.camera.lookAt(0,0,0);this.camera.rotateZ(THREE.MathUtils.degToRad(pose.roll));this.camera.updateMatrixWorld();
  }
- pick(xy){
+ pick(xy,exit=false){
   // Viewport pixels -> graphics projection only; no screen/global coordinate mapping here.
   this.pointer.set(xy[0]/innerWidth*2-1,1-xy[1]/innerHeight*2);
   this.raycaster.setFromCamera(this.pointer,this.camera);
   this.raycaster.ray.origin.toArray(this.origin);this.raycaster.ray.direction.toArray(this.direction);
-  return sceneHit(this.sceneName,this.origin,this.direction,this.o,this.modelScale,this.textBounds,this.options.interaction);
+  return sceneHit(this.sceneName,this.origin,this.direction,this.o,this.modelScale*(exit?this.options.interaction.zoom_exit_ratio:1),this.textBounds,this.options.interaction);
  }
  acceptScene(status,now=performance.now()){this.assembly.accept(status,now);if(status.scene_transition)this.burst.cancel();}
  acceptBurst(status,now=performance.now()){this.burst.accept(status,now);}
@@ -138,7 +139,12 @@ export class PlanetRenderer{
   this.burst.accept(frame,this.clockMs);if(!enabled)this.burst.cancel();
   const hand=this.hands.update(frame,dt,enabled?1:0);this.modelScale=enabled?hand.scale:1;
   const hit=enabled&&frame?.gaze_valid?this.pick(frame.xy):null;
-  const control=this.director.update(frame,dt,[innerWidth,innerHeight],!!hit?.hit,enabled?1:0,this.sceneName);
+  this.coreProjection.set(0,0,0).project(this.camera);this.feedbackCenter[0]=(this.coreProjection.x+1)*innerWidth/2;this.feedbackCenter[1]=(1-this.coreProjection.y)*innerHeight/2;
+  const r=this.sceneName==='galaxy'?this.o.galaxy_radius*this.options.interaction.galaxy_zoom_core_ratio:this.sceneName==='planet'?this.o.radius:Math.min((this.textBounds[1]-this.textBounds[0])/2,(this.textBounds[3]-this.textBounds[2])/2);
+  const radius=projectedRadius(r*this.modelScale,this.camera.position.length(),this.o.field_of_view,innerHeight);
+  const target=coreTarget(this.sceneName,frame?.xy,this.feedbackCenter,radius,frame?.radius??[0,0],[innerWidth,innerHeight],this.options.interaction,!!hit?.hit,this.sceneName==='planet'&&frame?.gaze_valid?this.pick(frame.xy,true).hit:false);
+  const control=this.director.update(frame,dt,[innerWidth,innerHeight],target.inside,enabled?1:0,this.sceneName,target.retain);
+  this.zoomFeedback={...target,progress:control.dwell_progress,active:control.dwell_active,zoom:control.zoom,visible:enabled};
   const scatter=enabled?Math.max(hand.scatter,this.burst.value(this.clockMs)):0;this.appliedScatter=scatter;
   this.motionTime+=dt*(1+(enabled?hand.spin:0));this.placeCamera(view,control);
   if(this.letterFocus){

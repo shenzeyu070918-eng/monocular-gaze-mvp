@@ -1,8 +1,9 @@
 import {QualityController} from './logic.mjs';
 import {previewFrame,PreviewClock} from './preview-input.mjs';
+import {ZoomIndicator} from './zoom-indicator.mjs';
 import {PlanetRenderer} from './planet-renderer.mjs';
 const query=new URLSearchParams(location.search),$=id=>document.getElementById(id);
-let renderer,quality,frameId=0,scene=query.get('scene')||'planet',view=query.get('view')||'oblique',paused=query.has('still'),base=performance.now(),time=Number(query.get('t')||8),samples=[],intervals=[],last=null,report=0;
+let zoomIndicator,renderer,quality,frameId=0,scene=query.get('scene')||'planet',view=query.get('view')||'oblique',paused=query.has('still'),base=performance.now(),time=Number(query.get('t')||8),samples=[],intervals=[],last=null,report=0;
 const clock=new PreviewClock();let simulated=false,gazeMode='off',handMode='none',mouse=[innerWidth/2,innerHeight/2],snapshotControl=null;
 const initialTime=Number.isFinite(time)&&time>=0?time:8;time=initialTime;
 const clean=query.has('clean'),debug=query.has('debug');
@@ -46,7 +47,7 @@ function renderInfo(state,gaze=null){
    const p=renderer.depthPoint.set(x,y,z).multiplyScalar(renderer.modelScale).project(renderer.camera);projection.push([p.x,p.y]);}
  }
  return {scene,state,time,particles:renderer.count,zoom:snapshotControl?.zoom??0,camera_distance:renderer.camera.position.length(),pose:renderer.pose,
-  scatter:u.scatter.value,well_alpha:u.eyeAlpha.value,well_radius:u.wellRadius.value,point_max:u.pointMax.value,letter_selected:renderer.letterFocus?.selected??-1,letter_weights:[...(renderer.letterFocus?.weights??[])].slice(0,(renderer.letterFocus?.letters.at(-1)?.id??-1)+1),transition:renderer.transitionInfo,bloom:renderer.bloom.strength,
+  zoom_target:renderer.zoomFeedback,scatter:u.scatter.value,well_alpha:u.eyeAlpha.value,well_radius:u.wellRadius.value,point_max:u.pointMax.value,letter_selected:renderer.letterFocus?.selected??-1,letter_weights:[...(renderer.letterFocus?.weights??[])].slice(0,(renderer.letterFocus?.letters.at(-1)?.id??-1)+1),transition:renderer.transitionInfo,bloom:renderer.bloom.strength,
   text_projection:projection,hit:gaze?renderer.pick(gaze).hit:false};
 }
 function inspectView(next,uv,zoom=0){
@@ -99,7 +100,7 @@ function draw(now){
  if(simulated){const gaze=gazeMode==='center'?[innerWidth/2,innerHeight/2]:gazeMode==='mouse'?mouse:null;
   const frame=clock.sample(now,[innerWidth,innerHeight],['planet','galaxy','text'].indexOf(scene),gaze,handMode);
   control=renderer.updateControls(frame,Math.min(.1,(dt??16.67)/1000),intro,frame.pattern,view);}
- renderer.render(time,intro,view,control);
+ renderer.render(time,intro,view,control);zoomIndicator?.draw(simulated&&!clean?renderer.zoomFeedback:null);
  samples.push(performance.now()-began);if(dt!==null)intervals.push(dt);
  if(now-report>=1000){
   const sorted=[...samples].sort((a,b)=>a-b),median=sorted[Math.floor(sorted.length/2)],p90=sorted[Math.floor((sorted.length-1)*.9)];
@@ -121,7 +122,7 @@ async function init(){
   $('message').textContent='正在准备本地粒子画面……';
   const response=await fetch('/preview-config',{cache:'no-store'});
   if(!response.ok)throw new Error('请先运行 python -m tools.preview_galaxy');
-  options=await response.json();quality=new QualityController(options,options.visual.planet_particles+options.visual.ring_particles,options.visual.low_particle_count);renderer=new PlanetRenderer($('universe'),options,quality);renderer.setScene(scene);
+  options=await response.json();quality=new QualityController(options,options.visual.planet_particles+options.visual.ring_particles,options.visual.low_particle_count);renderer=new PlanetRenderer($('universe'),options,quality);zoomIndicator=new ZoomIndicator(options.interaction);renderer.setScene(scene);
   window.__galaxyPreview={ready:true,get scene(){return scene;},get time(){return time;},get view(){return view;},metrics:null,snapshot,inspectView,sequenceSample,combinedSample,letterSample,assemblySample,eyeBurstSample,async spotlightCheck(){const {checkSpotlights}=await import('./galaxy-gpu-check.mjs');try{return checkSpotlights(renderer);}finally{redraw();}},async galaxyCheck(times){const {checkGalaxyGPU}=await import('./galaxy-gpu-check.mjs');try{return checkGalaxyGPU(renderer,times);}finally{redraw();}},get simulation(){return {enabled:simulated,gaze:gazeMode,hand:handMode,capture_us:clock.frame?.capture_us,scatter:renderer.hands?.state.scatter??0,camera_distance:renderer.camera.position.length()};},
    freeze(t){paused=true;time=t;redraw();},setScene(next){chooseScene(next,true);},setView(next){view=next;$('preview-view').value=next;redraw();}};
   $('gate').hidden=true;for(const control of panel.querySelectorAll('button,select'))control.disabled=false;
@@ -150,6 +151,6 @@ addEventListener('keydown',event=>{
 $('preview-view').addEventListener('change',event=>{view=event.target.value;redraw();});
 addEventListener('resize',()=>{renderer?.resize();if(renderer)redraw();});
 document.addEventListener('visibilitychange',()=>{quality?.frame(performance.now(),false);last=null;if(!document.hidden&&renderer)redraw();});
-addEventListener('pagehide',()=>{cancelAnimationFrame(frameId);renderer?.dispose();});
+addEventListener('pagehide',()=>{cancelAnimationFrame(frameId);renderer?.dispose();zoomIndicator?.dispose();});
 if(debug)$('preview-stats').classList.add('diagnostic');
 init();

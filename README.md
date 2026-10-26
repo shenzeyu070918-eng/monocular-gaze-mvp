@@ -56,6 +56,8 @@
 5. 默认凝视**左边缘**切上一个，**右边缘**切下一个；判定条各占视口宽12%、整高，停留1.5秒，边缘细光条按进度填充。`scene_switch_mode: edges / corners / off` 可选择旧角落模式（默认关闭）或关闭凝视切换；角落模式仍向前循环。沿用误差半径/原20%区域距离取大的屏外椭圆容差，仅夹回命中、不改坐标；同区域抖动不重计，300ms短暂离开/眨眼/无脸宽限冻结，采集断档清零。网页局部 **→ / 空格** 下一场景、**←** 上一场景继续保留。切换先让旧形状散成星尘0.5秒，再让新几何从混沌汇聚1.6秒；完成前忽略视线、手势及换景/B键，不排队补触发。Python统一管理目标、来源和场景版本，直到网页确实画完并确认后才解除角落冷却；慢页面不会提前解锁。开场约2秒也不响应交互。不安装全局键盘监听，不记录键名或键盘输入。
 6. 页面按Esc退出并恢复进入前的悬浮层状态。原生 `Ctrl+Alt+R`/面板可关闭网页回到练习。摄像头暂停、屏幕条件变化时取消Demo；退出关闭本次回环服务、手势模型和专用Chrome，不关闭用户的浏览器窗口。
 
+Qt练习页若提示「漂移修正超过安全上限」，可直接按 **C** 开始现有九点校准（含可选补看）。对应档案保存成功并激活后，自动回到原Demo的练习页：沟通板回沟通板，星系回星系，并重新取本次练习偏移；不会跳过练习。取消、保存失败或条件变化时不自动进入Demo。C仅在这条超限提示出现的练习窗口内响应，不注册全局热键。
+
 找不到Chrome时会提示并使用默认浏览器：手动移到内置屏，点击进入全屏；切换完成后**再点击一次**核对视口。保持页面100%缩放。移动窗口、缩放或客户区变化后需重点击；不在内屏内会明确拒绝。默认浏览器可能不能被自动关闭，退出后手动关本次页面。连接/WebGL2/浮点渲染失败可切回Qt星空；缺手势模型或识别失败仅关闭手势，保留视线体验并提示原因。
 
 可在忽略提交的 `config/local.yaml` 中覆盖：
@@ -71,7 +73,7 @@ galaxy:
     close_distance: 3.6          # 行星推近距离
     galaxy_view_fill: 1.1        # 银盘按视口自动取景，最紧边界铺到110%
     galaxy_fly_ratio: 0.5        # 飞入银心：默认距离的0.5倍
-    galaxy_zoom_bloom_gain: 0.65
+    galaxy_zoom_bloom_gain: 0.1
     galaxy_pitch_deg: 15         # 对数旋臂螺距角，典型展示范围12–18°
     galaxy_arm_width: 0.7
     galaxy_diffuse_fraction: 0.30 # 盘面比例，不含核球和粉色亮团
@@ -133,9 +135,9 @@ galaxy:
     zoom_core_scale: 1.0
     charge_response_s: 0.12      # 视觉渐入；不改变采集时钟的停留证据
     charge_release_s: 0.45       # 宽限/迟滞结束后平滑回落
-    charge_galaxy_light_gain: 1.1
-    charge_galaxy_halo_gain: 1.25
-    charge_galaxy_bloom_gain: 0.22
+    charge_galaxy_light_gain: 0.45
+    charge_galaxy_halo_gain: 0.5
+    charge_galaxy_bloom_gain: 0.08
     charge_galaxy_bloom_radius_gain: 0.2
     charge_galaxy_spin_gain: 0.5 # 只加速核球，不改旋臂运动
     charge_galaxy_contract: 0.06

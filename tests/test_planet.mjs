@@ -31,6 +31,7 @@ for(let i=0;i<text.count;i++){
  centers+=Number(Math.abs(x)<o.text_width*.25&&Math.abs(y)<1);
  assert.ok(text.flow[i]>=0&&text.flow[i]<=o.text_flow+1e-7);
 }
+assert.deepEqual(text.bounds,[-3.6,3.6,-1.8,1.8]);
 assert.ok(centers>text.count*.1);assert.throws(()=>textField(10,o,new Uint8Array(9),3,3));
 console.log('planet volume, ring density/bounds/Kepler motion, filled text clearance and deterministic fields passed');
 

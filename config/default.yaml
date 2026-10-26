@@ -290,8 +290,12 @@ galaxy:
   interaction:
     yaw_range_deg: 35
     pitch_range_deg: 35
-    text_yaw_range_deg: 10
-    text_pitch_range_deg: 8
+    galaxy_rotation_range_deg: 18  # Rotate the disk about its own normal; no gaze camera yaw.
+    galaxy_pitch_range_deg: 8
+    galaxy_min_pitch_deg: 20      # Camera/disk angle, never edge-on.
+    galaxy_zoom_core_ratio: 0.35
+    text_yaw_range_deg: 4
+    text_pitch_range_deg: 3
     camera_spring_hz: 0.7
     zoom_dwell_ms: 1500
     zoom_spring_hz: 0.65
@@ -309,8 +313,11 @@ galaxy:
     scatter_height: 1.2
     galaxy_scatter_distance: 1.2  # In galaxy-radius units.
     galaxy_scatter_height: 0.35
-    text_scatter_distance: 1.2    # In half-text-width units; height is normal to the text plane.
-    text_scatter_height: 0.7
+    text_scatter_distance: 1.0    # Half-text-width units: 0.5 of the full line width.
+    text_scatter_height: 0.08     # Small z displacement in half-width units.
+    text_scatter_curl: 0.18
+    text_scatter_stagger: 0.35   # Per-seed phase over the eased hand envelope.
+    text_well_brightness: 1.0
     spin_boost: 3.0
     hand_speed_scale: 0.6
     min_hand_scale: 0.65
@@ -365,12 +372,14 @@ galaxy:
     galaxy_intensity: 1.6
     galaxy_core_intensity: 0.32
     galaxy_distance: 10.4
-    galaxy_close_distance: 6.8
+    galaxy_close_distance: 9.6
     galaxy_radius: 5.2
     galaxy_arm_width: 0.4
     galaxy_spin: 0.1
     text_distance: 7.8
     text_close_distance: 5.8
+    text_viewport_fraction: 0.9   # Fit both axes, including perspective/depth/hand scale.
+    text_point_size_max: 2.5     # Logical pixels before DPR, prevents text bokeh.
     text_intensity: 0.65
     text_width: 7.2
     text_depth: 0.35

@@ -27,6 +27,14 @@ def comparison_html():
 <div class="cell"><h2>本次：实心文字（笔画内流动）</h2><img src="/reference/render_text.png"></div></div></html>'''
 
 
+def interaction_html():
+    rows=[]
+    for scene,label in [('planet','粒子行星'),('galaxy','螺旋星系'),('text','文字')]:
+        cells=''.join(f'<figure><img src="/render-check/{scene}-{state}.png"><figcaption>{title}</figcaption></figure>' for state,title in [('base','静止'),('scatter','张手甩散'),('well','视线引力井'),('zoom','凝视推近')])
+        rows.append(f'<h2>{label}</h2><div class="row">{cells}</div>')
+    return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>三场景交互检查</title><style>body{background:#090e14;color:#cddbe7;font:15px system-ui;margin:20px}.row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}figure{margin:0}img{width:100%}figcaption{padding:5px}</style><h1>三场景交互 · 合成输入</h1><p>同一时间 t=8秒、固定视角；只有推近改变镜头距离。独立Chrome/SwiftShader，不代表实机帧率。</p>'+''.join(rows)+'</html>'
+
+
 def capture(url,output):
     from websockets.sync.client import connect
     parsed=urlsplit(url)
@@ -86,11 +94,61 @@ def capture(url,output):
                 motion.append(dict(scene=scene,view=view,times_s=[8,9],pixels_changed=changed))
                 if not changed:raise RuntimeError('粒子静止：'+scene+'/'+view)
                 captures.append(dict(scene=scene,view=view,file=name))
+            # Matrix captures isolate each interaction at the same time/camera angles.
+            from PIL import Image,ImageChops,ImageStat,ImageDraw
+            import io
+            matrix=output/'render_check';matrix.mkdir(exist_ok=True);checks=[]
+            for scene in ('planet','galaxy','text'):
+                base_image=None
+                for state in ('base','scatter','well','zoom'):
+                    info=evaluate(f'window.__galaxyPreview.snapshot({json.dumps(scene)},{json.dumps(state)},8)')
+                    evaluate('new Promise(resolve=>requestAnimationFrame(resolve))')
+                    png=base64.b64decode(command('Page.captureScreenshot',dict(format='png'))['data'])
+                    image=Image.open(io.BytesIO(png)).convert('RGB')
+                    if base_image is None:base_image=image
+                    diff=ImageChops.difference(base_image,image)
+                    info['mean_absolute_pixel_difference']=sum(ImageStat.Stat(diff).mean)/3
+                    info['pixels_changed']=diff.getbbox() is not None
+                    if state!='base' and not info['pixels_changed']:raise RuntimeError(scene+'/'+state+'没有改变画面')
+                    if state=='scatter' and info['scatter']<.9:raise RuntimeError('张手未传到GPU')
+                    if state=='zoom' and info['camera_distance']>=checks[-3]['camera_distance']*.9:raise RuntimeError('没有实际推近')
+                    if state=='well' and info['well_alpha']<.9:raise RuntimeError('引力井未传到GPU')
+                    info['file']=f'{scene}-{state}.png';(matrix/info['file']).write_bytes(png);checks.append(info)
+                # An opened hand must relax to the CURRENT moving shape at t=9.
+                restored=evaluate(f'window.__galaxyPreview.snapshot({json.dumps(scene)},"restore",9)')
+                restore=base64.b64decode(command('Page.captureScreenshot',dict(format='png'))['data'])
+                evaluate(f'window.__galaxyPreview.snapshot({json.dumps(scene)},"base",9)')
+                baseline=base64.b64decode(command('Page.captureScreenshot',dict(format='png'))['data'])
+                difference=ImageChops.difference(Image.open(io.BytesIO(restore)).convert('RGB'),Image.open(io.BytesIO(baseline)).convert('RGB'))
+                restored['mean_absolute_pixel_difference_from_current_base']=sum(ImageStat.Stat(difference).mean)/3
+                if restored['scatter']>.000001 or restored['mean_absolute_pixel_difference_from_current_base']>.05:raise RuntimeError('握拳后没有回到当前动态形状')
+                checks.append(restored)
+            sheet=Image.new('RGB',(1600,840),'#090e14');labels=ImageDraw.Draw(sheet)
+            for row,scene in enumerate(('planet','galaxy','text')):
+                for col,state in enumerate(('base','scatter','well','zoom')):
+                    tile=Image.open(matrix/f'{scene}-{state}.png');tile.thumbnail((400,251))
+                    sheet.paste(tile,(col*400,row*280+24));labels.text((col*400+8,row*280+5),f'{scene} / {state}',fill='white')
+            sheet.save(matrix/'contact-sheet.png')
+            (matrix/'index.html').write_text(interaction_html(),encoding='utf-8')
+            (matrix/'manifest.json').write_text(json.dumps(dict(source='synthetic_swiftshader',hardware_fps_verified=False,checks=checks),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             # Exercise the same in-page scene/view controls used by reviewers.
             controls=evaluate('''(()=>{document.querySelector('[data-scene="planet"]').click();
                 const view=document.getElementById('preview-view');view.value='top';view.dispatchEvent(new Event('change'));
                 return window.__galaxyPreview.scene==='planet'&&window.__galaxyPreview.view==='top';})()''')
             if not controls:raise RuntimeError('预览场景/镜头按钮切换失败')
+            evaluate("document.querySelector('[data-hand=\"open\"]').click()")
+            deadline=time.monotonic()+10
+            while not evaluate('window.__galaxyPreview.simulation.scatter>.4'):
+                if time.monotonic()>deadline:raise TimeoutError('预览张手按钮没有生效')
+                time.sleep(.05)
+            simulations=evaluate("""(()=>{const api=window.__galaxyPreview;
+                document.querySelector('[data-hand="fist"]').click();const fist=api.simulation.hand==='fist';
+                dispatchEvent(new KeyboardEvent('keydown',{key:'o'}));const open=api.simulation.hand==='open';
+                dispatchEvent(new KeyboardEvent('keydown',{key:'n'}));const none=api.simulation.hand==='none';
+                document.querySelector('[data-gaze="center"]').click();const center=api.simulation.gaze==='center';
+                dispatchEvent(new KeyboardEvent('keydown',{key:'g'}));const mouse=api.simulation.gaze==='mouse';
+                document.getElementById('preview-reset').click();return fist&&open&&none&&center&&mouse&&!api.simulation.enabled;})()""")
+            if not simulations:raise RuntimeError('预览视线/手势按钮或按键失败')
             (output/'render_comparison.html').write_text(comparison_html(),encoding='utf-8')
             # The server's reference route is deliberately limited to data/reference.
             if output==(ROOT/'data/reference').resolve() and all((output/n).is_file() for n in ('particle_planet_frames.png','particle_planet_closeup.png')):
@@ -102,7 +160,7 @@ def capture(url,output):
                 height=evaluate('document.documentElement.scrollHeight')
                 (output/'render_comparison.png').write_bytes(base64.b64decode(command('Page.captureScreenshot',dict(format='png',captureBeyondViewport=True,clip=dict(x=0,y=0,width=1512,height=height,scale=1)))['data']))
             report=dict(source='isolated_headless_swiftshader',real_camera_used=False,hardware_fps_verified=False,
-                viewport=[1512,950],time_s=8,captures=captures,motion_checks=motion,preview_controls_ok=controls,unexpected_events=events,script_errors=errors)
+                viewport=[1512,950],time_s=8,captures=captures,motion_checks=motion,interaction_checks=checks,preview_controls_ok=controls,preview_simulation_controls_ok=simulations,unexpected_events=events,script_errors=errors)
             (output/'render_check.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             if errors or events:raise RuntimeError('渲染检查出现脚本/着色器错误或意外WebSocket，见render_check.json')
             print('画面与对照图：'+str(output),flush=True)

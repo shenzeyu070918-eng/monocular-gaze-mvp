@@ -5,6 +5,9 @@ import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 import {planetField,ringField,galaxyField,textField,randomSource,particleBudget} from './particle-fields.mjs';
 import {sceneHit,scenePose} from './scene-geometry.mjs';
+import {AssemblyTransition} from './assembly.mjs';
+import {BurstEnvelope} from './burst.mjs';
+import {LetterFocus,letterHit,MAX_LETTERS} from './letter-focus.mjs';
 import {PlanetDirector,HandDynamics} from './planet-controls.mjs';
 import {particleVertex,particleFragment,coreVertex,coreFragment} from './planet-shaders.mjs';
 
@@ -14,12 +17,16 @@ function textMask(text){
  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='white';ctx.fillText(text,512,192,960);
  const data=ctx.getImageData(0,0,1024,384).data,mask=new Uint8Array(1024*384);
  for(let i=0;i<mask.length;i++)mask[i]=Number(data[i*4+3]>128);
- return {mask,width:1024,height:384};
+ const chars=typeof Intl.Segmenter==='function'?[...new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(text)].map(v=>v.segment):Array.from(text);
+ const total=ctx.measureText(text).width,fit=Math.min(1,960/total),left=512-total*fit/2,ranges=[];let prefix='';
+ for(const char of chars){const start=ctx.measureText(prefix).width;prefix+=char;ranges.push([left+start*fit,left+ctx.measureText(prefix).width*fit]);}
+ return {mask,width:1024,height:384,ranges};
 }
 
 export class PlanetRenderer{
  constructor(canvas,options,quality=null){
   this.quality=quality;this.modelScale=1;this.raycaster=new THREE.Raycaster();this.pointer=new THREE.Vector2();this.depthPoint=new THREE.Vector3();this.origin=[0,0,0];this.direction=[0,0,0];
+  this.assembly=new AssemblyTransition(options);this.burst=new BurstEnvelope(options);this.clockMs=0;this.emptyLetters=new Float32Array(MAX_LETTERS);
   this.options=options;this.o=options.visual;this.text=options.text;this.director=null;this.hands=null;this.motionTime=0;this.fade=1;this.pending=null;this.pixelRatio=Math.min(devicePixelRatio,options.pixel_ratio);this.items=[];this.sceneName='';
   const context=canvas.getContext('webgl2',{alpha:false,antialias:false,powerPreference:'high-performance'});
   if(!context)throw new Error('需要WebGL2，请使用支持硬件加速的Chrome');
@@ -51,6 +58,7 @@ export class PlanetRenderer{
  }
  add(field,kind,intensity){
   const o=this.o,g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(field.position,3));g.setAttribute('aSeed',new THREE.BufferAttribute(field.seed,4));g.setAttribute('aFlow',new THREE.BufferAttribute(field.flow,1));
+  if(field.letter)g.setAttribute('aLetter',new THREE.BufferAttribute(field.letter,3));
   if(field.color)g.setAttribute('aGalaxy',new THREE.BufferAttribute(field.color,4));
   const uniforms={time:{value:0},intro:{value:1},kind:{value:kind},radius:{value:o.radius},innerRatio:{value:o.ring_inner_ratio},
    orbitSpeed:{value:o.orbit_speed},planetSpin:{value:o.planet_spin},swirlAmplitude:{value:o.swirl_amplitude},swirlSpeed:{value:o.swirl_speed},
@@ -62,12 +70,14 @@ export class PlanetRenderer{
   Object.assign(uniforms,{well:{value:new THREE.Vector3()},wellRadius:{value:1},eyeAlpha:{value:0},wellAttraction:{value:this.options.interaction?.well_attraction??0},wellBrightness:{value:this.options.interaction?.well_brightness??0},sceneFade:{value:1},scatter:{value:0},handScale:{value:1},scatterDistance:{value:this.options.interaction?.scatter_distance??0},scatterHeight:{value:this.options.interaction?.scatter_height??0},scatterScale:{value:o.radius}});
   const i=this.options.interaction;
   Object.assign(uniforms,{galaxyDrift:{value:o.galaxy_drift_fraction},galaxyDriftSpeed:{value:o.galaxy_drift_speed},galaxyPitchCot:{value:1/Math.tan(THREE.MathUtils.degToRad(o.galaxy_pitch_deg))}});
+  Object.assign(uniforms,{spotSize:{value:i.spotlight_size_gain},spotTwinkle:{value:i.spotlight_twinkle},spotSpeed:{value:i.spotlight_speed},letterWeights:{value:this.letterFocus?.weights??this.emptyLetters},letterScale:{value:i.text_letter_scale-1},letterLift:{value:i.text_letter_lift},letterBrightness:{value:i.text_letter_brightness},galaxySwirl:{value:i.galaxy_scatter_swirl}});
   if(kind===3)uniforms.pointMax.value=o.text_point_size_max;
   Object.assign(uniforms,{sceneRotation:{value:0},textCurl:{value:i.text_scatter_curl},textStagger:{value:i.text_scatter_stagger}});
-  if(kind===2){uniforms.scatterDistance.value=i.galaxy_scatter_distance;uniforms.scatterHeight.value=i.galaxy_scatter_height;uniforms.scatterScale.value=o.galaxy_radius;}
-  if(kind===3){uniforms.scatterDistance.value=i.text_scatter_distance;uniforms.scatterHeight.value=i.text_scatter_height;uniforms.scatterScale.value=o.text_width/2;uniforms.wellBrightness.value=i.text_well_brightness;}
+  if(kind===2){uniforms.wellAttraction.value=i.galaxy_well_attraction;uniforms.wellBrightness.value=i.galaxy_well_brightness;uniforms.scatterDistance.value=i.galaxy_scatter_distance;uniforms.scatterHeight.value=i.galaxy_scatter_height;uniforms.scatterScale.value=o.galaxy_radius;}
+  if(kind===3){uniforms.wellAttraction.value=i.text_well_attraction;uniforms.scatterDistance.value=i.text_scatter_distance;uniforms.scatterHeight.value=i.text_scatter_height;uniforms.scatterScale.value=o.text_width/2;uniforms.wellBrightness.value=i.text_well_brightness;}
   for(const [prefix,colors] of [['warm',o.planet_colors],['cool',o.ring_colors]])for(let i=0;i<3;i++)uniforms[prefix+'ABC'[i]]={value:new THREE.Color(colors[i])};
   const points=new THREE.Points(g,new THREE.ShaderMaterial({vertexShader:particleVertex,fragmentShader:particleFragment,uniforms,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending}));
+  points.material.defaultAttributeValues.aLetter=[0,0,0];
   points.material.defaultAttributeValues.aGalaxy=[0,0,0,0];
   points.frustumCulled=false;this.scene.add(points);this.items.push(points);
  }
@@ -79,7 +89,7 @@ export class PlanetRenderer{
   const budget=particleBudget(count,o);
   if(name==='planet'){this.add(planetField(budget.planet,o),0,o.planet_intensity*budget.intensity);this.add(ringField(budget.ring,o),1,o.ring_intensity*budget.intensity);}
   else if(name==='galaxy')this.add(galaxyField(count,o),2,o.galaxy_intensity*budget.intensity);
-  else{const m=this.mask??=textMask(this.text),f=textField(count,o,m.mask,m.width,m.height);this.textBounds=f.bounds;this.add(f,3,o.text_intensity*budget.intensity);}
+  else{const m=this.mask??=textMask(this.text),f=textField(count,o,m.mask,m.width,m.height,m.ranges);this.textBounds=f.bounds;this.letterFocus??=new LetterFocus(f.letters,this.options.interaction.text_letter_spring_hz);this.add(f,3,o.text_intensity*budget.intensity);}
   this.core.visible=name!=='text';
  }
  resize(){
@@ -104,9 +114,11 @@ export class PlanetRenderer{
   this.raycaster.ray.origin.toArray(this.origin);this.raycaster.ray.direction.toArray(this.direction);
   return sceneHit(this.sceneName,this.origin,this.direction,this.o,this.modelScale,this.textBounds,this.options.interaction);
  }
- resetControls(){this.director?.reset();this.hands?.reset();this.modelScale=1;this.fade=1;this.pending=null;
+ acceptScene(status,now=performance.now()){this.assembly.accept(status,now);if(status.scene_transition)this.burst.cancel();}
+ acceptBurst(status,now=performance.now()){this.burst.accept(status,now);}
+ resetControls(){this.assembly.reset(Math.max(0,['planet','galaxy','text'].indexOf(this.sceneName)));this.burst.reset();this.clockMs=0;this.transitionInfo=null;this.letterFocus?.reset();this.director?.reset();this.hands?.reset();this.modelScale=1;this.fade=1;this.pending=null;
   for(const item of this.items){const u=item.material.uniforms;u.eyeAlpha.value=0;u.scatter.value=0;u.handScale.value=1;}}
- reset(){this.resetControls();this.motionTime=0;this.setScene('planet');this.placeCamera();}
+ reset(){this.resetControls();this.motionTime=0;this.setScene('planet');this.assembly.reset(0);this.placeCamera();}
  applyWell(frame,control,dt,intro=1){
   const well=control.eye?this.pick(frame.xy).well:null;
   // Project error radius at the interaction plane's view depth (not far-camera distance).
@@ -116,28 +128,36 @@ export class PlanetRenderer{
    if(well){u.well.value.set(...well).divideScalar(this.modelScale);
     u.wellRadius.value=Math.max(...frame.radius)*2*Math.tan(THREE.MathUtils.degToRad(this.o.field_of_view/2))*depth/innerHeight*this.options.interaction.well_radius_scale/this.modelScale;}}
  }
- updateControls(frame,dt,intro,pattern=frame?.pattern,view='oblique'){
+ updateControls(frame,dt,intro,pattern=frame?.pattern,view='oblique',now=null){
+  this.clockMs=now??this.clockMs+dt*1000;
   if(!this.director){this.director=new PlanetDirector(this.options);this.hands=new HandDynamics(this.options);}
-  const scene=['planet','galaxy','text'][intro<1?0:pattern??(['planet','galaxy','text'].indexOf(this.sceneName))];
-  this.pending=scene!==this.sceneName?scene:null;  // A quick reverse cancels an obsolete fade target.
-  const step=dt*2/this.options.transition_s;
-  if(this.pending){this.fade=Math.max(0,this.fade-step);if(this.fade===0){this.setScene(this.pending);this.pending=null;}}
-  else this.fade=Math.min(1,this.fade+step);
-  const hand=this.hands.update(frame,dt,intro);this.modelScale=hand.scale;
-  const hit=frame?.gaze_valid?this.pick(frame.xy):null;
-  const control=this.director.update(frame,dt,[innerWidth,innerHeight],!!hit?.hit,intro,this.sceneName);
-  this.motionTime+=dt*(1+hand.spin);this.placeCamera(view,control);
-  for(const item of this.items){const u=item.material.uniforms;u.scatter.value=hand.scatter;u.handScale.value=hand.scale;}
-  this.applyWell(frame,control,dt,intro);return control;
+  if(!this.assembly.external)this.assembly.request(intro<1?0:pattern??Math.max(0,['planet','galaxy','text'].indexOf(this.sceneName)),this.clockMs);
+  const transition=this.assembly.sample(this.clockMs);this.transitionInfo=transition;
+  this.setScene(['planet','galaxy','text'][intro<1?0:transition.pattern]);
+  const enabled=intro>=1&&!transition.busy;
+  this.burst.accept(frame,this.clockMs);if(!enabled)this.burst.cancel();
+  const hand=this.hands.update(frame,dt,enabled?1:0);this.modelScale=enabled?hand.scale:1;
+  const hit=enabled&&frame?.gaze_valid?this.pick(frame.xy):null;
+  const control=this.director.update(frame,dt,[innerWidth,innerHeight],!!hit?.hit,enabled?1:0,this.sceneName);
+  const scatter=enabled?Math.max(hand.scatter,this.burst.value(this.clockMs)):0;this.appliedScatter=scatter;
+  this.motionTime+=dt*(1+(enabled?hand.spin:0));this.placeCamera(view,control);
+  if(this.letterFocus){
+   const well=enabled&&control.eye&&this.sceneName==='text'?this.pick(frame.xy).well:null,point=well?.map(v=>v/this.modelScale);
+   this.letterFocus.step(letterHit(this.letterFocus.letters,point,this.letterFocus.weights,this.options.interaction.text_letter_scale-1),dt);
+  }
+  for(const item of this.items){const u=item.material.uniforms;u.scatter.value=scatter;u.handScale.value=this.modelScale;if(this.letterFocus)u.letterWeights.value=this.letterFocus.weights;}
+  this.applyWell(frame,control,dt,enabled?1:0);return control;
  }
  draw(frame,dt,time,intro,pattern=frame?.pattern){
-  const control=this.updateControls(frame,dt,intro,pattern);
+  const control=this.updateControls(frame,dt,intro,pattern,'oblique',performance.now());
   this.render(this.motionTime,intro,'oblique',control);
  }
  render(time,intro=1,view='oblique',control=null){
   this.placeCamera(view,control);
-  for(const item of this.items){item.material.uniforms.sceneRotation.value=THREE.MathUtils.degToRad(this.pose.rotation);item.material.uniforms.time.value=time;item.material.uniforms.intro.value=intro;item.material.uniforms.sceneFade.value=control?this.fade:1;}
-  this.core.material.uniforms.fade.value=intro*(control?this.fade:1);this.composer.render();
+  if(this.transitionInfo?.busy)intro=Math.min(intro,this.transitionInfo.assembly);
+  this.bloom.strength=this.o.bloom_strength+(this.sceneName==='galaxy'?(control?.zoom??0)*this.o.galaxy_zoom_bloom_gain:0);
+  for(const item of this.items){item.material.uniforms.sceneRotation.value=THREE.MathUtils.degToRad(this.pose.rotation);item.material.uniforms.time.value=time;item.material.uniforms.intro.value=intro;item.material.uniforms.sceneFade.value=1;}
+  this.core.material.uniforms.fade.value=intro;this.composer.render();
  }
  close(){this.dispose();}
 

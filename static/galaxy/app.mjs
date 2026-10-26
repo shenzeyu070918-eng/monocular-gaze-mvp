@@ -1,14 +1,15 @@
 import {Intro,QualityController,usableFrame} from './logic.mjs';
 import {SceneSelection,sceneDirection,cornerDiagnostic} from './scene-controls.mjs';
 import {CornerIndicator} from './corner-indicator.mjs';
+import {burstDiagnostic} from './burst.mjs';
 import {handDiagnostic} from './planet-controls.mjs';
 const $=id=>document.getElementById(id),debug=new URLSearchParams(location.search).has('debug');
 const token=location.hash.slice(1);history.replaceState(null,'',location.pathname+location.search);
-const scene=new SceneSelection();let indicator,cornerStatus=null,debugBase='';
+const scene=new SceneSelection();let indicator,cornerStatus=null,debugBase='',burstStatus=null,lastAck=-Infinity;
 let socket,renderer,options,quality,intro,latest=null,received=0,revision=0,nativeFull=false,ready=false,raf=0,last=null,reportAt=0,intervals=[],renderTimes=[],longFrames=0;
 const send=message=>{if(socket?.readyState===1)socket.send(JSON.stringify(message));};
-function updateDebug(){if(debug)$('debug').textContent=debugBase+'\n'+cornerDiagnostic(latest,cornerStatus,[innerWidth,innerHeight]);}
-function acceptScene(status){if(ready&&status?.viewport===revision&&scene.accept(status)){cornerStatus=status;updateDebug();}}
+function updateDebug(){if(debug)$('debug').textContent=debugBase+'\n'+cornerDiagnostic(latest,cornerStatus,[innerWidth,innerHeight])+'\n'+burstDiagnostic(burstStatus)+'\n'+(renderer?.transitionInfo?.busy?'切换汇聚中（交互锁定）':'交互就绪');}
+function acceptScene(status){if(ready&&status?.viewport===revision&&scene.accept(status)){cornerStatus=status;renderer?.acceptScene(status);updateDebug();}}
 function message(text){$('message').textContent=text;}
 function fail(text,code=1){ready=false;indicator?.draw(null);cancelAnimationFrame(raf);$('gate').hidden=false;message(text);send({type:'error',code});}
 function invalidate(){if(!ready)return;ready=false;latest=null;cornerStatus=null;indicator?.draw(null);$('gate').hidden=false;message('窗口或全屏状态已变化，请在内置屏重新点击进入。');send({type:'invalidate'});}
@@ -33,7 +34,9 @@ function tick(now){
   const renderStart=performance.now();
   try{
   if(quality.frame(now)){renderer.resize();}
-  renderer.draw(frame,dt,now/1000,progress,scene.pattern);renderTimes.push(performance.now()-renderStart);
+  renderer.draw(frame,dt,now/1000,progress,scene.pattern);
+  if(renderer.transitionInfo?.ready&&renderer.transitionInfo.external&&now-lastAck>250){lastAck=now;send({type:'scene_done',scene_revision:renderer.transitionInfo.revision,viewport:revision});}
+  renderTimes.push(performance.now()-renderStart);
   }catch(error){fail('星系绘制失败：'+error.message+'。可切回 Qt 星空。',2);return;}
   indicator.draw(cornerStatus,usable&&progress>=1);
   $('eye').classList.toggle('online',!!frame?.gaze_valid);$('hand').classList.toggle('online',!!(frame?.control&&frame?.hands.length));
@@ -60,15 +63,17 @@ async function connect(){
   try{
    const m=JSON.parse(event.data);
    if(m.type==='config'){
+    if(m.v!==4)throw new Error('版本不匹配，请完全退出并重启悬浮层及Demo页面');
     options=m.options;quality=new QualityController(options,options.visual.planet_particles+options.visual.ring_particles,options.visual.low_particle_count);intro=new Intro(options.intro_s);
     const {GalaxyRenderer}=await import('./renderer.mjs');renderer=new GalaxyRenderer($('universe'),options,quality);indicator=new CornerIndicator(options.interaction);
     $('start').disabled=false;message('窗口就绪后点击进入。目光改变观察角度；凝视行星推近，凝视角落切换图案。');
    }else if(m.type==='host'){nativeFull=m.fullscreen===1;}
    else if(m.type==='ready'){
     cancelAnimationFrame(raf);revision=m.viewport;ready=true;latest=null;last=null;intervals=[];renderTimes=[];longFrames=0;
-    scene.reset();cornerStatus=null;indicator.draw(null);intro.begin(performance.now());$('gate').hidden=true;renderer.reset();renderer.resize();raf=requestAnimationFrame(tick);
-   }else if(m.type==='frame'){latest=m.data;received=performance.now();acceptScene(m.data);updateDebug();}
+    scene.reset();cornerStatus=null;burstStatus=null;lastAck=-Infinity;indicator.draw(null);intro.begin(performance.now());$('gate').hidden=true;renderer.reset();renderer.resize();raf=requestAnimationFrame(tick);
+   }else if(m.type==='frame'){if(!ready||m.data.viewport!==revision)return;latest=m.data;received=performance.now();acceptScene(m.data);if(!burstStatus||m.data.burst_revision>=burstStatus.burst_revision)burstStatus=m.data;renderer.acceptBurst(m.data);updateDebug();}
    else if(m.type==='scene'){acceptScene(m.data);}
+   else if(m.type==='burst'&&ready&&m.data.viewport===revision){burstStatus=m.data;renderer.acceptBurst(m.data);updateDebug();}
    else if(m.type==='geometry_error'){message('视口核对未通过。请移到内置屏、保持100%缩放并进入全屏，再点击进入。');}
   }catch(error){fail('星系渲染不可用：'+error.message+'。可切回 Qt 星空。',2);}
  });
@@ -80,8 +85,10 @@ function stop(){ended=true;send({type:'stop'});cancelAnimationFrame(raf);rendere
 $('start').addEventListener('click',start);$('fallback').addEventListener('click',()=>{send({type:'fallback'});ended=true;window.close();});
 addEventListener('keydown',event=>{
  if(event.key==='Escape'){event.preventDefault();stop();return;}
+ const interactive=ready&&intro.interactive(performance.now())&&!renderer.transitionInfo?.busy;
+ if(event.key.toLowerCase()==='b'&&!event.repeat&&!event.ctrlKey&&!event.altKey&&!event.metaKey&&interactive){event.preventDefault();send({type:'burst',viewport:revision});return;}
  const direction=sceneDirection(event);
- if(direction&&ready&&intro.interactive(performance.now())){event.preventDefault();send({type:'scene_step',direction,viewport:revision});}
+ if(direction&&interactive){event.preventDefault();send({type:'scene_step',direction,viewport:revision});}
 });
 addEventListener('resize',()=>{renderer?.resize();invalidate();});
 function watchDpr(){const query=matchMedia('(resolution: '+devicePixelRatio+'dppx)');query.addEventListener('change',()=>{renderer?.resize();invalidate();watchDpr();},{once:true});}watchDpr();

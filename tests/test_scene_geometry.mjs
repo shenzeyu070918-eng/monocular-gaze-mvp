@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import {planeHit,sceneHit,sceneCamera,scenePose,cameraBasis,textFitDistance} from '../static/galaxy/scene-geometry.mjs';
+import {planeHit,sceneHit,sceneCamera,scenePose,cameraBasis,textFitDistance,diskFrameDistance} from '../static/galaxy/scene-geometry.mjs';
 import {PlanetDirector} from '../static/galaxy/planet-controls.mjs';
-const visual={radius:1.5,galaxy_radius:5.2,camera_distance:7.8,close_distance:3.6,galaxy_distance:10.4,galaxy_close_distance:9.6,text_distance:7.8,text_close_distance:5.8,text_depth:.35,text_flow:.06,text_viewport_fraction:.9,field_of_view:50,camera_yaw_deg:0,camera_pitch_deg:25,camera_roll_deg:-12};
+const visual={radius:1.5,galaxy_radius:5.2,galaxy_view_fill:1.1,galaxy_fly_ratio:.5,camera_distance:7.8,close_distance:3.6,galaxy_distance:10.4,galaxy_close_distance:9.6,text_distance:7.8,text_close_distance:5.8,text_depth:.35,text_flow:.06,text_viewport_fraction:.9,field_of_view:50,camera_yaw_deg:0,camera_pitch_deg:25,camera_roll_deg:-12};
 assert.equal(sceneHit('planet',[0,0,8],[0,0,-1],visual).hit,true);
 assert.equal(sceneHit('planet',[3,0,8],[0,0,-1],visual).hit,false);
 assert.equal(sceneHit('planet',[2,0,8],[0,0,-1],visual,2).hit,true);
@@ -38,7 +38,7 @@ assert.equal(sceneHit('galaxy',[1,5,0],[0,-1,0],visual,1,null,i).hit,true);
 assert.equal(sceneHit('galaxy',[2,5,0],[0,-1,0],visual,1,null,i).hit,false);
 assert.equal(sceneHit('galaxy',[2,5,0],[0,-1,0],visual,2,null,i).hit,true);
 const pose=scenePose('galaxy',visual,i,1.59,{yaw:18,pitch:-8,zoom:1});
-assert.equal(pose.pitch,20);assert.equal(pose.yaw,0);assert.equal(pose.rotation,18);assert.equal(pose.distance,9.6);
+assert.equal(pose.pitch,20);assert.equal(pose.yaw,0);assert.equal(pose.rotation,18);assert.ok(Math.abs(pose.distance-pose.far*.5)<1e-12);
 assert.equal(scenePose('planet',visual,i,1.59,{yaw:35,pitch:-35,zoom:1}).pitch,-10); // Planet unchanged.
 // Project all eight glyph corners, with deep and tall glyphs / narrow viewports /
 // Retina-independent logical aspect / hand scaling. Even full zoom must fit 90%.
@@ -69,3 +69,12 @@ for(const aspect of [.5,1,1.59,2.5]){
 }
 assert.equal(scenePose('planet',visual,i,1.59,null,1,null,'face').pitch,visual.camera_pitch_deg);
 console.log('galaxy-only face-on framing keeps its disk inside the logical viewport');
+
+for(const aspect of [.7,1,1512/950,2.5])for(const pitch of [20,25,33]){
+ const distance=diskFrameDistance(5.2,50,aspect,pitch,0,-12,1.1),a=cameraBasis(0,pitch),roll=-12*Math.PI/180;
+ let max=0;for(let n=0;n<1000;n++){const angle=n/1000*Math.PI*2,p=[5.2*Math.cos(angle),0,5.2*Math.sin(angle)],dot=v=>v.reduce((s,t,j)=>s+t*p[j],0),depth=distance-dot(a.normal);
+  const x=dot(a.right)*Math.cos(roll)+dot(a.up)*Math.sin(roll),y=dot(a.up)*Math.cos(roll)-dot(a.right)*Math.sin(roll);
+  max=Math.max(max,Math.abs(x/depth/Math.tan(25*Math.PI/180)/aspect),Math.abs(y/depth/Math.tan(25*Math.PI/180)));}
+ assert.ok(max<=1.100001&&max>1.0999);
+}
+console.log('galaxy auto-framing reaches configurable 110% extent and fly-in ratio');

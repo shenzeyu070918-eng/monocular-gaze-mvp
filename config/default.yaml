@@ -369,13 +369,33 @@ galaxy:
     bloom_radius: 0.25
     background_stars: 600
     nebula_intensity: 0.012
-    galaxy_intensity: 1.6
-    galaxy_core_intensity: 0.32
+    galaxy_intensity: 2.2
+    galaxy_core_intensity: 0.85
     galaxy_distance: 10.4
     galaxy_close_distance: 9.6
     galaxy_radius: 5.2
-    galaxy_arm_width: 0.4
-    galaxy_spin: 0.1
+    galaxy_arm_width: 0.55
+    galaxy_spin: 0.1             # Rigid pattern speed; never radius-dependent.
+    galaxy_pitch_deg: 15         # Logarithmic spiral pitch, typically 12–18 degrees.
+    galaxy_disk_scale: 0.34      # Exponential surface-density scale / radius.
+    galaxy_diffuse_fraction: 0.30 # Of disk stars, excluding bulge and knots.
+    galaxy_diffuse_brightness: 1.6
+    galaxy_bulge_fraction: 0.22
+    galaxy_bulge_radius: 0.32
+    galaxy_bulge_flattening: 0.55
+    galaxy_branch_fraction: 0.12 # Of arm stars, in short forks/spurs.
+    galaxy_outer_brightness: 0.28
+    galaxy_fragmentation: 0.6
+    galaxy_dust_depth: 0.7       # Density + emissivity approximation, no absorption pass.
+    galaxy_knot_fraction: 0.009
+    galaxy_knot_clusters: 18
+    galaxy_knot_size: 0.013
+    galaxy_drift_fraction: 0.006 # Bounded, periodic, along the log spiral.
+    galaxy_drift_speed: 0.35
+    galaxy_stability_tolerance_deg: 2 # GPU long-run regression threshold.
+    galaxy_face_fill: 0.9
+    galaxy_arm_colors: ['#649ac4', '#b3e0ed', '#a89ad0']
+    galaxy_knot_colors: ['#ed78b8', '#ffc0df', '#d858a5']
     text_distance: 7.8
     text_close_distance: 5.8
     text_viewport_fraction: 0.9   # Fit both axes, including perspective/depth/hand scale.

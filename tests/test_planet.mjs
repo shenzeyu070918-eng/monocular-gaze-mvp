@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const galaxyOptions=JSON.parse(readFileSync(new URL('./fixtures/galaxy-visual.json',import.meta.url)));
 import {planetField,ringField,galaxyField,textField,ringRadius,keplerSpeed,maskDistance,ringGap,ringLight,grain,particleBudget} from '../static/galaxy/particle-fields.mjs';
 const o={seed:918,radius:1.5,ring_inner_ratio:1.4,ring_outer_ratio:8,ring_density_power:1.5,ring_thickness:.035,galaxy_radius:5.2,galaxy_arm_width:.4,text_width:7.2,text_depth:.35,text_flow:.06};
 const sphere=planetField(16000,o);let inner=0,volumeMean=0;
@@ -20,7 +22,7 @@ assert.ok(near>0&&far>0);
 assert.ok(near/((inside*2)**2-inside**2)>2*far/(outside**2-(outside/2)**2));assert.equal(ringRadius(0,inside,outside,2),inside);
 assert.ok(Math.abs(ringRadius(1,inside,outside,2)-outside)<1e-10);
 assert.ok(Math.abs(keplerSpeed(inside*4,inside,.34)-.34/8)<1e-12);
-const galaxy=galaxyField(1000,o);assert.ok(galaxy.position.every(Number.isFinite));assert.ok(galaxy.position.some((v,i)=>i%3===1&&Math.abs(v)>.05));
+const galaxy=galaxyField(1000,galaxyOptions);assert.ok(galaxy.position.every(Number.isFinite));assert.ok(galaxy.position.some((v,i)=>i%3===1&&Math.abs(v)>.05));
 const width=20,height=12,mask=new Uint8Array(width*height);
 for(let y=2;y<10;y++)for(let x=2;x<18;x++)mask[y*width+x]=1;
 const distance=maskDistance(mask,width,height);assert.equal(distance[0],0);assert.ok(distance[6*width+10]>3);

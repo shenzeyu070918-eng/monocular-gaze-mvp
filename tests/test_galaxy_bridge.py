@@ -18,9 +18,9 @@ from test_galaxy import geometry
 
 
 def packet(seq=0):
-    return dict(v=2,seq=seq,capture_us=0,completed_us=0,viewport=1,gaze_valid=1,gaze_state=0,
+    return dict(v=3,seq=seq,capture_us=0,completed_us=0,viewport=1,gaze_valid=1,gaze_state=0,
                 fixation=1,xy=[10.,20.],radius=[50.,50.],control=0,hands=[],distance=0.,
-                pattern=0,intro=1,hand_ms=0.,hand_available=0,hand_detected=0,hand_openings=[],hand_error=0)
+                pattern=0,scene_revision=0,corner=-1,corner_dwell_ms=0.,corner_progress=0.,corner_state=0,corner_reset=0,intro=1,hand_ms=0.,hand_available=0,hand_detected=0,hand_openings=[],hand_error=0)
 
 
 class GalaxyBridgeTests(unittest.TestCase):
@@ -71,6 +71,30 @@ class GalaxyBridgeTests(unittest.TestCase):
         other=GalaxyBridge(GalaxySettings(),self.bridge.screen)
         self.assertNotEqual(other.token,self.bridge.token)
 
+    def test_keyboard_scene_step_and_dwell_use_one_owner_and_geometry_resets(self):
+        now=[0];self.bridge.clock=lambda:now[0]
+        ws=self.client();self.receive(ws,'config');ws.send(json.dumps(dict(type='geometry',**geometry())))
+        revision=self.receive(ws,'ready')['viewport']
+        ws.send(json.dumps(dict(type='scene_step',direction=1,viewport=revision)))
+        status=self.receive(ws,'scene')['data'];self.assertEqual(status['pattern'],1)
+        self.assertEqual(status['scene_revision'],1)
+        for ms in range(1200,2701,100):
+            current=self.bridge.scene_feed([-20,20],[50,50],ms*1_000_000,True,viewport_revision=revision)
+        self.assertEqual(current['pattern'],2);self.assertEqual(current['corner_progress'],1)
+        now[0]=3_000_000_000
+        ws.send(json.dumps(dict(type='scene_step',direction=-1,viewport=revision)))
+        self.assertEqual(self.receive(ws,'scene')['data']['pattern'],1)
+        ws.send(json.dumps(dict(type='geometry',**geometry())))
+        new_revision=self.receive(ws,'ready')['viewport']
+        self.assertIsNone(self.bridge.step_scene(1,revision))
+        current=self.bridge.scene_feed([10,10],[50,50],4_000_000_000,True,viewport_revision=new_revision)
+        self.assertEqual(current['pattern'],0);self.assertEqual(current['scene_revision'],0)
+        # Old inference completion cannot mutate the new viewport's state.
+        old=self.bridge.scene_feed([10,10],[50,50],9_000_000_000,True,viewport_revision=revision)
+        self.assertEqual(old['pattern'],0)
+        ws.send(json.dumps(dict(type='scene_step',direction=1,viewport=new_revision,key='ArrowRight')))
+        with self.assertRaises(ConnectionClosed):ws.recv(timeout=2)
+
     def test_notch_geometry_latest_frame_and_numeric_whitelist(self):
         ws=self.client();config=self.receive(ws,'config')
         self.assertNotIn('hand_model',config['options'])
@@ -105,7 +129,7 @@ class GalaxyAssetTests(unittest.TestCase):
         for name,expected in manifest['sha256'].items():
             self.assertEqual(hashlib.sha256((vendor/name).read_bytes()).hexdigest(),expected,name)
         self.assertIn('MIT License',(vendor/'LICENSE').read_text())
-        for name in ('app.mjs','logic.mjs','renderer.mjs','planet-renderer.mjs','planet-controls.mjs','planet-shaders.mjs','particle-fields.mjs','index.html'):
+        for name in ('app.mjs','logic.mjs','renderer.mjs','planet-renderer.mjs','planet-controls.mjs','scene-controls.mjs','corner-indicator.mjs','planet-shaders.mjs','particle-fields.mjs','index.html'):
             source=(root/name).read_text()
             self.assertNotIn('getUserMedia',source);self.assertNotIn('https://',source)
 

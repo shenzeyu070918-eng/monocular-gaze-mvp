@@ -293,7 +293,11 @@ galaxy:
     camera_spring_hz: 0.7
     zoom_dwell_ms: 1500
     zoom_spring_hz: 0.65
-    corner_ratio: 0.14
+    corner_ratio: 0.2
+    corner_leave_grace_ms: 300
+    corner_feedback_px: 44
+    corner_feedback_margin_px: 24
+    corner_feedback_fade_ms: 450
     well_attraction: 0.12
     well_brightness: 0.65
     well_radius_scale: 1.5

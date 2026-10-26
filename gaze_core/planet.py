@@ -102,7 +102,11 @@ class PlanetInteractionSettings:
     camera_spring_hz: float = .7
     zoom_dwell_ms: float = 1500.
     zoom_spring_hz: float = .65
-    corner_ratio: float = .14
+    corner_ratio: float = .2
+    corner_leave_grace_ms: float = 300.
+    corner_feedback_px: float = 44.
+    corner_feedback_margin_px: float = 24.
+    corner_feedback_fade_ms: float = 450.
     well_attraction: float = .12
     well_brightness: float = .65
     well_radius_scale: float = 1.5
@@ -118,7 +122,7 @@ class PlanetInteractionSettings:
     def __post_init__(self):
         for f in fields(self):
             v=finite(getattr(self,f.name),'galaxy.interaction.'+f.name)
-            if v<0 or v==0 and f.name not in {'yaw_range_deg','pitch_range_deg','well_attraction','well_brightness','spin_boost'}:
+            if v<0 or v==0 and f.name not in {'yaw_range_deg','pitch_range_deg','well_attraction','well_brightness','spin_boost','corner_leave_grace_ms','corner_feedback_fade_ms','corner_feedback_margin_px'}:
                 raise ValueError('交互参数必须为正数（可禁用项允许零）')
         if not 0<self.corner_ratio<.5 or max(self.yaw_range_deg,self.pitch_range_deg)>75:
             raise ValueError('角落范围/相机角度无效')

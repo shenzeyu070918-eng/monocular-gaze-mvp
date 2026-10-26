@@ -9,7 +9,8 @@ import socket
 import threading
 import time
 from gaze_core.config import ROOT
-from gaze_core.galaxy_protocol import validate_frame,viewport,telemetry
+from gaze_core.galaxy_scene import PatternCycle
+from gaze_core.galaxy_protocol import validate_frame,viewport,telemetry,scene_request
 
 
 class GalaxyBridge:
@@ -19,6 +20,7 @@ class GalaxyBridge:
         self.mapping=None;self.revision=0;self.started_ns=None;self.last_seen=None
         self._lock=threading.Lock();self._latest=None;self.dropped=0;self._serial=0;self._client=False
         self.server=None;self.thread=None;self.closed=False;self.telemetry=[]
+        self._scene=PatternCycle(options)
         self.native_fullscreen=False
         self.ui_focused=False
 
@@ -38,6 +40,17 @@ class GalaxyBridge:
 
     def context(self):
         with self._lock:return self.mapping,self.revision,self.started_ns
+
+    def scene_feed(self,point,radii,capture_ns,valid,*,viewport_revision):
+        with self._lock:
+            if self.mapping is not None and viewport_revision==self.revision:
+                self._scene.feed(point,radii,capture_ns,valid,viewport_size=self.mapping.window_size)
+            return self._scene.snapshot(capture_ns)
+
+    def step_scene(self,direction,viewport_revision):
+        with self._lock:
+            if self.mapping is None or viewport_revision!=self.revision:return None
+            return dict(self._scene.advance(direction,self.clock()),viewport=self.revision)
 
     def invalidate(self):
         with self._lock:self.mapping=None;self.revision+=1;self.started_ns=None
@@ -112,9 +125,13 @@ class GalaxyBridge:
                                 self.invalidate();self.events.put(('warning',str(exc)))
                                 await ws.send_json(dict(type='geometry_error',code=1));continue
                             with self._lock:
-                                self.mapping=mapping;self.revision+=1;self.started_ns=self.clock()
+                                self.mapping=mapping;self.revision+=1;self.started_ns=self.clock();self._scene=PatternCycle(self.options)
                             self.events.put(('geometry',dict(origin=mapping.window_origin,size=mapping.window_size)))
                             await ws.send_json(dict(type='ready',viewport=self.revision))
+                        elif kind=='scene_step':
+                            direction,view=scene_request(message)
+                            status=self.step_scene(direction,view)
+                            if status is not None:await ws.send_json(dict(type='scene',data=status))
                         elif kind=='invalidate' and not message:self.invalidate()
                         elif kind=='performance':
                             row=telemetry(message);self.telemetry.append(row)

@@ -7,7 +7,7 @@ from .demo_coordinates import DemoCoordinates
 GEOMETRY={'screenX','screenY','innerWidth','innerHeight','outerWidth','outerHeight','dpr',
           'screenWidth','screenHeight','fullscreen','clientX','clientY','eventScreenX','eventScreenY','scale'}
 FRAME={'v','seq','capture_us','completed_us','viewport','gaze_valid','gaze_state','fixation','xy','radius',
-       'control','hands','distance','pattern','intro','hand_ms','hand_available','hand_detected','hand_openings','hand_error'}
+       'control','hands','distance','pattern','intro','hand_ms','hand_available','hand_detected','hand_openings','hand_error','scene_revision','corner','corner_dwell_ms','corner_progress','corner_state','corner_reset'}
 TELEMETRY={'fps','p90_ms','frames','long_frames','particles','pixel_ratio','downgrades','render_median_ms','render_p90_ms'}
 
 
@@ -22,10 +22,14 @@ def numbers(value):
 def validate_frame(frame):
     if not isinstance(frame,dict) or set(frame)!=FRAME:raise ValueError('星系帧字段不完整或含未知数据')
     result={k:numbers(v) for k,v in frame.items()}
-    for key in FRAME-{'xy','radius','hands','distance','hand_ms','hand_openings'}:
+    for key in FRAME-{'xy','radius','hands','distance','hand_ms','hand_openings','corner','corner_progress','corner_dwell_ms'}:
         if type(result[key]) is not int or result[key]<0:raise ValueError('星系状态/时间必须为非负整数')
-    if result['v']!=2 or any(result[k] not in (0,1) for k in ('gaze_valid','control','intro','hand_available')):raise ValueError('星系版本/标记无效')
+    if result['v']!=3 or any(result[k] not in (0,1) for k in ('gaze_valid','control','intro','hand_available')):raise ValueError('星系版本/标记无效')
     if result['pattern']>2 or result['gaze_state']>5 or result['fixation']>2:raise ValueError('星系状态无效')
+    if type(result['corner']) is not int or not -1<=result['corner']<=3:raise ValueError('角落编号无效')
+    if any(isinstance(result[k],list) for k in ('corner_progress','corner_dwell_ms')):raise ValueError('角落停留必须为数值')
+    if result['corner']<0 and result['corner_progress']>0:raise ValueError('无角落时不能有停留进度')
+    if not 0<=result['corner_progress']<=1 or result['corner_dwell_ms']<0 or result['corner_state']>3 or result['corner_reset']>4:raise ValueError('角落停留数值无效')
     if not 0<=result['hand_detected']<=2 or not 0<=result['hand_error']<=2:raise ValueError('手势诊断状态无效')
     if not isinstance(result['hand_openings'],list) or len(result['hand_openings'])!=result['hand_detected'] or any(isinstance(v,list) or not 0<=v<=1 for v in result['hand_openings']):raise ValueError('手势诊断张开度无效')
     if result['completed_us']<result['capture_us']:raise ValueError('采集/完成时钟次序无效')
@@ -57,3 +61,10 @@ def telemetry(fields):
     r={k:finite(v,k) for k,v in fields.items()}
     if any(v<0 for v in r.values()) or not r['particles'].is_integer() or not 1<=r['particles']<=1_000_000 or r['fps']>1000:raise ValueError('性能数值超出范围')
     return r
+
+
+def scene_request(fields):
+    if not isinstance(fields,dict) or set(fields)!={'direction','viewport'}:raise ValueError('场景请求字段无效')
+    if type(fields['direction']) is not int or fields['direction'] not in (-1,1):raise ValueError('场景方向必须为±1')
+    if type(fields['viewport']) is not int or fields['viewport']<0:raise ValueError('场景请求视口无效')
+    return fields['direction'],fields['viewport']

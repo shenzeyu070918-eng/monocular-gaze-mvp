@@ -3,7 +3,7 @@ from pathlib import Path
 import threading
 import time
 from gaze_core.config import ROOT
-from gaze_core.galaxy import HandControls,PatternCycle,hand_features
+from gaze_core.galaxy import HandControls,hand_features
 from gaze_core.capture import timing_summary
 
 
@@ -37,9 +37,9 @@ class GalaxyProcessor:
     def __init__(self,bridge,options,radii,offset,*,model_factory=HandModel,clock_ns=time.perf_counter_ns):
         self.bridge,self.o,self.radii,self.offset=bridge,options,tuple(radii),tuple(offset)
         self.factory=model_factory;self.clock=clock_ns;self.model=None;self.controls=HandControls(options)
-        self.pattern=PatternCycle(options);self.origin=clock_ns();self.stopped=threading.Event()
+        self.origin=clock_ns();self.stopped=threading.Event()
         self.error=None;self.detected_frames=0;self.active_frames=0;self.hand_times=[];self.frames=0;self.first_ns=None;self.last_ns=None
-        self.hand_error_code=0;self._revision=None;self._last_sequence=-1;self._attempted=False
+        self.hand_error_code=0;self._last_sequence=-1;self._attempted=False
 
     def stop(self):self.stopped.set()
 
@@ -67,15 +67,14 @@ class GalaxyProcessor:
         valid=bool(data.get('valid') and position is not None)
         xy=[0.,0.] if not valid else list(mapping.screen_to_window(tuple(p+d for p,d in zip(position,self.offset))))
         intro=int(frame.captured_ns<started+int(self.o.intro_s*1e9))
-        if revision!=self._revision:self.pattern=PatternCycle(self.o);self._revision=revision
-        pattern=self.pattern.feed(xy,self.radii,frame.captured_ns,valid and not intro,viewport_size=mapping.window_size)
+        scene=self.bridge.scene_feed(xy,self.radii,frame.captured_ns,valid and not intro,viewport_revision=revision)
         state={'tracking':0,'blink':1,'no_face':2}.get(data.get('status'),3)
-        packet=dict(v=2,seq=int(frame.sequence),capture_us=max(0,(frame.captured_ns-self.origin)//1000),
+        packet=dict(v=3,seq=int(frame.sequence),capture_us=max(0,(frame.captured_ns-self.origin)//1000),
             completed_us=max(0,(self.clock()-self.origin)//1000),viewport=revision,gaze_valid=int(valid),gaze_state=state,
             fixation={'fixation':1,'saccade':2}.get(display.get('state'),0),xy=xy,radius=list(self.radii),
-            control=hands['control'],hands=hands['hands'],distance=hands['distance'],pattern=pattern,intro=intro,
+            control=hands['control'],hands=hands['hands'],distance=hands['distance'],intro=intro,
             hand_ms=hand_ms,hand_available=int(self.model is not None),hand_detected=len(features[:2]),
-            hand_openings=[float(f[2]) for f in features[:2]],hand_error=self.hand_error_code)
+            hand_openings=[float(f[2]) for f in features[:2]],hand_error=self.hand_error_code,**scene)
         if not self.stopped.is_set():self.bridge.publish(packet)
         self.frames+=1
         if self.first_ns is None:self.first_ns=frame.captured_ns

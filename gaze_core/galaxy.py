@@ -70,32 +70,7 @@ class GalaxySettings:
         if not isinstance(self.hand_model,str) or not self.hand_model.strip():raise ValueError('需要本地手势模型路径')
 
 
-class PatternCycle:
-    """Three-scene corner dwell on distinct capture timestamps, never rAF time."""
-    def __init__(self,options):
-        self.options=options;self.pattern=0;self.anchor=None;self.since=None;self.last=None;self.cool_until=0;self.corner=None
-
-    def reset_window(self):self.anchor=None;self.since=None;self.last=None;self.corner=None
-
-    def feed(self,point,radii,capture_ns,valid=True,*,viewport_size=None):
-        if self.last is not None and capture_ns<=self.last:return self.pattern
-        gap=self.last is not None and capture_ns-self.last>self.options.stale_ms*1e6
-        self.last=capture_ns
-        corner=None
-        if valid and viewport_size is not None:
-            p=np.asarray(point,dtype=float);r=np.asarray(radii,dtype=float);size=np.asarray(viewport_size,dtype=float)
-            if p.shape==r.shape==size.shape==(2,) and np.isfinite([p,r,size]).all() and min(r)>0 and min(size)>0:
-                uv=p/size;q=self.options.interaction.corner_ratio
-                if np.all(uv>=0) and np.all(uv<=1) and np.all((uv<=q)|(uv>=1-q)):
-                    corner=tuple(uv>.5)
-        if corner is None or gap or capture_ns<self.cool_until:
-            self.anchor=None;self.since=None;self.corner=None;return self.pattern
-        if self.anchor is None or self.corner!=corner or np.linalg.norm((p-self.anchor)/r)>1:
-            self.anchor=p.copy();self.since=capture_ns;self.corner=corner
-        elif capture_ns-self.since>=self.options.dwell_ms*1e6:
-            self.pattern=(self.pattern+1)%3;self.anchor=None;self.since=None;self.corner=None
-            self.cool_until=capture_ns+int(self.options.transition_s*1e9)
-        return self.pattern
+from .galaxy_scene import PatternCycle
 
 
 def hand_features(landmarks):

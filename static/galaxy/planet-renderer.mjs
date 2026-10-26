@@ -98,10 +98,10 @@ export class PlanetRenderer{
    ring:ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),0),new THREE.Vector3())};
  }
  reset(){this.director?.reset();this.hands?.reset();this.modelScale=1;this.motionTime=0;this.fade=1;this.pending=null;this.setScene('planet');this.placeCamera();}
- draw(frame,dt,time,intro){
+ draw(frame,dt,time,intro,pattern=frame?.pattern){
   if(!this.director){this.director=new PlanetDirector(this.options);this.hands=new HandDynamics(this.options);}
-  const scene=['planet','galaxy','text'][intro<1?0:frame?.pattern??(['planet','galaxy','text'].indexOf(this.sceneName))];
-  if(scene!==this.sceneName)this.pending=scene;
+  const scene=['planet','galaxy','text'][intro<1?0:pattern??(['planet','galaxy','text'].indexOf(this.sceneName))];
+  this.pending=scene!==this.sceneName?scene:null;  // A quick reverse cancels an obsolete fade target.
   const step=dt*2/this.options.transition_s;
   if(this.pending){this.fade=Math.max(0,this.fade-step);if(this.fade===0){this.setScene(this.pending);this.pending=null;this.director.dwell.reset();}}
   else this.fade=Math.min(1,this.fade+step);

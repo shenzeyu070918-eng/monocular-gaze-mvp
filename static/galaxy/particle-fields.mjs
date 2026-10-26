@@ -52,6 +52,7 @@ export function textField(count,o,mask,width,height){
  for(let y=0;y<height;y++)for(let x=0;x<width;x++)if(mask[y*width+x]){inside.push(y*width+x);left=Math.min(left,x);right=Math.max(right,x);top=Math.min(top,y);bottom=Math.max(bottom,y);}
  if(!inside.length)throw new Error('配置文字没有可绘制笔画');
  const scale=o.text_width/(right-left+1);
+ f.bounds=[-o.text_width/2,o.text_width/2,-(bottom-top+1)*scale/2,(bottom-top+1)*scale/2];
  for(let i=0;i<count;i++){
   const p=inside[Math.floor(rand()*inside.length)],x=p%width,y=Math.floor(p/width);
   f.position.set([(x-(left+right)/2)*scale,((top+bottom)/2-y)*scale,(rand()-.5)*o.text_depth],i*3);

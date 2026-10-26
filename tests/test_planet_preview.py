@@ -26,12 +26,12 @@ class PlanetVisualTests(unittest.TestCase):
         options=load_settings(use_local=False).galaxy
         self.assertEqual(options.interaction,PlanetInteractionSettings())
         self.assertEqual(replace(options,interaction={'corner_ratio':.1}).interaction.corner_ratio,.1)
-        for fields in ({'corner_ratio':.6},{'zoom_dwell_ms':0},{'yaw_range_deg':90},{'min_hand_scale':2},{'well_attraction':float('inf')}):
+        for fields in ({'corner_ratio':.6},{'zoom_dwell_ms':0},{'yaw_range_deg':90},{'min_hand_scale':2},{'well_attraction':float('inf')},{'text_yaw_range_deg':46},{'text_pitch_range_deg':-1},{'galaxy_scatter_distance':float('nan')},{'text_scatter_height':-1}):
             with self.subTest(fields=fields),self.assertRaises(ValueError):replace(PlanetInteractionSettings(),**fields)
 
     def test_bad_visual_geometry_counts_colors_and_nonfinite_values_are_rejected(self):
         for fields in ({'planet_particles':True},{'ring_particles':1.5},{'planet_particles':-1},
-                       {'ring_inner_ratio':.9},{'ring_outer_ratio':1.1},{'close_distance':1.},
+                       {'galaxy_close_distance':11},{'text_close_distance':8},{'text_distance':0},{'ring_inner_ratio':.9},{'ring_outer_ratio':1.1},{'close_distance':1.},
                        {'bloom_strength':float('nan')},{'planet_colors':['red']},{'camera_pitch_deg':90},{'ring_gap_width':10},{'ring_gap_depth':1},{'low_particle_count':1}):
             with self.subTest(fields=fields),self.assertRaises(ValueError):replace(PlanetVisualSettings(),**fields)
 

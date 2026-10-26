@@ -16,16 +16,18 @@ export class CaptureDwell{
  }
 }
 export class PlanetDirector{
- constructor(options){this.o=options;this.camera=new Spring2D();this.zoom=new Spring2D();this.eyeAlpha=0;this.dwell=new CaptureDwell(options.interaction.zoom_dwell_ms,options.stale_ms);}
- reset(){this.camera=new Spring2D();this.zoom=new Spring2D();this.eyeAlpha=0;this.dwell.reset();}
- update(frame,dt,size,insidePlanet,intro=1){
+ constructor(options){this.o=options;this.camera=new Spring2D();this.zoom=new Spring2D();this.eyeAlpha=0;this.scene=null;this.dwell=new CaptureDwell(options.interaction.zoom_dwell_ms,options.stale_ms);}
+ reset(){this.camera=new Spring2D();this.zoom=new Spring2D();this.eyeAlpha=0;this.scene=null;this.dwell.reset();}
+ update(frame,dt,size,inside,intro=1,scene='planet'){
+  if(scene!==this.scene){this.scene=scene;this.dwell.reset();this.zoom=new Spring2D();}
   const o=this.o,i=o.interaction,usable=intro>=1&&frame?.intro===0,eye=usable&&!!frame.gaze_valid;
-  const target=eye?[clamp(frame.xy[0]/size[0]*2-1,-1,1)*i.yaw_range_deg,clamp(1-frame.xy[1]/size[1]*2,-1,1)*i.pitch_range_deg]:[0,0];
+  const yaw=scene==='text'?i.text_yaw_range_deg:i.yaw_range_deg,pitch=scene==='text'?i.text_pitch_range_deg:i.pitch_range_deg;
+  const target=eye?[clamp(frame.xy[0]/size[0]*2-1,-1,1)*yaw,clamp(1-frame.xy[1]/size[1]*2,-1,1)*pitch]:[0,0];
   const angles=this.camera.step(target,dt,i.camera_spring_hz);
-  const zoom=this.dwell.feed(eye?frame:null,insidePlanet);
+  const zoom=this.dwell.feed(eye?frame:null,inside);
   const z=this.zoom.step([Number(zoom),0],dt,i.zoom_spring_hz)[0];
   this.eyeAlpha+=(Number(eye)-this.eyeAlpha)*(1-Math.exp(-dt/i.gaze_fade_s));
-  return {yaw:angles[0],pitch:angles[1],zoom:clamp(z,0,1),eyeAlpha:this.eyeAlpha,eye};
+  return {yaw:clamp(angles[0],-yaw,yaw),pitch:clamp(angles[1],-pitch,pitch),zoom:clamp(z,0,1),eyeAlpha:this.eyeAlpha,eye};
  }
 }
 

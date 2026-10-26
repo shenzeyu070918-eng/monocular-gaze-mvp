@@ -290,6 +290,8 @@ galaxy:
   interaction:
     yaw_range_deg: 35
     pitch_range_deg: 35
+    text_yaw_range_deg: 10
+    text_pitch_range_deg: 8
     camera_spring_hz: 0.7
     zoom_dwell_ms: 1500
     zoom_spring_hz: 0.65
@@ -305,6 +307,10 @@ galaxy:
     hand_response_s: 0.55
     scatter_distance: 4.0
     scatter_height: 1.2
+    galaxy_scatter_distance: 1.2  # In galaxy-radius units.
+    galaxy_scatter_height: 0.35
+    text_scatter_distance: 1.2    # In half-text-width units; height is normal to the text plane.
+    text_scatter_height: 0.7
     spin_boost: 3.0
     hand_speed_scale: 0.6
     min_hand_scale: 0.65
@@ -359,9 +365,12 @@ galaxy:
     galaxy_intensity: 1.6
     galaxy_core_intensity: 0.32
     galaxy_distance: 10.4
+    galaxy_close_distance: 6.8
     galaxy_radius: 5.2
     galaxy_arm_width: 0.4
     galaxy_spin: 0.1
+    text_distance: 7.8
+    text_close_distance: 5.8
     text_intensity: 0.65
     text_width: 7.2
     text_depth: 0.35

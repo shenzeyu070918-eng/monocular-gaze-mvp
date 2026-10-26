@@ -154,7 +154,7 @@ class DemoDrift:
                 exceeds = magnitude > self.settings.max_cm and not isclose(
                     magnitude, self.settings.max_cm, rel_tol=0., abs_tol=1e-12)
                 if exceeds:
-                    result = DriftEstimate('rejected', '漂移修正超过安全上限，请重新九点校准',
+                    result = DriftEstimate('rejected', '漂移修正超过安全上限；按 C 直接开始九点校准，成功后返回练习',
                                            self.offset, candidate, magnitude, count, span_ms, median)
                 else:
                     self.offset = candidate

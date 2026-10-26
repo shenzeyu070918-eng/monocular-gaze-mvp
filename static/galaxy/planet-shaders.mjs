@@ -5,7 +5,7 @@ uniform float time,intro,kind,radius,innerRatio,orbitSpeed,planetSpin,swirlAmpli
 uniform float wanderFraction,wanderDistance,pointSize,pointMin,pointMax,pixelRatio,referenceDistance,absorption,intensity,galaxySpin,coreIntensity,textWidth;
 uniform vec3 warmA,warmB,warmC,coolA,coolB,coolC,well;
 uniform float wellRadius,eyeAlpha,wellAttraction,wellBrightness,sceneFade;
-uniform float scatter,handScale,scatterDistance,scatterHeight,scatterScale;
+uniform float scatter,handScale,scatterDistance,scatterHeight,scatterScale,sceneRotation,textCurl,textStagger;
 uniform float outerRatio,ringLightPower,ringOuterLight,brightFraction,brightSize,brightIntensity,brightHalo,twinkleSpeed,rimStrength,rimPower;
 varying vec3 particleColor;varying float opacity,halo;
 vec3 palette(vec3 a,vec3 b,vec3 c,float t){return t<.5?mix(a,b,t*2.):mix(b,c,(t-.5)*2.);}
@@ -29,7 +29,7 @@ void main(){
   color=palette(coolC,coolB,coolA,pow(radial,.6));
   light*=ringOuterLight+(1.-ringOuterLight)*pow(1.-radial,ringLightPower);
  }else if(kind<2.5){
-  p=turnY(p,time*galaxySpin/pow(max(r,.6),.6));
+  p=turnY(p,time*galaxySpin/pow(max(r,.6),.6)+sceneRotation);
   p.y+=sin(time*.3+phase)*radius*.017;
   float core=exp(-r*r/(radius*radius*.55));
   color=mix(mix(vec3(.07,.2,.65),vec3(.43,.13,.65),aSeed.z),mix(warmA,warmB,aSeed.z*.55),core);
@@ -55,10 +55,17 @@ void main(){
   p.y+=sin(phase*3.)*scatter*scatterHeight*scatterScale;
  }
  if(kind>2.5){
-  // Start from this frame's flowing glyph, not a cached/rest pose.
-  vec3 outward=normalize(p+vec3(.0001));
-  p+=outward*(.3+aSeed.w*.7)*scatter*scatterDistance*scatterScale;
-  p.z+=sin(phase*3.)*scatter*scatterHeight*scatterScale;
+  // Uniform per-seed directions are independent of the particle's location.
+  // A seeded smoothstep phase staggers both expansion and eased return. There
+  // is only ONE position per particle, recomputed from the current flowing glyph.
+  float cloud=smoothstep(aSeed.w*textStagger,aSeed.w*textStagger+1.-textStagger,scatter);
+  float z=aSeed.z*2.-1.,xy=sqrt(max(0.,1.-z*z));
+  vec3 direction=vec3(cos(phase)*xy,sin(phase)*xy,z);
+  // Curl of (sin(y),sin(z),sin(x)): divergence-free and slowly evolving.
+  vec3 curl=-cos(p.zxy+time*.6+aSeed.wxy*6.2831853);
+  vec3 offset=(direction+textCurl*curl)/(1.+textCurl);
+  p.xy+=offset.xy*cloud*scatterDistance*scatterScale;
+  p.z+=offset.z*cloud*scatterHeight*scatterScale;
  }
  float displayScale=handScale;p*=displayScale;
  float assembly=intro*intro*(3.-2.*intro);

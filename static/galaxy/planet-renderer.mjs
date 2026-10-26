@@ -4,7 +4,7 @@ import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
 import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 import {planetField,ringField,galaxyField,textField,randomSource,particleBudget} from './particle-fields.mjs';
-import {sceneHit,sceneCamera} from './scene-geometry.mjs';
+import {sceneHit,scenePose} from './scene-geometry.mjs';
 import {PlanetDirector,HandDynamics} from './planet-controls.mjs';
 import {particleVertex,particleFragment,coreVertex,coreFragment} from './planet-shaders.mjs';
 
@@ -60,8 +60,10 @@ export class PlanetRenderer{
    twinkleSpeed:o.twinkle_speed,rimStrength:o.rim_strength,rimPower:o.rim_power}))uniforms[key]={value};
   Object.assign(uniforms,{well:{value:new THREE.Vector3()},wellRadius:{value:1},eyeAlpha:{value:0},wellAttraction:{value:this.options.interaction?.well_attraction??0},wellBrightness:{value:this.options.interaction?.well_brightness??0},sceneFade:{value:1},scatter:{value:0},handScale:{value:1},scatterDistance:{value:this.options.interaction?.scatter_distance??0},scatterHeight:{value:this.options.interaction?.scatter_height??0},scatterScale:{value:o.radius}});
   const i=this.options.interaction;
+  if(kind===3)uniforms.pointMax.value=o.text_point_size_max;
+  Object.assign(uniforms,{sceneRotation:{value:0},textCurl:{value:i.text_scatter_curl},textStagger:{value:i.text_scatter_stagger}});
   if(kind===2){uniforms.scatterDistance.value=i.galaxy_scatter_distance;uniforms.scatterHeight.value=i.galaxy_scatter_height;uniforms.scatterScale.value=o.galaxy_radius;}
-  if(kind===3){uniforms.scatterDistance.value=i.text_scatter_distance;uniforms.scatterHeight.value=i.text_scatter_height;uniforms.scatterScale.value=o.text_width/2;}
+  if(kind===3){uniforms.scatterDistance.value=i.text_scatter_distance;uniforms.scatterHeight.value=i.text_scatter_height;uniforms.scatterScale.value=o.text_width/2;uniforms.wellBrightness.value=i.text_well_brightness;}
   for(const [prefix,colors] of [['warm',o.planet_colors],['cool',o.ring_colors]])for(let i=0;i<3;i++)uniforms[prefix+'ABC'[i]]={value:new THREE.Color(colors[i])};
   const points=new THREE.Points(g,new THREE.ShaderMaterial({vertexShader:particleVertex,fragmentShader:particleFragment,uniforms,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending}));
   points.frustumCulled=false;this.scene.add(points);this.items.push(points);
@@ -86,21 +88,18 @@ export class PlanetRenderer{
   this.camera.aspect=innerWidth/innerHeight;this.camera.updateProjectionMatrix();
  }
  placeCamera(view='oblique',control=null){
-  const o=this.o,camera=sceneCamera(this.sceneName,o);
-  let pitch=camera.pitch,distance=camera.far,yaw=this.sceneName==='text'?0:o.camera_yaw_deg;
-  if(view==='top')pitch=75;
-  if(view==='close')distance=camera.near;
-  if(control){pitch=Math.max(-80,Math.min(80,pitch+control.pitch));yaw+=control.yaw;distance+=(camera.near-distance)*control.zoom;}
+  const o=this.o,pose=scenePose(this.sceneName,o,this.options.interaction,this.camera.aspect,control,this.modelScale,this.textBounds,view);
+  const {pitch,distance,yaw}=pose;this.pose=pose;
   const p=THREE.MathUtils.degToRad(pitch),y=THREE.MathUtils.degToRad(yaw);
   this.camera.position.set(Math.sin(y)*Math.cos(p)*distance,Math.sin(p)*distance,Math.cos(y)*Math.cos(p)*distance);
-  this.camera.lookAt(0,0,0);this.camera.rotateZ(THREE.MathUtils.degToRad(camera.roll));this.camera.updateMatrixWorld();
+  this.camera.lookAt(0,0,0);this.camera.rotateZ(THREE.MathUtils.degToRad(pose.roll));this.camera.updateMatrixWorld();
  }
  pick(xy){
   // Viewport pixels -> graphics projection only; no screen/global coordinate mapping here.
   this.pointer.set(xy[0]/innerWidth*2-1,1-xy[1]/innerHeight*2);
   this.raycaster.setFromCamera(this.pointer,this.camera);
   this.raycaster.ray.origin.toArray(this.origin);this.raycaster.ray.direction.toArray(this.direction);
-  return sceneHit(this.sceneName,this.origin,this.direction,this.o,this.modelScale,this.textBounds);
+  return sceneHit(this.sceneName,this.origin,this.direction,this.o,this.modelScale,this.textBounds,this.options.interaction);
  }
  resetControls(){this.director?.reset();this.hands?.reset();this.modelScale=1;this.fade=1;this.pending=null;
   for(const item of this.items){const u=item.material.uniforms;u.eyeAlpha.value=0;u.scatter.value=0;u.handScale.value=1;}}
@@ -134,7 +133,7 @@ export class PlanetRenderer{
  }
  render(time,intro=1,view='oblique',control=null){
   this.placeCamera(view,control);
-  for(const item of this.items){item.material.uniforms.time.value=time;item.material.uniforms.intro.value=intro;item.material.uniforms.sceneFade.value=control?this.fade:1;}
+  for(const item of this.items){item.material.uniforms.sceneRotation.value=THREE.MathUtils.degToRad(this.pose.rotation);item.material.uniforms.time.value=time;item.material.uniforms.intro.value=intro;item.material.uniforms.sceneFade.value=control?this.fade:1;}
   this.core.material.uniforms.fade.value=intro*(control?this.fade:1);this.composer.render();
  }
  close(){this.dispose();}

@@ -55,12 +55,14 @@ class PlanetVisualSettings:
     galaxy_intensity: float = 1.6
     galaxy_core_intensity: float = .32
     galaxy_distance: float = 10.4
-    galaxy_close_distance: float = 6.8
+    galaxy_close_distance: float = 9.6
     galaxy_radius: float = 5.2
     galaxy_arm_width: float = .4
     galaxy_spin: float = .1
     text_distance: float = 7.8
     text_close_distance: float = 5.8
+    text_viewport_fraction: float = .9
+    text_point_size_max: float = 2.5
     text_intensity: float = .65
     text_width: float = 7.2
     text_depth: float = .35
@@ -91,6 +93,7 @@ class PlanetVisualSettings:
         if not 0<self.point_size_min<=self.point_size_max or not 0<self.field_of_view<150:raise ValueError('点大小/视角无效')
         if not self.radius<self.close_distance<=self.camera_distance:raise ValueError('镜头必须在球体外')
         if self.galaxy_close_distance>self.galaxy_distance or self.text_close_distance>self.text_distance:raise ValueError('各场景推近距离不能超过默认距离')
+        if not 0<self.text_viewport_fraction<=.9 or not self.point_size_min<=self.text_point_size_max<=self.point_size_max:raise ValueError('文字视口比例/点尺寸上限无效')
         if abs(self.camera_pitch_deg)>85 or abs(self.camera_yaw_deg)>180 or abs(self.camera_roll_deg)>90:raise ValueError('镜头角度超出范围')
         if not 0<=self.wander_fraction<=.2 or self.ring_density_power>3:raise ValueError('游离比例/密度衰减无效')
 
@@ -103,8 +106,12 @@ class PlanetVisualSettings:
 class PlanetInteractionSettings:
     yaw_range_deg: float = 35.
     pitch_range_deg: float = 35.
-    text_yaw_range_deg: float = 10.
-    text_pitch_range_deg: float = 8.
+    galaxy_rotation_range_deg: float = 18.
+    galaxy_pitch_range_deg: float = 8.
+    galaxy_min_pitch_deg: float = 20.
+    galaxy_zoom_core_ratio: float = .35
+    text_yaw_range_deg: float = 4.
+    text_pitch_range_deg: float = 3.
     camera_spring_hz: float = .7
     zoom_dwell_ms: float = 1500.
     zoom_spring_hz: float = .65
@@ -122,8 +129,11 @@ class PlanetInteractionSettings:
     scatter_height: float = 1.2
     galaxy_scatter_distance: float = 1.2
     galaxy_scatter_height: float = .35
-    text_scatter_distance: float = 1.2
-    text_scatter_height: float = .7
+    text_scatter_distance: float = 1.0  # Half a text width.
+    text_scatter_height: float = .08   # Half-width units, normal to the text.
+    text_scatter_curl: float = .18
+    text_scatter_stagger: float = .35  # Fraction of the hand envelope, seeded per particle.
+    text_well_brightness: float = 1.0
     spin_boost: float = 3.
     hand_speed_scale: float = .6
     min_hand_scale: float = .65
@@ -132,10 +142,13 @@ class PlanetInteractionSettings:
     def __post_init__(self):
         for f in fields(self):
             v=finite(getattr(self,f.name),'galaxy.interaction.'+f.name)
-            if v<0 or v==0 and f.name not in {'yaw_range_deg','pitch_range_deg','text_yaw_range_deg','text_pitch_range_deg','well_attraction','well_brightness','spin_boost','corner_leave_grace_ms','corner_feedback_fade_ms','corner_feedback_margin_px'}:
+            if v<0 or v==0 and f.name not in {'yaw_range_deg','pitch_range_deg','text_yaw_range_deg','text_pitch_range_deg','galaxy_rotation_range_deg','galaxy_pitch_range_deg','text_scatter_curl','text_scatter_stagger','text_well_brightness','well_attraction','well_brightness','spin_boost','corner_leave_grace_ms','corner_feedback_fade_ms','corner_feedback_margin_px'}:
                 raise ValueError('交互参数必须为正数（可禁用项允许零）')
         if not 0<self.corner_ratio<.5 or max(self.yaw_range_deg,self.pitch_range_deg)>75:
             raise ValueError('角落范围/相机角度无效')
+        if not 0<self.galaxy_zoom_core_ratio<=1 or not 0<self.galaxy_min_pitch_deg<=80 or max(self.galaxy_rotation_range_deg,self.galaxy_pitch_range_deg)>45:raise ValueError('银河核心/俯仰/旋转范围无效')
+        if not 0<=self.text_scatter_stagger<.8 or not 0<=self.text_scatter_curl<=1:raise ValueError('文字错峰/卷曲范围无效')
+        if self.text_scatter_height>.2:raise ValueError('文字散开深度不能超过半字宽的0.2倍')
         if max(self.text_yaw_range_deg,self.text_pitch_range_deg)>45:raise ValueError('文字视角范围不能超过45度，以保持可读')
         if not 0<self.min_hand_scale<=1<=self.max_hand_scale:
             raise ValueError('手势尺度无效')

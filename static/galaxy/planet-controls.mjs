@@ -21,7 +21,7 @@ export class PlanetDirector{
  update(frame,dt,size,inside,intro=1,scene='planet'){
   if(scene!==this.scene){this.scene=scene;this.dwell.reset();this.zoom=new Spring2D();}
   const o=this.o,i=o.interaction,usable=intro>=1&&frame?.intro===0,eye=usable&&!!frame.gaze_valid;
-  const yaw=scene==='text'?i.text_yaw_range_deg:i.yaw_range_deg,pitch=scene==='text'?i.text_pitch_range_deg:i.pitch_range_deg;
+  const yaw=scene==='text'?i.text_yaw_range_deg:scene==='galaxy'?i.galaxy_rotation_range_deg:i.yaw_range_deg,pitch=scene==='text'?i.text_pitch_range_deg:scene==='galaxy'?i.galaxy_pitch_range_deg:i.pitch_range_deg;
   const target=eye?[clamp(frame.xy[0]/size[0]*2-1,-1,1)*yaw,clamp(1-frame.xy[1]/size[1]*2,-1,1)*pitch]:[0,0];
   const angles=this.camera.step(target,dt,i.camera_spring_hz);
   const zoom=this.dwell.feed(eye?frame:null,inside);

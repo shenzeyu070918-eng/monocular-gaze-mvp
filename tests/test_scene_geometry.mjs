@@ -61,3 +61,11 @@ for(const xy of [[0,0],[1000,0],[0,800],[1000,800],[500,0],[500,800]]){
  assert.ok(Math.abs(tc.yaw)<=4&&Math.abs(tc.pitch)<=3);
 }
 console.log('core-only zoom, disk-normal gaze rotation, >=20deg elevation and perspective-safe text fitting passed');
+for(const aspect of [.5,1,1.59,2.5]){
+ const fv={...visual,galaxy_face_fill:.9},face=scenePose('galaxy',fv,i,aspect,null,1,null,'face');
+ assert.equal(face.pitch,90);assert.equal(face.roll,0);assert.equal(face.yaw,0);
+ const vertical=fv.galaxy_radius/(face.distance*Math.tan(fv.field_of_view*Math.PI/360));
+ assert.ok(vertical<=.9+1e-12&&vertical/aspect<=.9+1e-12);
+}
+assert.equal(scenePose('planet',visual,i,1.59,null,1,null,'face').pitch,visual.camera_pitch_deg);
+console.log('galaxy-only face-on framing keeps its disk inside the logical viewport');

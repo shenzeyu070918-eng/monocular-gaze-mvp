@@ -32,7 +32,7 @@ def interaction_html():
     for scene,label in [('planet','粒子行星'),('galaxy','螺旋星系'),('text','文字')]:
         cells=''.join(f'<figure><img src="/render-check/{scene}-{state}.png"><figcaption>{title}</figcaption></figure>' for state,title in [('base','静止'),('scatter','张手甩散'),('well','视线引力井'),('zoom','凝视推近')])
         rows.append(f'<h2>{label}</h2><div class="row">{cells}</div>')
-    return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>三场景交互检查</title><style>body{background:#090e14;color:#cddbe7;font:15px system-ui;margin:20px}.row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}figure{margin:0}img{width:100%}figcaption{padding:5px}</style><h1>三场景交互 · 合成输入</h1><p>同一时间 t=8秒、固定视角；只有推近改变镜头距离。独立Chrome/SwiftShader，不代表实机帧率。</p>'+''.join(rows)+''.join(f'<h2>{label} · 2秒甩散→收回</h2><img width=756 src="/render-check/{scene}-scatter-return.gif"><p>0–650ms张手，其后握拳，10fps合成采样。</p><h2>四角及上下边缘 · 上排默认距离 / 下排最坏推近</h2><img width="100%" src="/render-check/{scene}-views.png">' for scene,label in [('galaxy','银河'),('text','文字')])+'</html>'
+    return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>三场景交互检查</title><style>body{background:#090e14;color:#cddbe7;font:15px system-ui;margin:20px}.row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}figure{margin:0}img{width:100%}figcaption{padding:5px}</style><h1>三场景交互 · 合成输入</h1><p>同一时间 t=8秒、固定视角；只有推近改变镜头距离。独立Chrome/SwiftShader，不代表实机帧率。</p>'+''.join(rows)+''.join(f'<h2>{label} · 2秒甩散→收回</h2><img width=756 src="/render-check/{scene}-scatter-return.gif"><p>0–650ms张手，其后握拳，10fps合成采样。</p><h2>四角及上下边缘 · 上排默认距离 / 下排最坏推近</h2><img width="100%" src="/render-check/{scene}-views.png">' for scene,label in [('galaxy','银河'),('text','文字')])+'<h2>银河长期稳定性 · 上排正面 / 下排斜视</h2><img src="/render-check/galaxy-times.png"><p>8/60/300/600秒；GPU实际顶点输出的螺距/角分布检查见galaxy-stability.json。</p></html>'
 
 
 def capture(url,output):
@@ -165,8 +165,24 @@ def capture(url,output):
                         (matrix/f'{scene}-view-{edge}-{zoom_name}.png').write_bytes(png)
                         tile=Image.open(io.BytesIO(png)).convert('RGB');tile.thumbnail((378,238));view_sheet.paste(tile,(col*378,row*262+24));labels.text((col*378+7,row*262+5),f'{edge} / {zoom_name}',fill='white');view_checks.append(info)
                 view_sheet.save(matrix/f'{scene}-views.png')
+            # Inspect the ACTUAL production vertex shader with transform feedback.
+            # Also test motionTime accelerated at the existing maximum hand spin.
+            evaluate('window.__galaxyPreview.snapshot("galaxy","base",8)')
+            accelerated=evaluate('fetch("/preview-config").then(r=>r.json()).then(o=>600*(1+o.interaction.spin_boost))')
+            stability=evaluate(f'window.__galaxyPreview.galaxyCheck([8,60,300,600,{accelerated}])')
+            (matrix/'galaxy-stability.json').write_text(json.dumps(stability,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+            if not stability['passed']:raise RuntimeError('银河螺距/旋臂角分布随时间改变，见galaxy-stability.json')
+            time_sheet=Image.new('RGB',(4*504,2*342),'#090e14');labels=ImageDraw.Draw(time_sheet)
+            for row,view in enumerate(('face','oblique')):
+                for col,t in enumerate((8,60,300,600)):
+                    evaluate(f'window.__galaxyPreview.setView({json.dumps(view)});window.__galaxyPreview.freeze({t})')
+                    png=base64.b64decode(command('Page.captureScreenshot',dict(format='png'))['data'])
+                    (matrix/f'galaxy-time-{t}-{view}.png').write_bytes(png)
+                    if t==8:(matrix/f'galaxy-{view}.png').write_bytes(png)
+                    tile=Image.open(io.BytesIO(png)).convert('RGB');tile.thumbnail((504,317));time_sheet.paste(tile,(col*504,row*342+25));labels.text((col*504+8,row*342+6),f'{view} / t={t}s',fill='white')
+            time_sheet.save(matrix/'galaxy-times.png')
             (matrix/'index.html').write_text(interaction_html(),encoding='utf-8')
-            (matrix/'manifest.json').write_text(json.dumps(dict(source='synthetic_swiftshader',hardware_fps_verified=False,checks=checks,sequences=sequences,view_checks=view_checks),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+            (matrix/'manifest.json').write_text(json.dumps(dict(source='synthetic_swiftshader',hardware_fps_verified=False,checks=checks,sequences=sequences,view_checks=view_checks,galaxy_stability=stability),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             # Exercise the same in-page scene/view controls used by reviewers.
             controls=evaluate('''(()=>{document.querySelector('[data-scene="planet"]').click();
                 const view=document.getElementById('preview-view');view.value='top';view.dispatchEvent(new Event('change'));
@@ -196,7 +212,7 @@ def capture(url,output):
                 height=evaluate('document.documentElement.scrollHeight')
                 (output/'render_comparison.png').write_bytes(base64.b64decode(command('Page.captureScreenshot',dict(format='png',captureBeyondViewport=True,clip=dict(x=0,y=0,width=1512,height=height,scale=1)))['data']))
             report=dict(source='isolated_headless_swiftshader',real_camera_used=False,hardware_fps_verified=False,
-                viewport=[1512,950],time_s=8,captures=captures,motion_checks=motion,interaction_checks=checks,sequence_checks=sequences,view_checks=view_checks,preview_controls_ok=controls,preview_simulation_controls_ok=simulations,unexpected_events=events,script_errors=errors)
+                viewport=[1512,950],time_s=8,captures=captures,motion_checks=motion,interaction_checks=checks,sequence_checks=sequences,view_checks=view_checks,galaxy_stability=stability,preview_controls_ok=controls,preview_simulation_controls_ok=simulations,unexpected_events=events,script_errors=errors)
             (output/'render_check.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             if errors or events:raise RuntimeError('渲染检查出现脚本/着色器错误或意外WebSocket，见render_check.json')
             print('画面与对照图：'+str(output),flush=True)

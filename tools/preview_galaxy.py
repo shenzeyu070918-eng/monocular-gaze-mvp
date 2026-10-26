@@ -14,6 +14,8 @@ RENDER_CHECKS={f'{scene}-{state}.png' for scene in ('planet','galaxy','text') fo
 RENDER_CHECKS|={f'{scene}-{name}' for scene in ('galaxy','text') for name in ('scatter-return.gif','scatter-return.png','views.png')}
 RENDER_CHECKS|={f'{scene}-view-{edge}-{zoom}.png' for scene in ('galaxy','text') for edge in ('tl','tr','bl','br','top','bottom') for zoom in ('far','near')}
 
+RENDER_CHECKS|={f'galaxy-time-{t}-{view}.png' for t in (8,60,300,600) for view in ('face','oblique')}|{'galaxy-times.png','galaxy-face.png','galaxy-oblique.png','galaxy-stability.json'}
+
 REFERENCES={'particle_planet_frames.png','particle_planet_closeup.png','render_check.png',
             'render_closeup.png','render_galaxy.png','render_text.png','render_comparison.png','render_comparison.html'}
 

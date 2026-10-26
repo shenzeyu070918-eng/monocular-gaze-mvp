@@ -30,7 +30,7 @@
 
 用 Chrome 打开 **http://127.0.0.1:8768/?preview**。底部按钮可切换「粒子行星 / 螺旋星系 / 文字」、斜视/俯视/近景、暂停、重播约2秒开场及全屏。文字读取 `galaxy.text`。新增模拟按钮：凝视中心（停留推近）、鼠标模拟视线、关闭视线、张手/握拳/无手与恢复静止；局部按键 **O/F/N** 对应张手/握拳/无手，**G** 切换鼠标视线。模拟输入为15 Hz，复用正式的采集时间停留与手势平滑，不打开摄像头。`?preview&debug` 显示浏览器实际rAF帧率与渲染提交耗时；提交耗时不等于GPU完成耗时。预览只绑定本机，不启动WebSocket或摄像头，资源均在本地；终端 Ctrl+C 结束服务。
 
-画面使用GPU顶点着色器直接计算轨道/翻涌：默认8万体积球粒子、15万宽环粒子，暖金/青白配色、距离缩小/变暗、开普勒差速与少量游离。辉光克制，经过HDR色调映射；星系是有厚度的螺旋体，文字填满笔画并在笔画内流动。球体有边缘增亮和小核心；星环内缘白而密、向外渐暗转青蓝，默认两道浅环缝。约1.5%的颗粒更大、更亮并带微光晕与慢闪烁。参数集中在 `galaxy.visual`，真实GPU/投影性能待测。预览与正式入口均启用下文的自动降档，静帧截图保持原粒子数。
+画面使用GPU顶点着色器直接计算轨道/翻涌：默认8万体积球粒子、15万宽环粒子，暖金/青白配色、距离缩小/变暗、开普勒差速与少量游离。辉光克制，经过HDR色调映射；银河为两条对数主旋臂（默认螺距角15°），附少量短支臂；指数星盘中30%的盘面粒子为弥散星盘（不含核球/亮团），宽度与亮度随半径变化、外缘逐渐变淡变碎。更大的扁暖金核球、青白蓝/少量紫色旋臂、零星粉品红亮团及内侧尘埃暗带共同形成层次。尘埃用降低采样密度和发光亮度近似，不做真实吸收。图案整体刚性旋转，只有沿对数旋臂很小且有界的周期漂移；手势加速只加快整体相位，运行多久都不应卷成同心环。文字填满笔画并在笔画内流动。球体有边缘增亮和小核心；星环内缘白而密、向外渐暗转青蓝，默认两道浅环缝。约1.5%的颗粒更大、更亮并带微光晕与慢闪烁。参数集中在 `galaxy.visual`，真实GPU/投影性能待测。预览与正式入口均启用下文的自动降档，静帧截图保持原粒子数。
 
 固定种子/时间的截图可复现（需要Chrome与已有overlay依赖；先保持预览服务运行，在另一个终端执行）：
 
@@ -39,7 +39,7 @@
 # Windows: .\.venv\Scripts\python.exe -m tools.render_planet_check
 ```
 
-输出都在忽略提交的 `data/reference/`：`render_check.png`（斜视）、`render_closeup.png`（近景）、`render_galaxy.png`、`render_text.png`；原参考图存在时另生成 `render_comparison.png` / `.html`，浏览器可打开 **http://127.0.0.1:8768/comparison** 并排查看。该命令用独立无头Chrome/SwiftShader，只截取自身画布及用户提供的参考图，不读取真实桌面或摄像头；`render_check.json`记录渲染错误和逐场景运动检查，不用软件渲染成绩代替Mac实机性能。静态复查可用 `?preview&still&clean&t=8&scene=planet&view=oblique`。新增 `data/reference/render_check/` 的 **12张交互截图**（planet/galaxy/text × base/scatter/well/zoom）、`contact-sheet.png` 和 `manifest.json`；浏览器打开 **http://127.0.0.1:8768/render-check** 查看。每组固定时间和镜头角度，仅推近改变距离；工具核对甩散/引力井/推近确实改变像素、握拳回到同一时刻的动态原形。银河和文字另输出 `*-scatter-return.gif`（两秒、10fps合成采样，非游戏帧率）、`*-scatter-return.png` 拼帧、`*-views.png`，以及四角/上下边缘在默认距离与最坏推近下的24张PNG；同一时刻在不同历史帧后重复绘制应完全一致，检查历史拖影。
+输出都在忽略提交的 `data/reference/`：`render_check.png`（斜视）、`render_closeup.png`（近景）、`render_galaxy.png`、`render_text.png`；原参考图存在时另生成 `render_comparison.png` / `.html`，浏览器可打开 **http://127.0.0.1:8768/comparison** 并排查看。该命令用独立无头Chrome/SwiftShader，只截取自身画布及用户提供的参考图，不读取真实桌面或摄像头；`render_check.json`记录渲染错误和逐场景运动检查，不用软件渲染成绩代替Mac实机性能。静态复查可用 `?preview&still&clean&t=8&scene=planet&view=oblique`。新增 `data/reference/render_check/` 的 **12张交互截图**（planet/galaxy/text × base/scatter/well/zoom）、`contact-sheet.png` 和 `manifest.json`；浏览器打开 **http://127.0.0.1:8768/render-check** 查看。每组固定时间和镜头角度，仅推近改变距离；工具核对甩散/引力井/推近确实改变像素、握拳回到同一时刻的动态原形。银河和文字另输出 `*-scatter-return.gif`（两秒、10fps合成采样，非游戏帧率）、`*-scatter-return.png` 拼帧、`*-views.png`，以及四角/上下边缘在默认距离与最坏推近下的24张PNG；同一时刻在不同历史帧后重复绘制应完全一致，检查历史拖影。银河另有 `galaxy-face.png`（正面）、`galaxy-oblique.png`（默认斜视）、`galaxy-times.png`（8/60/300/600秒两视角拼图）和 `galaxy-stability.json`。工具通过transform feedback读取**正式顶点着色器**输出的主臂粒子，去除统一旋转/有界漂移后比较螺距与分半径角分布；任一变化超过 `galaxy_stability_tolerance_deg`（默认2°）即非零退出。另检验默认最大手势加速对应的motionTime=2400秒；这是设置着色器时间的合成检查，不是连续运行40分钟的实机测量。预览可选「银河正面」，或用 `?preview&still&clean&scene=galaxy&view=face&t=600`。
 
 ### 眼手交互入口
 
@@ -67,6 +67,16 @@ galaxy:
     close_distance: 3.6          # 行星推近距离
     galaxy_distance: 10.4
     galaxy_close_distance: 9.6
+    galaxy_pitch_deg: 15         # 对数旋臂螺距角，典型展示范围12–18°
+    galaxy_arm_width: 0.55
+    galaxy_diffuse_fraction: 0.30 # 盘面比例，不含核球和粉色亮团
+    galaxy_bulge_fraction: 0.22
+    galaxy_bulge_radius: 0.32     # 银河半径的倍数
+    galaxy_bulge_flattening: 0.55
+    galaxy_knot_fraction: 0.009
+    galaxy_dust_depth: 0.7
+    galaxy_drift_fraction: 0.006  # 沿旋臂有界漂移，不累积卷绕
+    galaxy_stability_tolerance_deg: 2
     text_distance: 7.8
     text_close_distance: 5.8      # 还会按视口比例自动拉远，避免裁字
     text_viewport_fraction: 0.9

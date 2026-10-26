@@ -50,6 +50,7 @@ export function scenePose(scene,visual,interaction,aspect,control=null,scale=1,b
   // Maintain a gentle zoom even when a narrow viewport needs a larger distance.
   far=Math.max(far,near*camera.far/camera.near);
  }
+ if(scene==='galaxy'&&view==='face')return {pitch:90,yaw:0,roll:0,distance:visual.galaxy_radius/(Math.tan(visual.field_of_view*Math.PI/360)*Math.min(1,aspect)*visual.galaxy_face_fill),near,far,rotation:c.yaw};
  const start=view==='close'?near:far;
  return {pitch,yaw,roll:camera.roll,distance:start+(near-start)*c.zoom,near,far,rotation:scene==='galaxy'?c.yaw:0};
 }

@@ -73,13 +73,16 @@ class CornerTests(unittest.TestCase):
     def test_cooldown_and_keyboard_steps_share_same_cycle(self):
         c=self.make();status=c.advance(1,0);self.assertEqual(status['pattern'],1)
         self.assertEqual(status['scene_revision'],1);self.assertEqual(status['corner_reset'],COOLDOWN)
-        for t in range(0,1200,100):self.feed(c,t)
+        for t in range(0,4000,100):self.feed(c,t)
         self.assertEqual(c.pattern,1)
-        for t in range(1200,2701,100):self.feed(c,t)
+        self.assertTrue(c.complete(1,4_000_000_000))
+        for t in range(4000,5601,100):self.feed(c,t)
         self.assertEqual(c.pattern,2)
-        self.assertEqual(c.advance(-1,2_800_000_000)['pattern'],1)
-        self.assertEqual(c.advance(1,2_900_000_000)['pattern'],2)
-        self.assertEqual(c.advance(1,3_000_000_000)['pattern'],0)
+        self.assertTrue(c.complete(2,8_000_000_000))
+        self.assertEqual(c.advance(-1,8_100_000_000)['pattern'],1)
+        self.assertEqual(c.advance(1,8_200_000_000)['pattern'],1) # assembling: manual input ignored
+        self.assertTrue(c.complete(3,10_300_000_000))
+        self.assertEqual(c.advance(1,10_400_000_000)['pattern'],2)
         for invalid in (0,2,True):
             with self.assertRaises(ValueError):c.advance(invalid,4_000_000_000)
 

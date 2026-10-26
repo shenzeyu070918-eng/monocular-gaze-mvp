@@ -70,7 +70,8 @@ class GalaxyTests(unittest.TestCase):
         for ms in range(0,1501,100):self.assertEqual(cycle.feed([0,0],[10,10],ms*1_000_000,viewport_size=[1000,800]),int(ms==1500))
         for ms in range(1600,2700,100):self.assertEqual(cycle.feed([0,0],[10,10],ms*1_000_000,viewport_size=[1000,800]),1)
         self.assertEqual(cycle.feed([0,0],[10,10],2_600_000_000,viewport_size=[1000,800]),1)
-        cycle.feed([0,0],[10,10],3_000_000_000,False);cycle.feed([0,0],[10,10],3_301_000_000,False);self.assertEqual(cycle.snapshot()['corner'],-1)
+        cycle.complete(cycle.revision,3_700_000_000)
+        cycle.feed([0,0],[10,10],3_800_000_000,False);cycle.feed([0,0],[10,10],4_101_000_000,False);self.assertEqual(cycle.snapshot()['corner'],-1)
 
     def test_pattern_only_corners_capture_gap_and_three_scenes(self):
         cycle=PatternCycle(GalaxySettings())
@@ -78,15 +79,18 @@ class GalaxyTests(unittest.TestCase):
         self.assertEqual(cycle.pattern,0)
         for ms in range(3100,4601,100):cycle.feed([20,20],[30,30],ms*1_000_000,viewport_size=[1000,800])
         self.assertEqual(cycle.pattern,1)
-        for ms in range(6000,7601,100):cycle.feed([980,20],[30,30],ms*1_000_000,viewport_size=[1000,800])
+        cycle.complete(cycle.revision,6_800_000_000)
+        for ms in range(6900,8501,100):cycle.feed([980,20],[30,30],ms*1_000_000,viewport_size=[1000,800])
         self.assertEqual(cycle.pattern,2)
-        for ms in range(9000,10601,100):cycle.feed([980,780],[30,30],ms*1_000_000,viewport_size=[1000,800])
+        cycle.complete(cycle.revision,10_600_000_000)
+        for ms in range(10700,12301,100):cycle.feed([980,780],[30,30],ms*1_000_000,viewport_size=[1000,800])
         self.assertEqual(cycle.pattern,0)
-        cycle.feed([20,780],[30,30],11_000_000_000,viewport_size=[1000,800])
-        cycle.feed([20,780],[30,30],13_000_000_000,viewport_size=[1000,800])
+        cycle.complete(cycle.revision,14_500_000_000)
+        cycle.feed([20,780],[30,30],14_600_000_000,viewport_size=[1000,800])
+        cycle.feed([20,780],[30,30],16_600_000_000,viewport_size=[1000,800])
         self.assertEqual(cycle.pattern,0)  # A capture gap is not dwell evidence.
-        cycle.feed([-300,780],[30,30],13_100_000_000,viewport_size=[1000,800])
-        cycle.feed([-300,780],[30,30],13_401_000_000,viewport_size=[1000,800])
+        cycle.feed([-300,780],[30,30],16_700_000_000,viewport_size=[1000,800])
+        cycle.feed([-300,780],[30,30],17_001_000_000,viewport_size=[1000,800])
         self.assertEqual(cycle.snapshot()['corner'],-1)
 
     def test_processor_same_frame_no_raw_mutation_intro_and_numeric_whitelist(self):
@@ -99,11 +103,11 @@ class GalaxyTests(unittest.TestCase):
             now[0]+=100_000_000;processor.process(CapturedFrame(i,now[0],image),data)
         packet=bridge.publish.call_args.args[0];validate_frame(packet)
         self.assertEqual(packet['intro'],1);self.assertEqual(packet['pattern'],0)
-        self.assertEqual(packet['v'],3);self.assertEqual(packet['hand_detected'],1);self.assertEqual(packet['hand_openings'],[1.]);self.assertEqual(packet['hand_error'],0)
+        self.assertEqual(packet['v'],4);self.assertEqual(packet['hand_detected'],1);self.assertEqual(packet['hand_openings'],[1.]);self.assertEqual(packet['hand_error'],0)
         self.assertEqual(packet['control'],1);self.assertEqual(data['raw'],[.8,.2])
         self.assertIs(model.detect.call_args.args[0],image)
         self.assertAlmostEqual(packet['xy'][1],.48*981-32)
-        for bad in (dict(image='data:image'),dict(raw=[.1,.2]),dict(xy=[np.inf,0]),dict(hands=[[0,0,'image']]),dict(intro=3),dict(hand_available=2),dict(distance=[]),dict(radius=1),dict(hand_detected=3),dict(hand_openings=[np.nan]),dict(hand_error=3),dict(hand_openings=[.1,.2]),dict(pattern=3),dict(v=2),dict(corner=4),dict(corner_progress=1.1),dict(corner_dwell_ms=-1),dict(corner_progress=[]),dict(scene_revision=-1),dict(corner_reset=5)):
+        for bad in (dict(image='data:image'),dict(raw=[.1,.2]),dict(xy=[np.inf,0]),dict(hands=[[0,0,'image']]),dict(intro=3),dict(hand_available=2),dict(distance=[]),dict(radius=1),dict(hand_detected=3),dict(hand_openings=[np.nan]),dict(hand_error=3),dict(hand_openings=[.1,.2]),dict(pattern=3),dict(v=2),dict(corner=4),dict(corner_progress=1.1),dict(corner_dwell_ms=-1),dict(corner_progress=[]),dict(scene_revision=-1),dict(corner_reset=5),dict(scene_from=3),dict(scene_transition=2),dict(scene_transition_ms=-1),dict(burst_active=2),dict(burst_active=1),dict(scene_transition=1),dict(blink_reason=8),dict(burst_elapsed_ms=[]),dict(blink_closed_ms=float("nan"))):
             with self.assertRaises(ValueError):validate_frame(dict(packet,**bad))
         processor.stop();processor.process(CapturedFrame(9,now[0],image),data);model.close.assert_called_once()
 
@@ -140,6 +144,23 @@ class GalaxyTests(unittest.TestCase):
             for i in range(5):processor.process(CapturedFrame(i,3_000_000_000+i*100_000_000,image),data)
             self.assertEqual(bridge.publish.call_args.args[0]['pattern'],1)
         finally:processor.close()
+
+    def test_processor_real_blink_status_drives_capture_clock_burst(self):
+        options=GalaxySettings();mapping=viewport(ScreenRect(0,0,1512,982,2),geometry())
+        for bad_eye in (False,True):
+            bridge=processor_bridge(options,mapping);model=Mock();model.detect.return_value=[]
+            processor=GalaxyProcessor(bridge,options,[50,50],[0,0],model_factory=lambda _:model,clock_ns=lambda:5_000_000_000)
+            image=np.zeros((3,3,3),np.uint8)
+            for n,ms in enumerate(range(3000,3801,100)):
+                status='blink' if 3100<=ms<=3700 else 'tracking'
+                data=dict(status=status,valid=status=='tracking',display=dict(position=[.5,.5]))
+                if bad_eye and ms==3800:data['eye_openness']=float('nan')
+                processor.process(CapturedFrame(n,ms*1_000_000,image),data)
+            packet=validate_frame(bridge.publish.call_args.args[0])
+            self.assertEqual(packet['blink_count'],0 if bad_eye else 1)
+            self.assertEqual(packet['burst_source'],0 if bad_eye else 1)
+            self.assertNotIn('eye_openness',packet);self.assertNotIn('image',packet)
+            processor.close()
 
     def test_slot_switches_and_closes_only_on_processing_thread(self):
         slot=DemoFrameSlot();a=Mock();b=Mock();slot.set(a);a.process.assert_not_called()

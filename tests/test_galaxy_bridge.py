@@ -18,9 +18,9 @@ from test_galaxy import geometry
 
 
 def packet(seq=0):
-    return dict(v=3,seq=seq,capture_us=0,completed_us=0,viewport=1,gaze_valid=1,gaze_state=0,
+    return dict(v=4,seq=seq,capture_us=0,completed_us=0,viewport=1,gaze_valid=1,gaze_state=0,
                 fixation=1,xy=[10.,20.],radius=[50.,50.],control=0,hands=[],distance=0.,
-                pattern=0,scene_revision=0,corner=-1,corner_dwell_ms=0.,corner_progress=0.,corner_state=0,corner_reset=0,intro=1,hand_ms=0.,hand_available=0,hand_detected=0,hand_openings=[],hand_error=0)
+                pattern=0,scene_revision=0,scene_from=0,scene_transition=0,scene_transition_ms=0.,burst_revision=0,burst_active=0,burst_elapsed_ms=0.,burst_source=0,blink_closed_ms=0.,blink_count=0,blink_reason=0,corner=-1,corner_dwell_ms=0.,corner_progress=0.,corner_state=0,corner_reset=0,intro=1,hand_ms=0.,hand_available=0,hand_detected=0,hand_openings=[],hand_error=0)
 
 
 class GalaxyBridgeTests(unittest.TestCase):
@@ -75,13 +75,19 @@ class GalaxyBridgeTests(unittest.TestCase):
         now=[0];self.bridge.clock=lambda:now[0]
         ws=self.client();self.receive(ws,'config');ws.send(json.dumps(dict(type='geometry',**geometry())))
         revision=self.receive(ws,'ready')['viewport']
+        now[0]=2_000_000_000
         ws.send(json.dumps(dict(type='scene_step',direction=1,viewport=revision)))
         status=self.receive(ws,'scene')['data'];self.assertEqual(status['pattern'],1)
         self.assertEqual(status['scene_revision'],1)
-        for ms in range(1200,2701,100):
+        now[0]=4_200_000_000
+        ws.send(json.dumps(dict(type='scene_done',viewport=revision,scene_revision=1)))
+        self.assertEqual(self.receive(ws,'scene')['data']['scene_transition'],0)
+        for ms in range(4300,5901,100):
             current=self.bridge.scene_feed([-20,20],[50,50],ms*1_000_000,True,viewport_revision=revision)
         self.assertEqual(current['pattern'],2);self.assertEqual(current['corner_progress'],1)
-        now[0]=3_000_000_000
+        now[0]=8_100_000_000
+        ws.send(json.dumps(dict(type='scene_done',viewport=revision,scene_revision=2)))
+        self.receive(ws,'scene')
         ws.send(json.dumps(dict(type='scene_step',direction=-1,viewport=revision)))
         self.assertEqual(self.receive(ws,'scene')['data']['pattern'],1)
         ws.send(json.dumps(dict(type='geometry',**geometry())))
@@ -95,15 +101,34 @@ class GalaxyBridgeTests(unittest.TestCase):
         ws.send(json.dumps(dict(type='scene_step',direction=1,viewport=new_revision,key='ArrowRight')))
         with self.assertRaises(ConnectionClosed):ws.recv(timeout=2)
 
+    def test_local_burst_cooldown_transition_lock_and_whitelist(self):
+        now=[0];self.bridge.clock=lambda:now[0]
+        ws=self.client();self.receive(ws,'config');ws.send(json.dumps(dict(type='geometry',**geometry())))
+        view=self.receive(ws,'ready')['viewport'];now[0]=3_000_000_000
+        ws.send(json.dumps(dict(type='burst',viewport=view)));r=self.receive(ws,'burst')['data']
+        self.assertEqual((r['burst_revision'],r['burst_source'],r['burst_active']),(1,2,1))
+        ws.send(json.dumps(dict(type='burst',viewport=view)));self.assertEqual(self.receive(ws,'burst')['data']['burst_revision'],1)
+        ws.send(json.dumps(dict(type='scene_step',viewport=view,direction=1)));s=self.receive(ws,'scene')['data']
+        ws.send(json.dumps(dict(type='burst',viewport=view)));r=self.receive(ws,'burst')['data']
+        self.assertEqual(r['burst_revision'],1);self.assertEqual(r['burst_active'],0)
+        now[0]=7_000_000_000
+        ws.send(json.dumps(dict(type='scene_done',viewport=view,scene_revision=s['scene_revision'])))
+        self.assertEqual(self.receive(ws,'scene')['data']['scene_transition'],0)
+        ws.send(json.dumps(dict(type='burst',viewport=view)));self.assertEqual(self.receive(ws,'burst')['data']['burst_revision'],2)
+        self.assertIsNone(self.bridge.trigger_burst(view-1))
+        ws.send(json.dumps(dict(type='burst',viewport=view,key='B')))
+        with self.assertRaises(ConnectionClosed):ws.recv(timeout=2)
+
     def test_notch_geometry_latest_frame_and_numeric_whitelist(self):
-        ws=self.client();config=self.receive(ws,'config')
+        ws=self.client();config=self.receive(ws,'config');self.assertEqual(config['v'],4)
         self.assertNotIn('hand_model',config['options'])
         ws.send(json.dumps(dict(type='geometry',**geometry(fullscreen=0))))
         self.receive(ws,'geometry_error');self.assertIsNone(self.bridge.context()[0])
         ws.send(json.dumps(dict(type='geometry',**geometry())))
         ready=self.receive(ws,'ready');self.assertGreater(ready['viewport'],0)
         self.assertEqual(self.bridge.context()[0].window_origin,(0.,32.))
-        for i in range(200):self.bridge.publish(packet(i))
+        self.assertFalse(self.bridge.publish(dict(packet(),viewport=ready['viewport']-1)))
+        for i in range(200):self.bridge.publish(dict(packet(i),viewport=ready['viewport']))
         latest=self.receive(ws,'frame')['data']
         while latest['seq']!=199:latest=self.receive(ws,'frame')['data']
         self.assertGreater(self.bridge.dropped,0)

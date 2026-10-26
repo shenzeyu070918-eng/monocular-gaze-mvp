@@ -52,12 +52,12 @@ class PlanetVisualSettings:
     bloom_radius: float = .25
     background_stars: int = 600
     nebula_intensity: float = .012
-    galaxy_intensity: float = 2.2
+    galaxy_intensity: float = 2.8
     galaxy_core_intensity: float = .85
     galaxy_distance: float = 10.4
     galaxy_close_distance: float = 9.6
     galaxy_radius: float = 5.2
-    galaxy_arm_width: float = .55
+    galaxy_arm_width: float = .7
     galaxy_spin: float = .1
     galaxy_pitch_deg: float = 15.
     galaxy_disk_scale: float = .34       # Exponential scale length / outer radius.
@@ -77,6 +77,9 @@ class PlanetVisualSettings:
     galaxy_drift_speed: float = .35
     galaxy_stability_tolerance_deg: float = 2.
     galaxy_face_fill: float = .9
+    galaxy_view_fill: float = 1.1
+    galaxy_fly_ratio: float = .5
+    galaxy_zoom_bloom_gain: float = .65
     galaxy_arm_colors: tuple = ('#649ac4','#b3e0ed','#a89ad0')
     galaxy_knot_colors: tuple = ('#ed78b8','#ffc0df','#d858a5')
     text_distance: float = 7.8
@@ -93,7 +96,7 @@ class PlanetVisualSettings:
     def __post_init__(self):
         integers={'planet_particles','ring_particles','background_stars','seed','low_particle_count','galaxy_knot_clusters'}
         angles={'camera_pitch_deg','camera_yaw_deg','camera_roll_deg'}
-        zero_ok={'seed','swirl_amplitude','wander_fraction','bloom_strength','nebula_intensity','rim_strength','bright_fraction','bright_halo','ring_gap_depth','galaxy_drift_fraction','galaxy_fragmentation','galaxy_dust_depth','galaxy_knot_fraction','galaxy_branch_fraction'}
+        zero_ok={'seed','swirl_amplitude','wander_fraction','bloom_strength','nebula_intensity','rim_strength','bright_fraction','bright_halo','ring_gap_depth','galaxy_drift_fraction','galaxy_fragmentation','galaxy_dust_depth','galaxy_knot_fraction','galaxy_branch_fraction','galaxy_zoom_bloom_gain'}
         for f in fields(self):
             value=getattr(self,f.name)
             if f.name=='ring_gap_centers':
@@ -113,6 +116,7 @@ class PlanetVisualSettings:
         if not 0<self.point_size_min<=self.point_size_max or not 0<self.field_of_view<150:raise ValueError('点大小/视角无效')
         if not self.radius<self.close_distance<=self.camera_distance:raise ValueError('镜头必须在球体外')
         if self.galaxy_close_distance>self.galaxy_distance or self.text_close_distance>self.text_distance:raise ValueError('各场景推近距离不能超过默认距离')
+        if not 1<=self.galaxy_view_fill<=1.5 or not .2<=self.galaxy_fly_ratio<1:raise ValueError('银河取景/飞入比例无效')
         if not 0<self.text_viewport_fraction<=.9 or not self.point_size_min<=self.text_point_size_max<=self.point_size_max:raise ValueError('文字视口比例/点尺寸上限无效')
         if abs(self.camera_pitch_deg)>85 or abs(self.camera_yaw_deg)>180 or abs(self.camera_roll_deg)>90:raise ValueError('镜头角度超出范围')
         if not 0<=self.wander_fraction<=.2 or self.ring_density_power>3:raise ValueError('游离比例/密度衰减无效')
@@ -134,7 +138,7 @@ class PlanetVisualSettings:
 class PlanetInteractionSettings:
     yaw_range_deg: float = 35.
     pitch_range_deg: float = 35.
-    galaxy_rotation_range_deg: float = 18.
+    galaxy_rotation_range_deg: float = 45.
     galaxy_pitch_range_deg: float = 8.
     galaxy_min_pitch_deg: float = 20.
     galaxy_zoom_core_ratio: float = .35
@@ -151,15 +155,31 @@ class PlanetInteractionSettings:
     well_attraction: float = .12
     well_brightness: float = .65
     well_radius_scale: float = 1.5
+    galaxy_well_attraction: float = 0.
+    text_well_attraction: float = 0.
+    galaxy_well_brightness: float = .9
+    spotlight_size_gain: float = .2
+    spotlight_twinkle: float = .08
+    spotlight_speed: float = 1.2
+    text_letter_scale: float = 1.08
+    text_letter_lift: float = .12
+    text_letter_brightness: float = 1.25
+    text_letter_spring_hz: float = 2.
+    galaxy_scatter_swirl: float = .9
+    blink_hold_ms: float = 600.
+    burst_duration_ms: float = 2500.
+    burst_attack_ms: float = 300.
+    burst_hold_ms: float = 400.
+    burst_cooldown_ms: float = 3500.
     gaze_fade_s: float = .5
     hand_response_s: float = .55
     scatter_distance: float = 4.
     scatter_height: float = 1.2
-    galaxy_scatter_distance: float = 1.2
+    galaxy_scatter_distance: float = 2.4
     galaxy_scatter_height: float = .35
-    text_scatter_distance: float = 1.0  # Half a text width.
+    text_scatter_distance: float = 2.0  # Full text width (two half-width units).
     text_scatter_height: float = .08   # Half-width units, normal to the text.
-    text_scatter_curl: float = .18
+    text_scatter_curl: float = .4
     text_scatter_stagger: float = .35  # Fraction of the hand envelope, seeded per particle.
     text_well_brightness: float = 1.0
     spin_boost: float = 3.
@@ -170,13 +190,16 @@ class PlanetInteractionSettings:
     def __post_init__(self):
         for f in fields(self):
             v=finite(getattr(self,f.name),'galaxy.interaction.'+f.name)
-            if v<0 or v==0 and f.name not in {'yaw_range_deg','pitch_range_deg','text_yaw_range_deg','text_pitch_range_deg','galaxy_rotation_range_deg','galaxy_pitch_range_deg','text_scatter_curl','text_scatter_stagger','text_well_brightness','well_attraction','well_brightness','spin_boost','corner_leave_grace_ms','corner_feedback_fade_ms','corner_feedback_margin_px'}:
+            if v<0 or v==0 and f.name not in {'yaw_range_deg','pitch_range_deg','text_yaw_range_deg','text_pitch_range_deg','galaxy_rotation_range_deg','galaxy_pitch_range_deg','text_scatter_curl','text_scatter_stagger','text_well_brightness','galaxy_well_attraction','text_well_attraction','galaxy_well_brightness','spotlight_twinkle','spotlight_size_gain','text_letter_lift','galaxy_scatter_swirl','well_attraction','well_brightness','spin_boost','corner_leave_grace_ms','corner_feedback_fade_ms','corner_feedback_margin_px'}:
                 raise ValueError('交互参数必须为正数（可禁用项允许零）')
         if not 0<self.corner_ratio<.5 or max(self.yaw_range_deg,self.pitch_range_deg)>75:
             raise ValueError('角落范围/相机角度无效')
-        if not 0<self.galaxy_zoom_core_ratio<=1 or not 0<self.galaxy_min_pitch_deg<=80 or max(self.galaxy_rotation_range_deg,self.galaxy_pitch_range_deg)>45:raise ValueError('银河核心/俯仰/旋转范围无效')
+        if not 0<self.galaxy_zoom_core_ratio<=1 or not 0<self.galaxy_min_pitch_deg<=80 or self.galaxy_rotation_range_deg>180 or self.galaxy_pitch_range_deg>45:raise ValueError('银河核心/俯仰/旋转范围无效')
         if not 0<=self.text_scatter_stagger<.8 or not 0<=self.text_scatter_curl<=1:raise ValueError('文字错峰/卷曲范围无效')
         if self.text_scatter_height>.2:raise ValueError('文字散开深度不能超过半字宽的0.2倍')
         if max(self.text_yaw_range_deg,self.text_pitch_range_deg)>45:raise ValueError('文字视角范围不能超过45度，以保持可读')
+        if not 300<=self.blink_hold_ms<=5000 or self.burst_cooldown_ms<self.burst_duration_ms:raise ValueError('闭眼阈值至少300ms，冷却不能短于包络')
+        if self.burst_attack_ms+self.burst_hold_ms>=self.burst_duration_ms:raise ValueError('打散包络必须留出回收时间')
+        if not 1<=self.text_letter_scale<=1.3 or not 0<=self.text_letter_lift<=.5:raise ValueError('字母放大/浮起范围无效')
         if not 0<self.min_hand_scale<=1<=self.max_hand_scale:
             raise ValueError('手势尺度无效')

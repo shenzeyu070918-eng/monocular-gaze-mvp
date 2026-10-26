@@ -17,7 +17,8 @@ class GalaxySettings:
     low_fps_s: float = 3.
     intro_s: float = 2.
     dwell_ms: float = 1500.
-    transition_s: float = 1.2
+    transition_s: float = 1.6
+    transition_scatter_s: float = .5
     stale_ms: float = 400.
     hand_enter_frames: int = 3
     hand_leave_ms: float = 500.

@@ -10,7 +10,8 @@ import threading
 import time
 from gaze_core.config import ROOT
 from gaze_core.galaxy_scene import PatternCycle
-from gaze_core.galaxy_protocol import validate_frame,viewport,telemetry,scene_request
+from gaze_core.galaxy_burst import ClosedEyeBurst
+from gaze_core.galaxy_protocol import validate_frame,viewport,telemetry,scene_request,viewport_request
 
 
 class GalaxyBridge:
@@ -20,7 +21,7 @@ class GalaxyBridge:
         self.mapping=None;self.revision=0;self.started_ns=None;self.last_seen=None
         self._lock=threading.Lock();self._latest=None;self.dropped=0;self._serial=0;self._client=False
         self.server=None;self.thread=None;self.closed=False;self.telemetry=[]
-        self._scene=PatternCycle(options)
+        self._scene=PatternCycle(options);self._burst=ClosedEyeBurst(options.interaction)
         self.native_fullscreen=False
         self.ui_focused=False
 
@@ -33,7 +34,7 @@ class GalaxyBridge:
     def publish(self,frame):
         frame=validate_frame(frame)
         with self._lock:
-            if self.closed:return False
+            if self.closed or self.mapping is None or frame['viewport']!=self.revision:return False
             if self._latest is not None:self.dropped+=1
             self._serial+=1;self._latest=(self._serial,frame)
         return True
@@ -47,10 +48,35 @@ class GalaxyBridge:
                 self._scene.feed(point,radii,capture_ns,valid,viewport_size=self.mapping.window_size)
             return self._scene.snapshot(capture_ns)
 
+    def interaction_feed(self,point,radii,capture_ns,valid,status,*,viewport_revision,intro=False):
+        with self._lock:
+            if self.mapping is not None and viewport_revision==self.revision:
+                self._scene.feed(point,radii,capture_ns,valid and not intro,viewport_size=self.mapping.window_size)
+                self._burst.feed(capture_ns,status,enabled=not intro and self._scene.transition_start is None,stale_ms=self.options.stale_ms)
+            return dict(self._scene.snapshot(capture_ns),**self._burst.snapshot(capture_ns))
+
+    def _interactive(self,now):
+        return self.mapping is not None and self.started_ns is not None and now>=self.started_ns+int(self.options.intro_s*1e9) and self._scene.transition_start is None
+
     def step_scene(self,direction,viewport_revision):
         with self._lock:
             if self.mapping is None or viewport_revision!=self.revision:return None
-            return dict(self._scene.advance(direction,self.clock()),viewport=self.revision)
+            now=self.clock()
+            if self._interactive(now):
+                self._scene.advance(direction,now);self._burst.feed(now,'tracking',enabled=False)
+            return dict(self._scene.snapshot(now),viewport=self.revision)
+
+    def complete_scene(self,revision,view):
+        with self._lock:
+            if self.mapping is None or view!=self.revision:return None
+            self._scene.complete(revision,self.clock())
+            return dict(self._scene.snapshot(self.clock()),viewport=self.revision)
+
+    def trigger_burst(self,view):
+        with self._lock:
+            if self.mapping is None or view!=self.revision:return None
+            now=self.clock();self._burst.trigger(now,2,enabled=self._interactive(now))
+            return dict(self._burst.snapshot(now),viewport=self.revision)
 
     def invalidate(self):
         with self._lock:self.mapping=None;self.revision+=1;self.started_ns=None
@@ -103,7 +129,7 @@ class GalaxyBridge:
                 if self._client:await ws.close(code=1008);return
                 self._client=True;claimed=True;self.last_seen=self.clock()
                 config=asdict(self.options);config.pop('hand_model')
-                await ws.send_json(dict(type='config',options=config))
+                await ws.send_json(dict(type='config',v=4,options=config))
                 async def send():
                     previous=None
                     while not self.closed:
@@ -125,13 +151,19 @@ class GalaxyBridge:
                                 self.invalidate();self.events.put(('warning',str(exc)))
                                 await ws.send_json(dict(type='geometry_error',code=1));continue
                             with self._lock:
-                                self.mapping=mapping;self.revision+=1;self.started_ns=self.clock();self._scene=PatternCycle(self.options)
+                                self.mapping=mapping;self.revision+=1;self.started_ns=self.clock();self._scene=PatternCycle(self.options);self._burst=ClosedEyeBurst(self.options.interaction)
                             self.events.put(('geometry',dict(origin=mapping.window_origin,size=mapping.window_size)))
                             await ws.send_json(dict(type='ready',viewport=self.revision))
                         elif kind=='scene_step':
                             direction,view=scene_request(message)
                             status=self.step_scene(direction,view)
                             if status is not None:await ws.send_json(dict(type='scene',data=status))
+                        elif kind=='scene_done':
+                            r=viewport_request(message,transition=True);status=self.complete_scene(r['scene_revision'],r['viewport'])
+                            if status is not None:await ws.send_json(dict(type='scene',data=status))
+                        elif kind=='burst':
+                            r=viewport_request(message);status=self.trigger_burst(r['viewport'])
+                            if status is not None:await ws.send_json(dict(type='burst',data=status))
                         elif kind=='invalidate' and not message:self.invalidate()
                         elif kind=='performance':
                             row=telemetry(message);self.telemetry.append(row)

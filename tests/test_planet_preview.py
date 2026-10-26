@@ -33,7 +33,8 @@ class PlanetVisualTests(unittest.TestCase):
         options=load_settings(use_local=False).galaxy
         self.assertEqual(options.interaction,PlanetInteractionSettings())
         self.assertEqual(replace(options,interaction={'corner_ratio':.1}).interaction.corner_ratio,.1)
-        for fields in ({'corner_ratio':.6},{'zoom_dwell_ms':0},{'yaw_range_deg':90},{'min_hand_scale':2},{'well_attraction':float('inf')},{'text_yaw_range_deg':46},{'text_pitch_range_deg':-1},{'galaxy_scatter_distance':float('nan')},{'text_scatter_height':-1},{'text_scatter_height':.3},{'text_scatter_stagger':.8},{'text_scatter_curl':1.1},{'galaxy_zoom_core_ratio':0},{'galaxy_zoom_core_ratio':1.1},{'galaxy_min_pitch_deg':0},{'galaxy_min_pitch_deg':81},{'galaxy_pitch_range_deg':46}):
+        self.assertEqual(replace(options,interaction={'galaxy_rotation_range_deg':60}).interaction.galaxy_rotation_range_deg,60)
+        for fields in ({'corner_ratio':.6},{'zoom_dwell_ms':0},{'yaw_range_deg':90},{'min_hand_scale':2},{'well_attraction':float('inf')},{'text_yaw_range_deg':46},{'text_pitch_range_deg':-1},{'galaxy_scatter_distance':float('nan')},{'text_scatter_height':-1},{'text_scatter_height':.3},{'text_scatter_stagger':.8},{'text_scatter_curl':1.1},{'galaxy_zoom_core_ratio':0},{'galaxy_zoom_core_ratio':1.1},{'galaxy_min_pitch_deg':0},{'galaxy_min_pitch_deg':81},{'galaxy_pitch_range_deg':46},{'galaxy_rotation_range_deg':181},{'text_letter_scale':1.5},{'galaxy_well_attraction':-1}):
             with self.subTest(fields=fields),self.assertRaises(ValueError):replace(PlanetInteractionSettings(),**fields)
 
     def test_bad_visual_geometry_counts_colors_and_nonfinite_values_are_rejected(self):
@@ -57,7 +58,7 @@ class PreviewServerTests(unittest.TestCase):
             self.assertIn(b'/assets/entry.mjs',response.read())
             self.assertEqual(response.headers['Permissions-Policy'],'camera=(), microphone=(), display-capture=()')
         with urllib.request.urlopen(self.origin+'/preview-config',timeout=2) as response:options=json.load(response)
-        self.assertEqual(set(options),{'interaction','stale_ms','transition_s','text','visual','pixel_ratio','intro_s','low_fps','low_fps_s','min_pixel_ratio'})
+        self.assertEqual(set(options),{'interaction','stale_ms','transition_s','transition_scatter_s','text','visual','pixel_ratio','intro_s','low_fps','low_fps_s','min_pixel_ratio'})
         self.assertEqual(options['visual']['planet_particles']+options['visual']['ring_particles'],230000)
         for path in ('/ws','/reference/../config/local.yaml','/assets/../../config/default.yaml','/reference/secrets.json','/render-check/../../config/local.yaml','/render-check/secrets.json'):
             with self.subTest(path=path),self.assertRaises(urllib.error.HTTPError) as caught:urllib.request.urlopen(self.origin+path,timeout=2)

@@ -255,7 +255,8 @@ galaxy:
   low_fps_s: 3.0
   intro_s: 2.0
   dwell_ms: 1500.0
-  transition_s: 1.2
+  transition_s: 1.6             # New geometry assembles from chaos.
+  transition_scatter_s: 0.5    # Old geometry disperses first.
   stale_ms: 400.0
   hand_enter_frames: 3
   hand_leave_ms: 500.0
@@ -290,7 +291,7 @@ galaxy:
   interaction:
     yaw_range_deg: 35
     pitch_range_deg: 35
-    galaxy_rotation_range_deg: 18  # Rotate the disk about its own normal; no gaze camera yaw.
+    galaxy_rotation_range_deg: 45  # Rotate the disk about its own normal; no gaze camera yaw.
     galaxy_pitch_range_deg: 8
     galaxy_min_pitch_deg: 20      # Camera/disk angle, never edge-on.
     galaxy_zoom_core_ratio: 0.35
@@ -307,15 +308,31 @@ galaxy:
     well_attraction: 0.12
     well_brightness: 0.65
     well_radius_scale: 1.5
+    galaxy_well_attraction: 0   # Galaxy/text spotlight changes light, not positions.
+    text_well_attraction: 0
+    galaxy_well_brightness: 0.9
+    spotlight_size_gain: 0.2
+    spotlight_twinkle: 0.08
+    spotlight_speed: 1.2
+    text_letter_scale: 1.08
+    text_letter_lift: 0.12
+    text_letter_brightness: 1.25
+    text_letter_spring_hz: 2
+    galaxy_scatter_swirl: 0.9
+    blink_hold_ms: 600          # Uses existing face-present EAR blink classification.
+    burst_duration_ms: 2500
+    burst_attack_ms: 300
+    burst_hold_ms: 400
+    burst_cooldown_ms: 3500
     gaze_fade_s: 0.5
     hand_response_s: 0.55
     scatter_distance: 4.0
     scatter_height: 1.2
-    galaxy_scatter_distance: 1.2  # In galaxy-radius units.
+    galaxy_scatter_distance: 2.4  # In galaxy-radius units.
     galaxy_scatter_height: 0.35
-    text_scatter_distance: 1.0    # Half-text-width units: 0.5 of the full line width.
+    text_scatter_distance: 2.0    # Half-text-width units: one full line width.
     text_scatter_height: 0.08     # Small z displacement in half-width units.
-    text_scatter_curl: 0.18
+    text_scatter_curl: 0.4
     text_scatter_stagger: 0.35   # Per-seed phase over the eased hand envelope.
     text_well_brightness: 1.0
     spin_boost: 3.0
@@ -369,12 +386,12 @@ galaxy:
     bloom_radius: 0.25
     background_stars: 600
     nebula_intensity: 0.012
-    galaxy_intensity: 2.2
+    galaxy_intensity: 2.8
     galaxy_core_intensity: 0.85
-    galaxy_distance: 10.4
-    galaxy_close_distance: 9.6
+    galaxy_distance: 10.4        # Legacy reference; live framing uses view_fill/fly_ratio.
+    galaxy_close_distance: 9.6   # Legacy reference, not the live fly-in distance.
     galaxy_radius: 5.2
-    galaxy_arm_width: 0.55
+    galaxy_arm_width: 0.7
     galaxy_spin: 0.1             # Rigid pattern speed; never radius-dependent.
     galaxy_pitch_deg: 15         # Logarithmic spiral pitch, typically 12–18 degrees.
     galaxy_disk_scale: 0.34      # Exponential surface-density scale / radius.
@@ -394,6 +411,9 @@ galaxy:
     galaxy_drift_speed: 0.35
     galaxy_stability_tolerance_deg: 2 # GPU long-run regression threshold.
     galaxy_face_fill: 0.9
+    galaxy_view_fill: 1.1       # Tightest projected disk extent reaches 110% of viewport.
+    galaxy_fly_ratio: 0.5       # Fly-in distance / current default distance.
+    galaxy_zoom_bloom_gain: 0.65
     galaxy_arm_colors: ['#649ac4', '#b3e0ed', '#a89ad0']
     galaxy_knot_colors: ['#ed78b8', '#ffc0df', '#d858a5']
     text_distance: 7.8

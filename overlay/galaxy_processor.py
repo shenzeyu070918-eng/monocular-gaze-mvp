@@ -2,6 +2,8 @@
 from pathlib import Path
 import threading
 import time
+import math
+from numbers import Real
 from gaze_core.config import ROOT
 from gaze_core.galaxy import HandControls,hand_features
 from gaze_core.capture import timing_summary
@@ -67,9 +69,11 @@ class GalaxyProcessor:
         valid=bool(data.get('valid') and position is not None)
         xy=[0.,0.] if not valid else list(mapping.screen_to_window(tuple(p+d for p,d in zip(position,self.offset))))
         intro=int(frame.captured_ns<started+int(self.o.intro_s*1e9))
-        scene=self.bridge.scene_feed(xy,self.radii,frame.captured_ns,valid and not intro,viewport_revision=revision)
+        eye_status=data.get('status','tracking')
+        if 'eye_openness' in data and (isinstance(data['eye_openness'],bool) or not isinstance(data['eye_openness'],Real) or not math.isfinite(data['eye_openness'])):eye_status='invalid_eye'
+        scene=self.bridge.interaction_feed(xy,self.radii,frame.captured_ns,valid,eye_status,viewport_revision=revision,intro=bool(intro))
         state={'tracking':0,'blink':1,'no_face':2}.get(data.get('status'),3)
-        packet=dict(v=3,seq=int(frame.sequence),capture_us=max(0,(frame.captured_ns-self.origin)//1000),
+        packet=dict(v=4,seq=int(frame.sequence),capture_us=max(0,(frame.captured_ns-self.origin)//1000),
             completed_us=max(0,(self.clock()-self.origin)//1000),viewport=revision,gaze_valid=int(valid),gaze_state=state,
             fixation={'fixation':1,'saccade':2}.get(display.get('state'),0),xy=xy,radius=list(self.radii),
             control=hands['control'],hands=hands['hands'],distance=hands['distance'],intro=intro,

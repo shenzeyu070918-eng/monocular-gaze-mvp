@@ -4,6 +4,7 @@ import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
 import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 import {planetField,ringField,galaxyField,textField,randomSource,particleBudget} from './particle-fields.mjs';
+import {sceneHit,sceneCamera} from './scene-geometry.mjs';
 import {PlanetDirector,HandDynamics} from './planet-controls.mjs';
 import {particleVertex,particleFragment,coreVertex,coreFragment} from './planet-shaders.mjs';
 
@@ -18,7 +19,7 @@ function textMask(text){
 
 export class PlanetRenderer{
  constructor(canvas,options,quality=null){
-  this.quality=quality;this.modelScale=1;
+  this.quality=quality;this.modelScale=1;this.raycaster=new THREE.Raycaster();this.pointer=new THREE.Vector2();this.depthPoint=new THREE.Vector3();this.origin=[0,0,0];this.direction=[0,0,0];
   this.options=options;this.o=options.visual;this.text=options.text;this.director=null;this.hands=null;this.motionTime=0;this.fade=1;this.pending=null;this.pixelRatio=Math.min(devicePixelRatio,options.pixel_ratio);this.items=[];this.sceneName='';
   const context=canvas.getContext('webgl2',{alpha:false,antialias:false,powerPreference:'high-performance'});
   if(!context)throw new Error('需要WebGL2，请使用支持硬件加速的Chrome');
@@ -57,7 +58,10 @@ export class PlanetRenderer{
   for(const [key,value] of Object.entries({outerRatio:o.ring_outer_ratio,ringLightPower:o.ring_light_power,ringOuterLight:o.ring_outer_light,
    brightFraction:o.bright_fraction,brightSize:o.bright_size,brightIntensity:o.bright_intensity,brightHalo:o.bright_halo,
    twinkleSpeed:o.twinkle_speed,rimStrength:o.rim_strength,rimPower:o.rim_power}))uniforms[key]={value};
-  Object.assign(uniforms,{well:{value:new THREE.Vector3()},wellRadius:{value:1},eyeAlpha:{value:0},wellAttraction:{value:this.options.interaction?.well_attraction??0},wellBrightness:{value:this.options.interaction?.well_brightness??0},sceneFade:{value:1},scatter:{value:0},handScale:{value:1},scatterDistance:{value:this.options.interaction?.scatter_distance??0},scatterHeight:{value:this.options.interaction?.scatter_height??0}});
+  Object.assign(uniforms,{well:{value:new THREE.Vector3()},wellRadius:{value:1},eyeAlpha:{value:0},wellAttraction:{value:this.options.interaction?.well_attraction??0},wellBrightness:{value:this.options.interaction?.well_brightness??0},sceneFade:{value:1},scatter:{value:0},handScale:{value:1},scatterDistance:{value:this.options.interaction?.scatter_distance??0},scatterHeight:{value:this.options.interaction?.scatter_height??0},scatterScale:{value:o.radius}});
+  const i=this.options.interaction;
+  if(kind===2){uniforms.scatterDistance.value=i.galaxy_scatter_distance;uniforms.scatterHeight.value=i.galaxy_scatter_height;uniforms.scatterScale.value=o.galaxy_radius;}
+  if(kind===3){uniforms.scatterDistance.value=i.text_scatter_distance;uniforms.scatterHeight.value=i.text_scatter_height;uniforms.scatterScale.value=o.text_width/2;}
   for(const [prefix,colors] of [['warm',o.planet_colors],['cool',o.ring_colors]])for(let i=0;i<3;i++)uniforms[prefix+'ABC'[i]]={value:new THREE.Color(colors[i])};
   const points=new THREE.Points(g,new THREE.ShaderMaterial({vertexShader:particleVertex,fragmentShader:particleFragment,uniforms,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending}));
   points.frustumCulled=false;this.scene.add(points);this.items.push(points);
@@ -70,7 +74,7 @@ export class PlanetRenderer{
   const budget=particleBudget(count,o);
   if(name==='planet'){this.add(planetField(budget.planet,o),0,o.planet_intensity*budget.intensity);this.add(ringField(budget.ring,o),1,o.ring_intensity*budget.intensity);}
   else if(name==='galaxy')this.add(galaxyField(count,o),2,o.galaxy_intensity*budget.intensity);
-  else{const m=textMask(this.text);this.add(textField(count,o,m.mask,m.width,m.height),3,o.text_intensity*budget.intensity);}
+  else{const m=this.mask??=textMask(this.text),f=textField(count,o,m.mask,m.width,m.height);this.textBounds=f.bounds;this.add(f,3,o.text_intensity*budget.intensity);}
   this.core.visible=name!=='text';
  }
  resize(){
@@ -82,39 +86,50 @@ export class PlanetRenderer{
   this.camera.aspect=innerWidth/innerHeight;this.camera.updateProjectionMatrix();
  }
  placeCamera(view='oblique',control=null){
-  const o=this.o,planet=this.sceneName==='planet',text=this.sceneName==='text';
-  let pitch=text?0:o.camera_pitch_deg,distance=text?o.camera_distance:planet?o.camera_distance:o.galaxy_distance,yaw=o.camera_yaw_deg;
+  const o=this.o,camera=sceneCamera(this.sceneName,o);
+  let pitch=camera.pitch,distance=camera.far,yaw=this.sceneName==='text'?0:o.camera_yaw_deg;
   if(view==='top')pitch=75;
-  if(view==='close')distance=o.close_distance;
-  if(control){pitch=Math.max(-80,Math.min(80,pitch+control.pitch));yaw+=control.yaw;if(planet)distance+=(o.close_distance-distance)*control.zoom;}
+  if(view==='close')distance=camera.near;
+  if(control){pitch=Math.max(-80,Math.min(80,pitch+control.pitch));yaw+=control.yaw;distance+=(camera.near-distance)*control.zoom;}
   const p=THREE.MathUtils.degToRad(pitch),y=THREE.MathUtils.degToRad(yaw);
   this.camera.position.set(Math.sin(y)*Math.cos(p)*distance,Math.sin(p)*distance,Math.cos(y)*Math.cos(p)*distance);
-  this.camera.lookAt(0,0,0);this.camera.rotateZ(THREE.MathUtils.degToRad(text?0:o.camera_roll_deg));this.camera.updateMatrixWorld();
+  this.camera.lookAt(0,0,0);this.camera.rotateZ(THREE.MathUtils.degToRad(camera.roll));this.camera.updateMatrixWorld();
  }
  pick(xy){
   // Viewport pixels -> graphics projection only; no screen/global coordinate mapping here.
-  const ray=new THREE.Raycaster();ray.setFromCamera(new THREE.Vector2(xy[0]/innerWidth*2-1,1-xy[1]/innerHeight*2),this.camera);
-  return {planet:ray.ray.intersectsSphere(new THREE.Sphere(new THREE.Vector3(),this.o.radius*this.modelScale)),
-   ring:ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),0),new THREE.Vector3())};
+  this.pointer.set(xy[0]/innerWidth*2-1,1-xy[1]/innerHeight*2);
+  this.raycaster.setFromCamera(this.pointer,this.camera);
+  this.raycaster.ray.origin.toArray(this.origin);this.raycaster.ray.direction.toArray(this.direction);
+  return sceneHit(this.sceneName,this.origin,this.direction,this.o,this.modelScale,this.textBounds);
  }
- reset(){this.director?.reset();this.hands?.reset();this.modelScale=1;this.motionTime=0;this.fade=1;this.pending=null;this.setScene('planet');this.placeCamera();}
- draw(frame,dt,time,intro,pattern=frame?.pattern){
+ resetControls(){this.director?.reset();this.hands?.reset();this.modelScale=1;this.fade=1;this.pending=null;
+  for(const item of this.items){const u=item.material.uniforms;u.eyeAlpha.value=0;u.scatter.value=0;u.handScale.value=1;}}
+ reset(){this.resetControls();this.motionTime=0;this.setScene('planet');this.placeCamera();}
+ applyWell(frame,control,dt,intro=1){
+  const well=control.eye?this.pick(frame.xy).well:null;
+  // Project error radius at the interaction plane's view depth (not far-camera distance).
+  const depth=well?Math.max(.1,-this.depthPoint.set(...well).applyMatrix4(this.camera.matrixWorldInverse).z):0;
+  for(const item of this.items){const u=item.material.uniforms;
+   u.eyeAlpha.value=intro<1?0:well?control.eyeAlpha:u.eyeAlpha.value*Math.exp(-dt/this.options.interaction.gaze_fade_s);
+   if(well){u.well.value.set(...well).divideScalar(this.modelScale);
+    u.wellRadius.value=Math.max(...frame.radius)*2*Math.tan(THREE.MathUtils.degToRad(this.o.field_of_view/2))*depth/innerHeight*this.options.interaction.well_radius_scale/this.modelScale;}}
+ }
+ updateControls(frame,dt,intro,pattern=frame?.pattern,view='oblique'){
   if(!this.director){this.director=new PlanetDirector(this.options);this.hands=new HandDynamics(this.options);}
   const scene=['planet','galaxy','text'][intro<1?0:pattern??(['planet','galaxy','text'].indexOf(this.sceneName))];
   this.pending=scene!==this.sceneName?scene:null;  // A quick reverse cancels an obsolete fade target.
   const step=dt*2/this.options.transition_s;
-  if(this.pending){this.fade=Math.max(0,this.fade-step);if(this.fade===0){this.setScene(this.pending);this.pending=null;this.director.dwell.reset();}}
+  if(this.pending){this.fade=Math.max(0,this.fade-step);if(this.fade===0){this.setScene(this.pending);this.pending=null;}}
   else this.fade=Math.min(1,this.fade+step);
-  const hand=this.hands.update(frame,dt,intro);
-  this.modelScale=hand.scale;
+  const hand=this.hands.update(frame,dt,intro);this.modelScale=hand.scale;
   const hit=frame?.gaze_valid?this.pick(frame.xy):null;
-  const control=this.director.update(frame,dt,[innerWidth,innerHeight],this.sceneName==='planet'&&!!hit?.planet,intro);
-  this.motionTime+=dt*(1+hand.spin);
-  this.placeCamera('oblique',control);
-  const well=control.eye?this.pick(frame.xy).ring:null;
-  for(const item of this.items){const u=item.material.uniforms;u.scatter.value=hand.scatter;u.handScale.value=hand.scale;u.eyeAlpha.value=intro<1?0:well?control.eyeAlpha:u.eyeAlpha.value*Math.exp(-dt/this.options.interaction.gaze_fade_s);if(well)u.well.value.copy(well).divideScalar(this.modelScale);
-   // Local perspective scale from error radius, using this same camera projection.
-   if(frame&&well)u.wellRadius.value=Math.max(...frame.radius)*2*Math.tan(THREE.MathUtils.degToRad(this.o.field_of_view/2))*this.camera.position.length()/innerHeight*this.options.interaction.well_radius_scale/this.modelScale;}
+  const control=this.director.update(frame,dt,[innerWidth,innerHeight],!!hit?.hit,intro,this.sceneName);
+  this.motionTime+=dt*(1+hand.spin);this.placeCamera(view,control);
+  for(const item of this.items){const u=item.material.uniforms;u.scatter.value=hand.scatter;u.handScale.value=hand.scale;}
+  this.applyWell(frame,control,dt,intro);return control;
+ }
+ draw(frame,dt,time,intro,pattern=frame?.pattern){
+  const control=this.updateControls(frame,dt,intro,pattern);
   this.render(this.motionTime,intro,'oblique',control);
  }
  render(time,intro=1,view='oblique',control=null){

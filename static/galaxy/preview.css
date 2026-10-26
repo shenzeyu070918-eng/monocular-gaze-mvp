@@ -3,3 +3,4 @@
 #preview-controls[hidden]{display:none}.preview-caption{color:#a1b0bb;margin-bottom:9px}.preview-buttons{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 #preview-controls button,#preview-controls select{font:inherit;font-size:14px;border:1px solid #384754;background:#101923;color:#d4dee7;border-radius:7px;padding:7px 12px}
 #preview-controls button.selected{border-color:#e6bd58;color:#ffe0a4;background:#332a16}#preview-stats{display:block;color:#9aaab7;font-size:12px;min-height:18px;margin-top:7px}.diagnostic{font-variant-numeric:tabular-nums}
+.preview-simulation{margin-top:8px}#preview-controls .preview-simulation button{font-size:12px;padding:5px 9px}

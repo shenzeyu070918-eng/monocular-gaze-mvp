@@ -10,6 +10,8 @@ from urllib.parse import unquote,urlsplit
 
 from gaze_core.config import ROOT,DEFAULT_CONFIG,load_settings
 
+RENDER_CHECKS={f'{scene}-{state}.png' for scene in ('planet','galaxy','text') for state in ('base','scatter','well','zoom')}|{'index.html','manifest.json','contact-sheet.png'}
+
 REFERENCES={'particle_planet_frames.png','particle_planet_closeup.png','render_check.png',
             'render_closeup.png','render_galaxy.png','render_text.png','render_comparison.png','render_comparison.html'}
 
@@ -31,13 +33,16 @@ class PreviewHandler(BaseHTTPRequestHandler):
         if self.headers.get('Host')!=f'127.0.0.1:{self.server.server_port}':self.respond(403);return
         path=unquote(urlsplit(self.path).path)
         if path=='/preview-config':
-            data=dict(text=self.options.text,pixel_ratio=self.options.pixel_ratio,intro_s=self.options.intro_s,low_fps=self.options.low_fps,low_fps_s=self.options.low_fps_s,min_pixel_ratio=self.options.min_pixel_ratio,visual=asdict(self.options.visual))
+            data=dict(interaction=asdict(self.options.interaction),stale_ms=self.options.stale_ms,transition_s=self.options.transition_s,text=self.options.text,pixel_ratio=self.options.pixel_ratio,intro_s=self.options.intro_s,low_fps=self.options.low_fps,low_fps_s=self.options.low_fps_s,min_pixel_ratio=self.options.min_pixel_ratio,visual=asdict(self.options.visual))
             self.respond(200,json.dumps(data,ensure_ascii=False,allow_nan=False).encode(),'application/json; charset=utf-8');return
         assets=self.root/'static/galaxy';target=None
         if path=='/':target=assets/'index.html'
         elif path.startswith('/assets/'):
             candidate=(assets/path.removeprefix('/assets/')).resolve()
             if candidate.is_relative_to(assets.resolve()):target=candidate
+        elif path in ('/render-check','/render-check/'):target=self.root/'data/reference/render_check/index.html'
+        elif path.startswith('/render-check/') and path.removeprefix('/render-check/') in RENDER_CHECKS:
+            target=self.root/'data/reference/render_check'/path.removeprefix('/render-check/')
         elif path=='/comparison':target=self.root/'data/reference/render_comparison.html'
         elif path.startswith('/reference/') and path.removeprefix('/reference/') in REFERENCES:
             target=self.root/'data/reference'/path.removeprefix('/reference/')

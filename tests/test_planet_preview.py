@@ -2,6 +2,8 @@
 from dataclasses import replace
 import json
 import threading
+import tempfile
+from pathlib import Path
 import unittest
 import urllib.error
 import urllib.request
@@ -50,13 +52,26 @@ class PreviewServerTests(unittest.TestCase):
             self.assertIn(b'/assets/entry.mjs',response.read())
             self.assertEqual(response.headers['Permissions-Policy'],'camera=(), microphone=(), display-capture=()')
         with urllib.request.urlopen(self.origin+'/preview-config',timeout=2) as response:options=json.load(response)
-        self.assertEqual(set(options),{'text','visual','pixel_ratio','intro_s','low_fps','low_fps_s','min_pixel_ratio'})
+        self.assertEqual(set(options),{'interaction','stale_ms','transition_s','text','visual','pixel_ratio','intro_s','low_fps','low_fps_s','min_pixel_ratio'})
         self.assertEqual(options['visual']['planet_particles']+options['visual']['ring_particles'],230000)
-        for path in ('/ws','/reference/../config/local.yaml','/assets/../../config/default.yaml','/reference/secrets.json'):
+        for path in ('/ws','/reference/../config/local.yaml','/assets/../../config/default.yaml','/reference/secrets.json','/render-check/../../config/local.yaml','/render-check/secrets.json'):
             with self.subTest(path=path),self.assertRaises(urllib.error.HTTPError) as caught:urllib.request.urlopen(self.origin+path,timeout=2)
             self.assertEqual(caught.exception.code,404)
         with urllib.request.urlopen(self.origin+'/assets/planet-renderer.mjs',timeout=2) as response:
             self.assertEqual(response.headers['Content-Type'],'text/javascript')
+
+    def test_only_named_interaction_gallery_files_are_served(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);checks=root/'data/reference/render_check';checks.mkdir(parents=True)
+            self.server.RequestHandlerClass.keywords['root']=root
+            (checks/'index.html').write_text('synthetic preview',encoding='utf-8')
+            (checks/'galaxy-scatter.png').write_bytes(b'fake-png')
+            with urllib.request.urlopen(self.origin+'/render-check') as response:self.assertEqual(response.read(),b'synthetic preview')
+            with urllib.request.urlopen(self.origin+'/render-check/galaxy-scatter.png') as response:
+                self.assertEqual(response.headers['Content-Type'],'image/png');self.assertEqual(response.read(),b'fake-png')
+            (checks/'private.json').write_text('{}')
+            with self.assertRaises(urllib.error.HTTPError) as caught:urllib.request.urlopen(self.origin+'/render-check/private.json')
+            self.assertEqual(caught.exception.code,404)
 
     def test_wrong_host_is_rejected(self):
         request=urllib.request.Request(self.origin,headers={'Host':'untrusted.example'})

@@ -16,11 +16,11 @@ let options;
 function activateSimulation(){simulated=true;snapshotControl=null;paused=false;base=performance.now()-time*1000;redraw();}
 // Deterministic inspection uses the live dynamics without submitting hundreds of GPU frames.
 // All four states use t=8 and the same camera angles; only zoom changes distance.
-function snapshot(next,state,t=8){
- if(!['base','scatter','well','zoom','restore'].includes(state))throw new Error('Unknown preview state');
+function snapshot(next,state,t=8,gazeUV=null){
+ if(!['base','scatter','well','zoom','restore','view'].includes(state))throw new Error('Unknown preview state');
  cancelAnimationFrame(frameId);paused=true;simulated=false;scene=next;view='oblique';time=t;
  renderer.setScene(scene);renderer.resetControls();renderer.placeCamera(view);
- let gaze=null;
+ let gaze=gazeUV?[gazeUV[0]*innerWidth,gazeUV[1]*innerHeight]:null;
  if(state==='zoom')gaze=[innerWidth/2,innerHeight/2];
  if(state==='well'){
   let point=scene==='planet'?[3,0,0]:[2,0,0];
@@ -32,12 +32,33 @@ function snapshot(next,state,t=8){
  let control;const pattern=['planet','galaxy','text'].indexOf(scene);
  for(let n=0;n<=70;n++)control=renderer.updateControls(previewFrame(n*50000,[innerWidth,innerHeight],pattern,gaze,state==='scatter'||state==='restore'?'open':'none'),.05,1,pattern);
  if(state==='restore')for(let n=71;n<=250;n++)control=renderer.updateControls(previewFrame(n*50000,[innerWidth,innerHeight],pattern,null,'fist'),.05,1,pattern);
- snapshotControl={...control,yaw:0,pitch:0,zoom:state==='zoom'?control.zoom:0};
+ snapshotControl={...control,yaw:gazeUV?control.yaw:0,pitch:gazeUV?control.pitch:0,zoom:state==='zoom'?control.zoom:0};
  renderer.placeCamera(view,snapshotControl);
  renderer.applyWell(previewFrame(0,[innerWidth,innerHeight],pattern,gaze),snapshotControl,.05);
  redraw();
- const u=renderer.items.at(-1).material.uniforms;
- return {scene,state,time:t,particles:renderer.count,zoom:snapshotControl.zoom,camera_distance:renderer.camera.position.length(),scatter:u.scatter.value,well_alpha:u.eyeAlpha.value,well_radius:u.wellRadius.value,hit:gaze?renderer.pick(gaze).hit:false};
+ return renderInfo(state,gaze);
+}
+function renderInfo(state,gaze=null){
+ const u=renderer.items.at(-1).material.uniforms,projection=[];
+ if(scene==='text'){
+  const b=renderer.textBounds,depth=renderer.o.text_depth/2+renderer.o.text_flow;
+  for(const x of [b[0],b[1]])for(const y of [b[2],b[3]])for(const z of [-depth,depth]){
+   const p=renderer.depthPoint.set(x,y,z).multiplyScalar(renderer.modelScale).project(renderer.camera);projection.push([p.x,p.y]);}
+ }
+ return {scene,state,time,particles:renderer.count,zoom:snapshotControl?.zoom??0,camera_distance:renderer.camera.position.length(),pose:renderer.pose,
+  scatter:u.scatter.value,well_alpha:u.eyeAlpha.value,well_radius:u.wellRadius.value,point_max:u.pointMax.value,
+  text_projection:projection,hit:gaze?renderer.pick(gaze).hit:false};
+}
+function inspectView(next,uv,zoom=0){
+ snapshot(next,'view',8,uv);snapshotControl.zoom=zoom;redraw();return renderInfo('edge-view');
+}
+function sequenceSample(next,ms){
+ cancelAnimationFrame(frameId);paused=true;simulated=false;scene=next;view='oblique';time=8+ms/1000;
+ renderer.setScene(scene);renderer.resetControls();renderer.placeCamera(view);
+ const pattern=['planet','galaxy','text'].indexOf(scene);
+ snapshotControl=null;
+ for(let t=0;t<=ms;t+=20)snapshotControl=renderer.updateControls(previewFrame(t*1000,[innerWidth,innerHeight],pattern,null,t===0?'none':t<650?'open':'fist'),t===0?0:.02,1,pattern);
+ redraw();return renderInfo('scatter-return-sequence');
 }
 
 function draw(now){
@@ -68,7 +89,7 @@ async function init(){
   const response=await fetch('/preview-config',{cache:'no-store'});
   if(!response.ok)throw new Error('请先运行 python -m tools.preview_galaxy');
   options=await response.json();quality=new QualityController(options,options.visual.planet_particles+options.visual.ring_particles,options.visual.low_particle_count);renderer=new PlanetRenderer($('universe'),options,quality);renderer.setScene(scene);
-  window.__galaxyPreview={ready:true,get scene(){return scene;},get time(){return time;},get view(){return view;},metrics:null,snapshot,get simulation(){return {enabled:simulated,gaze:gazeMode,hand:handMode,capture_us:clock.frame?.capture_us,scatter:renderer.hands?.state.scatter??0,camera_distance:renderer.camera.position.length()};},
+  window.__galaxyPreview={ready:true,get scene(){return scene;},get time(){return time;},get view(){return view;},metrics:null,snapshot,inspectView,sequenceSample,get simulation(){return {enabled:simulated,gaze:gazeMode,hand:handMode,capture_us:clock.frame?.capture_us,scatter:renderer.hands?.state.scatter??0,camera_distance:renderer.camera.position.length()};},
    freeze(t){paused=true;time=t;redraw();},setScene:chooseScene,setView(next){view=next;$('preview-view').value=next;redraw();}};
   $('gate').hidden=true;for(const control of panel.querySelectorAll('button,select'))control.disabled=false;
   base=performance.now();chooseScene(scene);

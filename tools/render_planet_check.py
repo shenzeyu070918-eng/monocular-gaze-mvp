@@ -32,7 +32,7 @@ def interaction_html():
     for scene,label in [('planet','粒子行星'),('galaxy','螺旋星系'),('text','文字')]:
         cells=''.join(f'<figure><img src="/render-check/{scene}-{state}.png"><figcaption>{title}</figcaption></figure>' for state,title in [('base','静止'),('scatter','张手甩散'),('well','视线引力井'),('zoom','凝视推近')])
         rows.append(f'<h2>{label}</h2><div class="row">{cells}</div>')
-    return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>三场景交互检查</title><style>body{background:#090e14;color:#cddbe7;font:15px system-ui;margin:20px}.row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}figure{margin:0}img{width:100%}figcaption{padding:5px}</style><h1>三场景交互 · 合成输入</h1><p>同一时间 t=8秒、固定视角；只有推近改变镜头距离。独立Chrome/SwiftShader，不代表实机帧率。</p>'+''.join(rows)+'</html>'
+    return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>三场景交互检查</title><style>body{background:#090e14;color:#cddbe7;font:15px system-ui;margin:20px}.row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}figure{margin:0}img{width:100%}figcaption{padding:5px}</style><h1>三场景交互 · 合成输入</h1><p>同一时间 t=8秒、固定视角；只有推近改变镜头距离。独立Chrome/SwiftShader，不代表实机帧率。</p>'+''.join(rows)+''.join(f'<h2>{label} · 2秒甩散→收回</h2><img width=756 src="/render-check/{scene}-scatter-return.gif"><p>0–650ms张手，其后握拳，10fps合成采样。</p><h2>四角及上下边缘 · 上排默认距离 / 下排最坏推近</h2><img width="100%" src="/render-check/{scene}-views.png">' for scene,label in [('galaxy','银河'),('text','文字')])+'</html>'
 
 
 def capture(url,output):
@@ -111,7 +111,7 @@ def capture(url,output):
                     info['pixels_changed']=diff.getbbox() is not None
                     if state!='base' and not info['pixels_changed']:raise RuntimeError(scene+'/'+state+'没有改变画面')
                     if state=='scatter' and info['scatter']<.9:raise RuntimeError('张手未传到GPU')
-                    if state=='zoom' and info['camera_distance']>=checks[-3]['camera_distance']*.9:raise RuntimeError('没有实际推近')
+                    if state=='zoom' and (info['camera_distance']>=checks[-3]['camera_distance']-.01 or info['zoom']<.9):raise RuntimeError('没有实际推近')
                     if state=='well' and info['well_alpha']<.9:raise RuntimeError('引力井未传到GPU')
                     info['file']=f'{scene}-{state}.png';(matrix/info['file']).write_bytes(png);checks.append(info)
                 # An opened hand must relax to the CURRENT moving shape at t=9.
@@ -129,8 +129,44 @@ def capture(url,output):
                     tile=Image.open(matrix/f'{scene}-{state}.png');tile.thumbnail((400,251))
                     sheet.paste(tile,(col*400,row*280+24));labels.text((col*400+8,row*280+5),f'{scene} / {state}',fill='white')
             sheet.save(matrix/'contact-sheet.png')
+            sequences=[];view_checks=[]
+            for scene in ('galaxy','text'):
+                frames=[];sequence_info=[]
+                for ms in range(0,2001,100):
+                    info=evaluate(f'window.__galaxyPreview.sequenceSample({json.dumps(scene)},{ms})');info['elapsed_ms']=ms;sequence_info.append(info)
+                    png=base64.b64decode(command('Page.captureScreenshot',dict(format='png'))['data'])
+                    image=Image.open(io.BytesIO(png)).convert('RGB');image.thumbnail((756,475));frames.append(image)
+                # One shared palette prevents palette flicker across the particle animation.
+                atlas=Image.new('RGB',(756,475*len(frames)))
+                for n,frame in enumerate(frames):atlas.paste(frame,(0,n*475))
+                palette=atlas.quantize(colors=256)
+                animation=[im.quantize(palette=palette,dither=Image.Dither.NONE) for im in frames[:-1]]
+                animation[0].save(matrix/f'{scene}-scatter-return.gif',save_all=True,append_images=animation[1:],duration=100,loop=0,disposal=2,optimize=False)
+                strip=Image.new('RGB',(5*504,340),'#090e14');labels=ImageDraw.Draw(strip)
+                for n,index in enumerate((0,5,10,15,20)):
+                    tile=frames[index].copy();tile.thumbnail((504,317));strip.paste(tile,(n*504,23));labels.text((n*504+8,5),f'{index/10:.1f}s',fill='white')
+                strip.save(matrix/f'{scene}-scatter-return.png');sequences.append(dict(scene=scene,duration_ms=2000,open_until_ms=650,frames=sequence_info))
+                # Rendering an identical time after another frame must not retain a trail.
+                evaluate(f'window.__galaxyPreview.sequenceSample({json.dumps(scene)},500)')
+                first=base64.b64decode(command('Page.captureScreenshot',dict(format='png'))['data'])
+                evaluate(f'window.__galaxyPreview.sequenceSample({json.dumps(scene)},1700)')
+                evaluate(f'window.__galaxyPreview.sequenceSample({json.dumps(scene)},500)')
+                repeated=base64.b64decode(command('Page.captureScreenshot',dict(format='png'))['data'])
+                history=ImageChops.difference(Image.open(io.BytesIO(first)).convert('RGB'),Image.open(io.BytesIO(repeated)).convert('RGB'))
+                sequences[-1]['history_independent']=history.getbbox() is None
+                if not sequences[-1]['history_independent']:raise RuntimeError('画面保留了历史帧拖影')
+                view_sheet=Image.new('RGB',(6*378,2*262),'#090e14');labels=ImageDraw.Draw(view_sheet)
+                for col,(edge,uv) in enumerate([('tl',[0,0]),('tr',[1,0]),('bl',[0,1]),('br',[1,1]),('top',[.5,0]),('bottom',[.5,1])]):
+                    for row,(zoom_name,zoom) in enumerate([('far',0),('near',1)]):
+                        info=evaluate(f'window.__galaxyPreview.inspectView({json.dumps(scene)},{json.dumps(uv)},{zoom})');info.update(edge=edge,gaze_uv=uv,forced_zoom=zoom)
+                        if scene=='galaxy' and info['pose']['pitch']<20:raise RuntimeError('银河侧视')
+                        if scene=='text' and any(max(abs(x),abs(y))>.900001 for x,y in info['text_projection']):raise RuntimeError('文字裁字')
+                        png=base64.b64decode(command('Page.captureScreenshot',dict(format='png'))['data'])
+                        (matrix/f'{scene}-view-{edge}-{zoom_name}.png').write_bytes(png)
+                        tile=Image.open(io.BytesIO(png)).convert('RGB');tile.thumbnail((378,238));view_sheet.paste(tile,(col*378,row*262+24));labels.text((col*378+7,row*262+5),f'{edge} / {zoom_name}',fill='white');view_checks.append(info)
+                view_sheet.save(matrix/f'{scene}-views.png')
             (matrix/'index.html').write_text(interaction_html(),encoding='utf-8')
-            (matrix/'manifest.json').write_text(json.dumps(dict(source='synthetic_swiftshader',hardware_fps_verified=False,checks=checks),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+            (matrix/'manifest.json').write_text(json.dumps(dict(source='synthetic_swiftshader',hardware_fps_verified=False,checks=checks,sequences=sequences,view_checks=view_checks),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             # Exercise the same in-page scene/view controls used by reviewers.
             controls=evaluate('''(()=>{document.querySelector('[data-scene="planet"]').click();
                 const view=document.getElementById('preview-view');view.value='top';view.dispatchEvent(new Event('change'));
@@ -160,7 +196,7 @@ def capture(url,output):
                 height=evaluate('document.documentElement.scrollHeight')
                 (output/'render_comparison.png').write_bytes(base64.b64decode(command('Page.captureScreenshot',dict(format='png',captureBeyondViewport=True,clip=dict(x=0,y=0,width=1512,height=height,scale=1)))['data']))
             report=dict(source='isolated_headless_swiftshader',real_camera_used=False,hardware_fps_verified=False,
-                viewport=[1512,950],time_s=8,captures=captures,motion_checks=motion,interaction_checks=checks,preview_controls_ok=controls,preview_simulation_controls_ok=simulations,unexpected_events=events,script_errors=errors)
+                viewport=[1512,950],time_s=8,captures=captures,motion_checks=motion,interaction_checks=checks,sequence_checks=sequences,view_checks=view_checks,preview_controls_ok=controls,preview_simulation_controls_ok=simulations,unexpected_events=events,script_errors=errors)
             (output/'render_check.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             if errors or events:raise RuntimeError('渲染检查出现脚本/着色器错误或意外WebSocket，见render_check.json')
             print('画面与对照图：'+str(output),flush=True)

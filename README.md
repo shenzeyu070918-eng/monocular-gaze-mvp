@@ -39,7 +39,7 @@
 # Windows: .\.venv\Scripts\python.exe -m tools.render_planet_check
 ```
 
-输出都在忽略提交的 `data/reference/`：`render_check.png`（斜视）、`render_closeup.png`（近景）、`render_galaxy.png`、`render_text.png`；原参考图存在时另生成 `render_comparison.png` / `.html`，浏览器可打开 **http://127.0.0.1:8768/comparison** 并排查看。该命令用独立无头Chrome/SwiftShader，只截取自身画布及用户提供的参考图，不读取真实桌面或摄像头；`render_check.json`记录渲染错误和逐场景运动检查，不用软件渲染成绩代替Mac实机性能。静态复查可用 `?preview&still&clean&t=8&scene=planet&view=oblique`。新增 `data/reference/render_check/` 的 **12张交互截图**（planet/galaxy/text × base/scatter/well/zoom）、`contact-sheet.png` 和 `manifest.json`；浏览器打开 **http://127.0.0.1:8768/render-check** 查看。每组固定时间和镜头角度，仅推近改变距离；工具核对甩散/引力井/推近确实改变像素、握拳回到同一时刻的动态原形。
+输出都在忽略提交的 `data/reference/`：`render_check.png`（斜视）、`render_closeup.png`（近景）、`render_galaxy.png`、`render_text.png`；原参考图存在时另生成 `render_comparison.png` / `.html`，浏览器可打开 **http://127.0.0.1:8768/comparison** 并排查看。该命令用独立无头Chrome/SwiftShader，只截取自身画布及用户提供的参考图，不读取真实桌面或摄像头；`render_check.json`记录渲染错误和逐场景运动检查，不用软件渲染成绩代替Mac实机性能。静态复查可用 `?preview&still&clean&t=8&scene=planet&view=oblique`。新增 `data/reference/render_check/` 的 **12张交互截图**（planet/galaxy/text × base/scatter/well/zoom）、`contact-sheet.png` 和 `manifest.json`；浏览器打开 **http://127.0.0.1:8768/render-check** 查看。每组固定时间和镜头角度，仅推近改变距离；工具核对甩散/引力井/推近确实改变像素、握拳回到同一时刻的动态原形。银河和文字另输出 `*-scatter-return.gif`（两秒、10fps合成采样，非游戏帧率）、`*-scatter-return.png` 拼帧、`*-views.png`，以及四角/上下边缘在默认距离与最坏推近下的24张PNG；同一时刻在不同历史帧后重复绘制应完全一致，检查历史拖影。
 
 ### 眼手交互入口
 
@@ -47,8 +47,8 @@
 
 1. 用悬浮层启动脚本打开面板，完成匹配当前条件的Python九点校准（已有匹配粗校准也可进入）。面板「眼控 Demo」或原生 `Ctrl+Alt+D` 默认选择「眼手星系」，Qt星空保留为备用，沟通板保留代码。
 2. 先看Qt练习页中心靶点，完成本次会话的漂移修正；不改档案。随后程序打开独立Chrome窗口，定位内置屏并请求全屏。**点击「进入星系」**确认真实客户区；刘海下面的较小客户区可用，不假设内容覆盖完整内屏。进入后约2秒粒子由四散汇聚成行星，再响应视线与手势。
-3. 行星固定居中：向上看提高观察俯角，左右看改变方位，弹簧平滑运镜；三个场景都支持凝视1.5秒平滑推近、离开拉回：行星命中球体，银河命中银盘平面内的半径范围，文字命中文字平面的实际字形包围盒。三场景各配推近距离；文字另用较小的方位/俯仰范围保持可读。引力井分别取环/银盘平面或文字平面的射线交点，使用相同的弱吸引/增亮参数，作用半径由误差半径按交点深度投影。凝视任一屏幕角落1.5秒，循环「粒子行星 → 螺旋星系 → 配置文字」；角落区域默认视口宽/高各20%，只要求停留在同一个区域内，不限制相对锚点的抖动。轻微屏外估计按“1个误差半径 / 20%视口距离”逐轴取大者形成的椭圆容差夹回，仅用于命中，不改原始坐标。默认300 ms内短暂离开、眨眼或无脸会冻结并保留进度，超时或采集断档才清零；仍按真实采集帧累计，保留切换冷却。对应角落显示青白色细进度弧，完成后淡出。心形与线框地球已移除。
-4. 伸手连续被识别3帧后自动接管；张开手沿径向/切线甩散环或银河粒子并加少量高度扰动；文字从当前动态位置向外三维散开。握拳或手消失后，散开量平滑归零，回到当前时刻的轨道/流动字形；距离和高度按场景配置；挥手临时加快转速，双手距离控制缩放。手消失超过500 ms后退出接管、平滑恢复原轨道。视线和手势同时生效，没有手也可完整体验；眨眼/丢脸时视线扰动淡出，粒子继续自转。
+3. 行星固定居中：向上看提高观察俯角，左右看改变方位，弹簧平滑运镜；三个场景都支持凝视1.5秒平滑推近、离开拉回：行星命中球体，银河只命中核心附近（默认0.35个银河半径），文字命中文字平面的实际字形包围盒。银河水平视线带动盘面绕自身法线小幅旋转（默认±18°），竖直视线只调俯仰±8°，观察夹角至少20°；核心始终指向画面中心。银河推近默认10.4→9.6，保留大部分旋臂。文字只做yaw±4°/pitch±3°小视差；推近距离按实际字形包围盒、厚度、窗口长宽比和手势缩放计算，整行宽/高不超过视口的90%。引力井分别取环/银盘平面或文字平面的射线交点，使用相同的弱吸引/增亮参数，作用半径由误差半径按交点深度投影。凝视任一屏幕角落1.5秒，循环「粒子行星 → 螺旋星系 → 配置文字」；角落区域默认视口宽/高各20%，只要求停留在同一个区域内，不限制相对锚点的抖动。轻微屏外估计按“1个误差半径 / 20%视口距离”逐轴取大者形成的椭圆容差夹回，仅用于命中，不改原始坐标。默认300 ms内短暂离开、眨眼或无脸会冻结并保留进度，超时或采集断档才清零；仍按真实采集帧累计，保留切换冷却。对应角落显示青白色细进度弧，完成后淡出。心形与线框地球已移除。
+4. 伸手连续被识别3帧后自动接管；张开手沿径向/切线甩散环或银河粒子并加少量高度扰动；文字用各粒子独立的随机三维方向和轻微卷曲散成粒子云，默认距离约半个字宽，z位移最多0.04个字宽，点尺寸上限2.5逻辑像素；按种子错峰smoothstep缓动，不沿字心径向拉伸、不积累历史帧。文字引力井亮度单独增强。握拳或手消失后，散开量平滑归零，回到当前时刻的轨道/流动字形；距离和高度按场景配置；挥手临时加快转速，双手距离控制缩放。手消失超过500 ms后退出接管、平滑恢复原轨道。视线和手势同时生效，没有手也可完整体验；眨眼/丢脸时视线扰动淡出，粒子继续自转。
 5. 星系网页中的 **→ / 空格** 切换到下一场景，**←** 切换到上一场景（已进入且开场结束后生效，长按不连发）。Python统一持有场景状态：网页只发±1动作，收到确认后显示，帧带场景版本，旧帧不能把画面切回去；这样暂时没有有效视线时也能操作，下一次凝视会从正确起点继续。不安装全局键盘监听，不记录键名或键盘输入。
 6. 页面按Esc退出并恢复进入前的悬浮层状态。原生 `Ctrl+Alt+R`/面板可关闭网页回到练习。摄像头暂停、屏幕条件变化时取消Demo；退出关闭本次回环服务、手势模型和专用Chrome，不关闭用户的浏览器窗口。
 
@@ -66,23 +66,32 @@ galaxy:
     camera_distance: 7.8         # 行星默认距离
     close_distance: 3.6          # 行星推近距离
     galaxy_distance: 10.4
-    galaxy_close_distance: 6.8
+    galaxy_close_distance: 9.6
     text_distance: 7.8
-    text_close_distance: 5.8
+    text_close_distance: 5.8      # 还会按视口比例自动拉远，避免裁字
+    text_viewport_fraction: 0.9
+    text_point_size_max: 2.5
     rim_strength: 3.5
     bright_fraction: 0.015
     ring_gap_centers: [2.25, 3.3] # 球半径的倍数；[]关闭环缝
   interaction:
     yaw_range_deg: 35
     pitch_range_deg: 35
-    text_yaw_range_deg: 10       # 文字围绕正面、无翻滚
-    text_pitch_range_deg: 8
+    galaxy_rotation_range_deg: 18 # 绕银盘法线，不绕相机
+    galaxy_pitch_range_deg: 8
+    galaxy_min_pitch_deg: 20
+    galaxy_zoom_core_ratio: 0.35
+    text_yaw_range_deg: 4        # 文字围绕正面、无翻滚
+    text_pitch_range_deg: 3
     scatter_distance: 4.0        # 行星环：球半径的倍数
     scatter_height: 1.2
     galaxy_scatter_distance: 1.2 # 银河半径的倍数
     galaxy_scatter_height: 0.35
-    text_scatter_distance: 1.2   # 文字宽度一半的倍数
-    text_scatter_height: 0.7     # 垂直于文字平面的扰动
+    text_scatter_distance: 1.0   # 单位为半字宽，默认散开约0.5字宽
+    text_scatter_height: 0.08    # 垂直文字平面，最多0.04字宽
+    text_scatter_curl: 0.18
+    text_scatter_stagger: 0.35   # 沿手势包络的种子错峰比例，不是秒
+    text_well_brightness: 1.0
     well_attraction: 0.12
     well_brightness: 0.65
     well_radius_scale: 1.5

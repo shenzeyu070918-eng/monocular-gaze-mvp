@@ -28,12 +28,12 @@ class PlanetVisualTests(unittest.TestCase):
         options=load_settings(use_local=False).galaxy
         self.assertEqual(options.interaction,PlanetInteractionSettings())
         self.assertEqual(replace(options,interaction={'corner_ratio':.1}).interaction.corner_ratio,.1)
-        for fields in ({'corner_ratio':.6},{'zoom_dwell_ms':0},{'yaw_range_deg':90},{'min_hand_scale':2},{'well_attraction':float('inf')},{'text_yaw_range_deg':46},{'text_pitch_range_deg':-1},{'galaxy_scatter_distance':float('nan')},{'text_scatter_height':-1}):
+        for fields in ({'corner_ratio':.6},{'zoom_dwell_ms':0},{'yaw_range_deg':90},{'min_hand_scale':2},{'well_attraction':float('inf')},{'text_yaw_range_deg':46},{'text_pitch_range_deg':-1},{'galaxy_scatter_distance':float('nan')},{'text_scatter_height':-1},{'text_scatter_height':.3},{'text_scatter_stagger':.8},{'text_scatter_curl':1.1},{'galaxy_zoom_core_ratio':0},{'galaxy_zoom_core_ratio':1.1},{'galaxy_min_pitch_deg':0},{'galaxy_min_pitch_deg':81},{'galaxy_pitch_range_deg':46}):
             with self.subTest(fields=fields),self.assertRaises(ValueError):replace(PlanetInteractionSettings(),**fields)
 
     def test_bad_visual_geometry_counts_colors_and_nonfinite_values_are_rejected(self):
         for fields in ({'planet_particles':True},{'ring_particles':1.5},{'planet_particles':-1},
-                       {'galaxy_close_distance':11},{'text_close_distance':8},{'text_distance':0},{'ring_inner_ratio':.9},{'ring_outer_ratio':1.1},{'close_distance':1.},
+                       {'galaxy_close_distance':11},{'text_close_distance':8},{'text_distance':0},{'text_viewport_fraction':.91},{'text_point_size_max':6},{'text_point_size_max':.2},{'ring_inner_ratio':.9},{'ring_outer_ratio':1.1},{'close_distance':1.},
                        {'bloom_strength':float('nan')},{'planet_colors':['red']},{'camera_pitch_deg':90},{'ring_gap_width':10},{'ring_gap_depth':1},{'low_particle_count':1}):
             with self.subTest(fields=fields),self.assertRaises(ValueError):replace(PlanetVisualSettings(),**fields)
 
@@ -69,6 +69,9 @@ class PreviewServerTests(unittest.TestCase):
             with urllib.request.urlopen(self.origin+'/render-check') as response:self.assertEqual(response.read(),b'synthetic preview')
             with urllib.request.urlopen(self.origin+'/render-check/galaxy-scatter.png') as response:
                 self.assertEqual(response.headers['Content-Type'],'image/png');self.assertEqual(response.read(),b'fake-png')
+            (checks/'text-scatter-return.gif').write_bytes(b'fake-gif')
+            with urllib.request.urlopen(self.origin+'/render-check/text-scatter-return.gif') as response:
+                self.assertEqual(response.headers['Content-Type'],'image/gif');self.assertEqual(response.read(),b'fake-gif')
             (checks/'private.json').write_text('{}')
             with self.assertRaises(urllib.error.HTTPError) as caught:urllib.request.urlopen(self.origin+'/render-check/private.json')
             self.assertEqual(caught.exception.code,404)

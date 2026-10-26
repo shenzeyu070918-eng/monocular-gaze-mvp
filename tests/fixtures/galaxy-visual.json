@@ -75,7 +75,7 @@
   "galaxy_face_fill": 0.9,
   "galaxy_view_fill": 1.1,
   "galaxy_fly_ratio": 0.5,
-  "galaxy_zoom_bloom_gain": 0.65,
+  "galaxy_zoom_bloom_gain": 0.1,
   "galaxy_arm_colors": [
     "#649ac4",
     "#b3e0ed",

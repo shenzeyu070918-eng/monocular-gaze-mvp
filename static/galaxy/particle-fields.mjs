@@ -1,4 +1,5 @@
 // Seeded volumes, not meshes/outline samples. No browser or input dependencies.
+import {letterLayout} from './letter-focus.mjs';
 import {randomSource} from './particle-random.mjs';
 export {randomSource} from './particle-random.mjs';
 export {galaxyField} from './galaxy-field.mjs';
@@ -35,16 +36,19 @@ export function maskDistance(mask,width,height){
  for(let y=height-2;y>=0;y--)for(let x=width-2;x>=0;x--){const i=y*width+x;if(d[i])d[i]=Math.min(d[i],d[i+1]+1,d[i+width]+1,d[i+width+1]+Math.SQRT2);}
  return d;
 }
-export function textField(count,o,mask,width,height){
+export function textField(count,o,mask,width,height,ranges){
  const f=field(count),rand=randomSource(o.seed+3),inside=[],d=maskDistance(mask,width,height);
  let left=width,right=0,top=height,bottom=0;
  for(let y=0;y<height;y++)for(let x=0;x<width;x++)if(mask[y*width+x]){inside.push(y*width+x);left=Math.min(left,x);right=Math.max(right,x);top=Math.min(top,y);bottom=Math.max(bottom,y);}
  if(!inside.length)throw new Error('配置文字没有可绘制笔画');
  const scale=o.text_width/(right-left+1);
+ const layout=letterLayout(mask,width,height,scale,-(left+right)/2*scale,(top+bottom)/2*scale,ranges),byId=new Map(layout.letters.map(l=>[l.id,l]));
+ f.letters=layout.letters;f.letter=new Float32Array(count*3);
  f.bounds=[-o.text_width/2,o.text_width/2,-(bottom-top+1)*scale/2,(bottom-top+1)*scale/2];
  for(let i=0;i<count;i++){
   const p=inside[Math.floor(rand()*inside.length)],x=p%width,y=Math.floor(p/width);
   f.position.set([(x-(left+right)/2)*scale,((top+bottom)/2-y)*scale,(rand()-.5)*o.text_depth],i*3);
+  const id=layout.columns[x],center=byId.get(id).center;f.letter.set([id,...center],i*3);
   f.flow[i]=Math.min(o.text_flow,Math.max(0,d[p]-.75)*scale*.45);noiseSeed(f,i,rand);
  }
  return f;

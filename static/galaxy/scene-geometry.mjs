@@ -39,11 +39,20 @@ export function textFitDistance(bounds,depth,fov,aspect,yaw,pitch,scale,fraction
  }
  return distance;
 }
+
+// Exact perspective support of a circular disk for all four viewport sides.
+export function diskFrameDistance(radius,fov,aspect,pitch,yaw,roll,fill){
+ const b=cameraBasis(yaw,pitch),a=roll*Math.PI/180,c=Math.cos(a),s=Math.sin(a);
+ const axes=[b.right.map((v,n)=>v*c+b.up[n]*s),b.up.map((v,n)=>v*c-b.right[n]*s)];
+ const v=Math.tan(fov*Math.PI/360)*fill;let distance=0;
+ axes.forEach((axis,n)=>{const limit=v*(n===0?aspect:1);for(const sign of [-1,1])distance=Math.max(distance,radius*Math.hypot(sign*axis[0]+limit*b.normal[0],sign*axis[2]+limit*b.normal[2])/limit);});
+ return distance;
+}
 export function scenePose(scene,visual,interaction,aspect,control=null,scale=1,bounds=null,view='oblique'){
  const camera=sceneCamera(scene,visual),c=control??{pitch:0,yaw:0,zoom:0};
  let pitch=view==='top'?75:camera.pitch,yaw=scene==='text'?0:visual.camera_yaw_deg,near=camera.near,far=camera.far;
  if(control||scene!=='planet')pitch=Math.max(-80,Math.min(80,pitch+c.pitch));
- if(scene==='galaxy')pitch=Math.max(interaction.galaxy_min_pitch_deg,pitch);
+ if(scene==='galaxy'){pitch=Math.max(interaction.galaxy_min_pitch_deg,pitch);far=diskFrameDistance(visual.galaxy_radius,visual.field_of_view,aspect,pitch,yaw,camera.roll,visual.galaxy_view_fill);near=far*visual.galaxy_fly_ratio;}
  else yaw+=c.yaw;
  if(scene==='text'&&bounds){
   near=Math.max(near,textFitDistance(bounds,visual.text_depth/2+visual.text_flow,visual.field_of_view,aspect,yaw,pitch,scale,visual.text_viewport_fraction));

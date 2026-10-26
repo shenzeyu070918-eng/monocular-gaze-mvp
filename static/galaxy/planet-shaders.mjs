@@ -1,11 +1,12 @@
 import {galaxyMotionGLSL} from './galaxy-motion.mjs';
 // Analytical GPU orbits; weak gaze forces operate only on display particles.
 export const particleVertex=`
-attribute vec4 aSeed,aGalaxy;attribute float aFlow;
+attribute vec4 aSeed,aGalaxy;attribute vec3 aLetter;attribute float aFlow;
 uniform float time,intro,kind,radius,innerRatio,orbitSpeed,planetSpin,swirlAmplitude,swirlSpeed;
 uniform float wanderFraction,wanderDistance,pointSize,pointMin,pointMax,pixelRatio,referenceDistance,absorption,intensity,galaxySpin,coreIntensity,textWidth;
 uniform float galaxyDrift,galaxyDriftSpeed,galaxyPitchCot;
 uniform vec3 warmA,warmB,warmC,coolA,coolB,coolC,well;
+uniform float letterWeights[80],letterScale,letterLift,letterBrightness,spotSize,spotTwinkle,spotSpeed,galaxySwirl;
 uniform float wellRadius,eyeAlpha,wellAttraction,wellBrightness,sceneFade;
 uniform float scatter,handScale,scatterDistance,scatterHeight,scatterScale,sceneRotation,textCurl,textStagger;
 uniform float outerRatio,ringLightPower,ringOuterLight,brightFraction,brightSize,brightIntensity,brightHalo,twinkleSpeed,rimStrength,rimPower;
@@ -16,7 +17,7 @@ ${galaxyMotionGLSL}
 void main(){
  vec3 p=position;float r=length(p.xz);float phase=aSeed.x*6.2831853;float tail=max(0.,(aSeed.y-(1.-brightFraction))/max(brightFraction,.00001));
  float shimmer=1.-(.08+tail*.17)*(1.-sin(time*twinkleSpeed+phase*9.));halo=brightHalo*tail;
- vec3 color;float light=.55+.8*pow(aSeed.y,2.2)+(brightIntensity-1.)*tail;
+ float pointBoost=1.;vec3 color;float light=.55+.8*pow(aSeed.y,2.2)+(brightIntensity-1.)*tail;
  if(kind<.5){
   p=turnY(p,time*planetSpin);
   p+=swirlAmplitude*radius*vec3(sin(p.y*1.6+time*swirlSpeed+phase),sin(p.z*1.4-time*swirlSpeed),cos(p.x*1.3+time*swirlSpeed+phase));
@@ -41,10 +42,14 @@ void main(){
   p.z+=sin(time*.8+phase)*aFlow;
   float gradient=clamp(p.x/textWidth+.5,0.,1.);
   color=mix(mix(coolB,vec3(.5,.27,.7),gradient),warmB,aSeed.z*.25);
+  float focus=letterWeights[int(aLetter.x)];
+  p.xy=aLetter.yz+(p.xy-aLetter.yz)*(1.+letterScale*focus);p.z+=letterLift*focus;light*=1.+letterBrightness*focus;
  }
  // The same weak force follows the ray/plane hit in ring, galaxy and text.
  if(kind>.5){
   vec3 delta=well-p;float wellFalloff=exp(-dot(delta,delta)/max(.001,2.*wellRadius*wellRadius))*eyeAlpha;
+  if(kind>1.5){wellFalloff=(1.-smoothstep(.25,1.,length(delta)/max(.001,wellRadius)))*eyeAlpha;
+   pointBoost=1.+spotSize*wellFalloff;light*=1.+spotTwinkle*wellFalloff*sin(time*spotSpeed+phase);}
   p+=delta*wellAttraction*wellFalloff;light*=1.+wellBrightness*wellFalloff;
  }
  // Prescribed restoring shape stays on the GPU. Relaxing scatter returns each
@@ -53,6 +58,7 @@ void main(){
   vec2 radial=normalize(p.xz+vec2(.0001)),tangent=vec2(-radial.y,radial.x);
   p.xz+=(radial*(.3+aSeed.w*.7)+tangent*(aSeed.x-.5))*scatter*scatterDistance*scatterScale;
   p.y+=sin(phase*3.)*scatter*scatterHeight*scatterScale;
+  if(kind>1.5)p=turnY(p,scatter*galaxySwirl*(.6+.4*sin(time*.8+phase)));
  }
  if(kind>2.5){
   // Uniform per-seed directions are independent of the particle's location.
@@ -73,7 +79,7 @@ void main(){
  p=mix(chaos,p,assembly);
  vec4 world=modelMatrix*vec4(p,1.);vec4 mv=viewMatrix*world;
  gl_Position=projectionMatrix*mv;
- float depth=max(.1,-mv.z),raw=pointSize*(referenceDistance/depth)*(.45+.5*sqrt(aSeed.y)+(brightSize-1.)*tail)*(1.+halo*2.);
+ float depth=max(.1,-mv.z),raw=pointSize*pointBoost*(referenceDistance/depth)*(.45+.5*sqrt(aSeed.y)+(brightSize-1.)*tail)*(1.+halo*2.);
  gl_PointSize=clamp(raw,pointMin,pointMax)*pixelRatio;
  opacity=min(1.,raw*raw)*(.25+.75*assembly)*sceneFade;
  // Analytic transmittance through the volume: back-ring particles are dimmed,

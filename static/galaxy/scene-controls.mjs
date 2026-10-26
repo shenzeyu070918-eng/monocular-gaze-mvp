@@ -1,11 +1,12 @@
 // Python owns scene selection. A revision prevents old in-flight frames undoing a key step.
 export class SceneSelection{
  constructor(){this.reset();}
- reset(){this.pattern=0;this.revision=-1;}
+ reset(){this.pattern=0;this.revision=-1;this.status=null;}
  accept(status){
   if(!status||!Number.isInteger(status.pattern)||status.pattern<0||status.pattern>2||!Number.isInteger(status.scene_revision)||status.scene_revision<0||status.scene_revision<this.revision)return false;
   if(status.scene_revision===this.revision&&status.pattern!==this.pattern)return false;
-  this.pattern=status.pattern;this.revision=status.scene_revision;return true;
+  if(status.scene_revision===this.revision&&this.status?.scene_transition===0&&status.scene_transition===1)return false;
+  this.status=status;this.pattern=status.pattern;this.revision=status.scene_revision;return true;
  }
 }
 export function sceneDirection(event){

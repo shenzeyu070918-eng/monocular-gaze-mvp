@@ -14,6 +14,7 @@ class GalaxySession:
         self.session=session;self.o=session.settings.galaxy;self.debug=debug
         self.bridge=bridge_factory(self.o,session.screen);self.browser_factory=browser_factory;self.browser=None
         self.bridge.debug=debug
+        self.bridge.configure_entry(session.settings.geometry,offset)
         self.processor=GalaxyProcessor(self.bridge,self.o,radii,offset)
         self.closed=False;self.error=None;self.started=time.monotonic();self._warned=False;self._hand_error=None
         self._waiting_since=self.started;self._disconnected_at=None
@@ -28,7 +29,12 @@ class GalaxySession:
             self.session.controller.demo_frames.set(self.processor)
         now=time.monotonic();events=[]
         for event in self.bridge.drain():
-            if event[0]=='disconnected':self._disconnected_at=now
+            if event[0]=='entry_refresh':
+                message='星系进入偏移刷新：'+json.dumps(event[1],ensure_ascii=False,allow_nan=False)
+                logger=getattr(self.session,'geometry_logger',None)
+                if logger is not None:logger(message)
+                else:print(message,flush=True)
+            elif event[0]=='disconnected':self._disconnected_at=now
             else:events.append(event)
         if self.browser is not None:
             if self.browser.error:self.error=self.browser.error
@@ -61,7 +67,7 @@ class GalaxySession:
                 folder=ROOT/'data/performance';folder.mkdir(parents=True,exist_ok=True)
                 path=folder/(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')+'-galaxy.json')
                 report=dict(version=1,processor=self.processor.report(),browser_samples=self.bridge.telemetry,
-                    dropped_messages=self.bridge.dropped,closed=True)
+                    dropped_messages=self.bridge.dropped,entry_refresh=getattr(getattr(self.bridge,'entry',None),'reports',[]) if isinstance(self.bridge,GalaxyBridge) else [],closed=True)
                 path.write_text(json.dumps(report,ensure_ascii=False,allow_nan=False,indent=2)+'\n')
                 print('星系数值性能记录：'+str(path),flush=True)
             except Exception as exc:print('星系性能日志写入失败：'+str(exc),flush=True)

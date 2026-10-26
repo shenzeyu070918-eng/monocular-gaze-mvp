@@ -11,7 +11,8 @@ import time
 from gaze_core.config import ROOT
 from gaze_core.galaxy_scene import PatternCycle
 from gaze_core.galaxy_burst import ClosedEyeBurst
-from gaze_core.galaxy_protocol import validate_frame,viewport,telemetry,scene_request,viewport_request
+from gaze_core.galaxy_protocol import validate_frame,viewport,telemetry,scene_request,viewport_request,ENTRY,entry_request
+from gaze_core.galaxy_entry import EntryRefresh,BrowserCaptureClock
 
 
 class GalaxyBridge:
@@ -23,7 +24,15 @@ class GalaxyBridge:
         self.server=None;self.thread=None;self.closed=False;self.telemetry=[]
         self._scene=PatternCycle(options);self._burst=ClosedEyeBurst(options.interaction)
         self.native_fullscreen=False
+        self.entry=None;self.capture_clock=BrowserCaptureClock(options.interaction.entry_clock_max_rtt_ms)
         self.ui_focused=False
+
+    def configure_entry(self,geometry,offset):self.entry=EntryRefresh(self.options.interaction,geometry,offset)
+
+    def remember(self,capture_ns,data):
+        if self.entry is not None:self.entry.add(capture_ns,data)
+
+    def current_offset(self,fallback):return self.entry.offset if self.entry is not None else fallback
 
     @property
     def url(self):return None if self.port is None else f'http://127.0.0.1:{self.port}/'+('?debug' if getattr(self,'debug',False) else '')+'#'+self.token
@@ -128,8 +137,10 @@ class GalaxyBridge:
                     await ws.close(code=1008);return
                 if self._client:await ws.close(code=1008);return
                 self._client=True;claimed=True;self.last_seen=self.clock()
+                self.capture_clock=BrowserCaptureClock(self.options.interaction.entry_clock_max_rtt_ms)
                 config=asdict(self.options);config.pop('hand_model')
-                await ws.send_json(dict(type='config',v=4,options=config))
+                await ws.send_json(dict(type='config',v=5,options=config))
+                await ws.send_json(dict(type='clock_probe',probe_id=self.capture_clock.probe(self.clock())))
                 async def send():
                     previous=None
                     while not self.closed:
@@ -146,14 +157,29 @@ class GalaxyBridge:
                         if not isinstance(message,dict):raise ValueError('消息必须为对象')
                         self.last_seen=self.clock();kind=message.pop('type',None)
                         if kind=='geometry':
-                            try:mapping=viewport(self.screen,message)
+                            entry_fields={k:message.pop(k) for k in ENTRY if k in message}
+                            try:
+                                mapping=viewport(self.screen,message)
+                                entry=entry_request(entry_fields,mapping) if entry_fields else None
                             except ValueError as exc:
                                 self.invalidate();self.events.put(('warning',str(exc)))
                                 await ws.send_json(dict(type='geometry_error',code=1));continue
+                            if self.entry is not None:
+                                stamp=None if entry is None else self.capture_clock.capture_time(entry['click_ms'],self.clock(),self.options.interaction.entry_window_ms+self.options.stale_ms)
+                                target=(0.,0.) if entry is None else mapping.window_to_screen((entry['buttonX'],entry['buttonY']))
+                                report=self.entry.apply(stamp,target)
+                                report=dict(report,clock_rtt_ms=float(self.capture_clock.rtt or 0))
+                                self.events.put(('entry_refresh',report))
                             with self._lock:
                                 self.mapping=mapping;self.revision+=1;self.started_ns=self.clock();self._scene=PatternCycle(self.options);self._burst=ClosedEyeBurst(self.options.interaction)
+                            if self.entry is not None:await ws.send_json(dict(type='entry',data=report))
                             self.events.put(('geometry',dict(origin=mapping.window_origin,size=mapping.window_size)))
                             await ws.send_json(dict(type='ready',viewport=self.revision))
+                        elif kind=='clock_request' and not message:
+                            await ws.send_json(dict(type='clock_probe',probe_id=self.capture_clock.probe(self.clock())))
+                        elif kind=='clock_reply':
+                            if set(message)!={'probe_id','browser_ms'}:raise ValueError('时钟字段无效')
+                            self.capture_clock.reply(message['probe_id'],message['browser_ms'],self.clock())
                         elif kind=='scene_step':
                             direction,view=scene_request(message)
                             status=self.step_scene(direction,view)
@@ -196,4 +222,5 @@ class GalaxyBridge:
         self.closed=True;self.ui_focused=False;self.invalidate()
         if self.server is not None:self.server.should_exit=True
         if self.thread is not None:self.thread.join(3)
+        if self.entry is not None:self.entry.clear()
         self.token=''

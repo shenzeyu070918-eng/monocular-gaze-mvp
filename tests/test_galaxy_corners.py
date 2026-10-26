@@ -7,7 +7,8 @@ from gaze_core.galaxy_scene import LEAVE,GAP,COOLDOWN,INVALID
 
 
 class CornerTests(unittest.TestCase):
-    def make(self):return PatternCycle(GalaxySettings())
+    def make(self):
+        o=GalaxySettings();return PatternCycle(replace(o,interaction=replace(o.interaction,scene_switch_mode='corners')))
     def feed(self,cycle,ms,point=(-15,-10),valid=True,radii=(30,25)):
         return cycle.feed(np.asarray(point),np.asarray(radii),round(ms*1e6),valid,viewport_size=(1000,800))
 
@@ -66,7 +67,7 @@ class CornerTests(unittest.TestCase):
         self.assertEqual(c.snapshot()['corner'],1);self.assertEqual(c.snapshot()['corner_dwell_ms'],0)
 
     def test_zero_grace_is_an_immediate_leave(self):
-        o=GalaxySettings();c=PatternCycle(replace(o,interaction=replace(o.interaction,corner_leave_grace_ms=0)))
+        o=GalaxySettings();c=PatternCycle(replace(o,interaction=replace(o.interaction,corner_leave_grace_ms=0,scene_switch_mode='corners')))
         self.feed(c,0);self.feed(c,100);self.feed(c,200,(500,400))
         self.assertEqual(c.snapshot()['corner'],-1);self.assertEqual(c.snapshot()['corner_progress'],0)
 

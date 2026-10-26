@@ -48,7 +48,8 @@ class GalaxyProcessor:
     def process(self,frame,data):
         if self.stopped.is_set():self.close();return
         mapping,revision,started=self.bridge.context()
-        if mapping is None or started is None:return
+        if mapping is None or started is None:
+            self.bridge.remember(frame.captured_ns,data);return
         if frame.sequence<=self._last_sequence:return
         self._last_sequence=frame.sequence
         if not self._attempted:
@@ -67,13 +68,13 @@ class GalaxyProcessor:
         self.detected_frames+=int(bool(features));self.active_frames+=hands['control']
         display=data.get('display',{});position=display.get('position')
         valid=bool(data.get('valid') and position is not None)
-        xy=[0.,0.] if not valid else list(mapping.screen_to_window(tuple(p+d for p,d in zip(position,self.offset))))
+        xy=[0.,0.] if not valid else list(mapping.screen_to_window(tuple(p+d for p,d in zip(position,self.bridge.current_offset(self.offset)))))
         intro=int(frame.captured_ns<started+int(self.o.intro_s*1e9))
         eye_status=data.get('status','tracking')
         if 'eye_openness' in data and (isinstance(data['eye_openness'],bool) or not isinstance(data['eye_openness'],Real) or not math.isfinite(data['eye_openness'])):eye_status='invalid_eye'
         scene=self.bridge.interaction_feed(xy,self.radii,frame.captured_ns,valid,eye_status,viewport_revision=revision,intro=bool(intro))
         state={'tracking':0,'blink':1,'no_face':2}.get(data.get('status'),3)
-        packet=dict(v=4,seq=int(frame.sequence),capture_us=max(0,(frame.captured_ns-self.origin)//1000),
+        packet=dict(v=5,seq=int(frame.sequence),capture_us=max(0,(frame.captured_ns-self.origin)//1000),
             completed_us=max(0,(self.clock()-self.origin)//1000),viewport=revision,gaze_valid=int(valid),gaze_state=state,
             fixation={'fixation':1,'saccade':2}.get(display.get('state'),0),xy=xy,radius=list(self.radii),
             control=hands['control'],hands=hands['hands'],distance=hands['distance'],intro=intro,

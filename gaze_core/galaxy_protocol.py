@@ -6,7 +6,8 @@ from .demo_coordinates import DemoCoordinates
 
 GEOMETRY={'screenX','screenY','innerWidth','innerHeight','outerWidth','outerHeight','dpr',
           'screenWidth','screenHeight','fullscreen','clientX','clientY','eventScreenX','eventScreenY','scale'}
-FRAME={'v','seq','capture_us','completed_us','viewport','gaze_valid','gaze_state','fixation','xy','radius',
+ENTRY={'buttonX','buttonY','click_ms'}
+FRAME={'switch_mode','v','seq','capture_us','completed_us','viewport','gaze_valid','gaze_state','fixation','xy','radius',
        'control','hands','distance','pattern','intro','hand_ms','hand_available','hand_detected','hand_openings','hand_error','scene_revision','corner','corner_dwell_ms','corner_progress','corner_state','corner_reset','scene_from','scene_transition','scene_transition_ms','burst_revision','burst_active','burst_elapsed_ms','burst_source','blink_closed_ms','blink_count','blink_reason'}
 TELEMETRY={'fps','p90_ms','frames','long_frames','particles','pixel_ratio','downgrades','render_median_ms','render_p90_ms'}
 
@@ -24,11 +25,12 @@ def validate_frame(frame):
     result={k:numbers(v) for k,v in frame.items()}
     for key in FRAME-{'xy','radius','hands','distance','hand_ms','hand_openings','corner','corner_progress','corner_dwell_ms','scene_transition_ms','burst_elapsed_ms','blink_closed_ms'}:
         if type(result[key]) is not int or result[key]<0:raise ValueError('星系状态/时间必须为非负整数')
-    if result['v']!=4 or any(result[k] not in (0,1) for k in ('gaze_valid','control','intro','hand_available')):raise ValueError('星系版本/标记无效')
+    if result['v']!=5 or any(result[k] not in (0,1) for k in ('gaze_valid','control','intro','hand_available')):raise ValueError('星系版本/标记无效')
     if result['burst_active'] and (result['burst_revision']==0 or result['burst_source']==0):raise ValueError('打散事件缺少编号/来源')
     if result['scene_transition'] and result['scene_from']==result['pattern']:raise ValueError('切换前后场景必须不同')
     if result['scene_from']>2 or result['scene_transition'] not in (0,1) or result['burst_active'] not in (0,1) or result['burst_source']>2 or result['blink_reason']>7:raise ValueError('汇聚/闭眼状态无效')
     if any(isinstance(result[k],list) or result[k]<0 for k in ('scene_transition_ms','burst_elapsed_ms','blink_closed_ms')):raise ValueError('汇聚/闭眼时间无效')
+    if result['switch_mode']>2:raise ValueError('切换模式无效')
     if result['pattern']>2 or result['gaze_state']>5 or result['fixation']>2:raise ValueError('星系状态无效')
     if type(result['corner']) is not int or not -1<=result['corner']<=3:raise ValueError('角落编号无效')
     if any(isinstance(result[k],list) for k in ('corner_progress','corner_dwell_ms')):raise ValueError('角落停留必须为数值')
@@ -78,3 +80,10 @@ def viewport_request(fields,*,transition=False):
     names={'viewport','scene_revision'} if transition else {'viewport'}
     if not isinstance(fields,dict) or set(fields)!=names or any(type(v) is not int or v<0 for v in fields.values()):raise ValueError('交互请求字段无效')
     return fields
+
+
+def entry_request(fields,mapping):
+    if set(fields)!=ENTRY:raise ValueError('进入偏移字段不完整')
+    r={k:finite(v,k) for k,v in fields.items()}
+    if not 0<=r['buttonX']<mapping.window_size[0] or not 0<=r['buttonY']<mapping.window_size[1] or r['click_ms']<0:raise ValueError('进入按钮中心/时钟无效')
+    return r

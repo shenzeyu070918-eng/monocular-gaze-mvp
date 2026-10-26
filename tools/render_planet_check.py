@@ -32,7 +32,7 @@ def interaction_html():
     for scene,label in [('planet','粒子行星'),('galaxy','螺旋星系'),('text','文字')]:
         cells=''.join(f'<figure><img src="/render-check/{scene}-{state}.png"><figcaption>{title}</figcaption></figure>' for state,title in [('base','静止'),('scatter','张手甩散'),('well','视线引力井'),('zoom','凝视推近')])
         rows.append(f'<h2>{label}</h2><div class="row">{cells}</div>')
-    return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>三场景交互检查</title><style>body{background:#090e14;color:#cddbe7;font:15px system-ui;margin:20px}.row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}figure{margin:0}img{width:100%}figcaption{padding:5px}</style><h1>三场景交互 · 合成输入</h1><p>同一时间 t=8秒、固定视角；只有推近改变镜头距离。独立Chrome/SwiftShader，不代表实机帧率。</p>'+''.join(rows)+''.join(f'<h2>{label} · 2秒甩散→收回</h2><img width=756 src="/render-check/{scene}-scatter-return.gif"><p>0–650ms张手，其后握拳，10fps合成采样。</p><h2>四角及上下边缘 · 上排默认距离 / 下排最坏推近</h2><img width="100%" src="/render-check/{scene}-views.png">' for scene,label in [('galaxy','银河'),('text','文字')])+'<h2>银河长期稳定性 · 上排正面 / 下排斜视</h2><img src="/render-check/galaxy-times.png"><p>8/60/300/600秒；GPU实际顶点输出的螺距/角分布检查见galaxy-stability.json。</p><h2>银河默认 / 飞入银心 / 字母点亮</h2><div class="row"><img src="/render-check/galaxy-default.png"><img src="/render-check/galaxy-fly-in.png"><img src="/render-check/text-letter-focus.png"></div><h2>换景：旧场散开 → 新场汇聚</h2><img src="/render-check/assembly.gif"><h2>闭眼蓄力后打散（合成采集帧）</h2>'+''.join(f'<h3>{scene}</h3><img src="/render-check/{scene}-eye-burst.gif">' for scene in ('planet','galaxy','text'))+'</html>'
+    return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>三场景交互检查</title><style>body{background:#090e14;color:#cddbe7;font:15px system-ui;margin:20px}.row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}figure{margin:0}img{width:100%}figcaption{padding:5px}</style><h1>三场景交互 · 合成输入</h1><p>同一时间 t=8秒、固定视角；只有推近改变镜头距离。独立Chrome/SwiftShader，不代表实机帧率。</p>'+''.join(rows)+''.join(f'<h2>{label} · 2秒甩散→收回</h2><img width=756 src="/render-check/{scene}-scatter-return.gif"><p>0–650ms张手，其后握拳，10fps合成采样。</p><h2>四角及上下边缘 · 上排默认距离 / 下排最坏推近</h2><img width="100%" src="/render-check/{scene}-views.png">' for scene,label in [('galaxy','银河'),('text','文字')])+'<h2>银河长期稳定性 · 上排正面 / 下排斜视</h2><img src="/render-check/galaxy-times.png"><p>8/60/300/600秒；GPU实际顶点输出的螺距/角分布检查见galaxy-stability.json。</p><h2>银河默认 / 飞入银心 / 字母点亮</h2><div class="row"><img src="/render-check/galaxy-default.png"><img src="/render-check/galaxy-fly-in.png"><img src="/render-check/text-letter-focus.png"></div><h2>换景：旧场散开 → 新场汇聚</h2><img src="/render-check/assembly.gif"><h2>闭眼蓄力后打散（合成采集帧）</h2>'+''.join(f'<h3>{scene}</h3><img src="/render-check/{scene}-eye-burst.gif">' for scene in ('planet','galaxy','text'))+'<h2>场景内蓄力 · 同镜头0 / 50 / 100%</h2><img src="/render-check/charge-contact.png">'+'</html>'
 
 
 def capture(url,output):
@@ -181,6 +181,21 @@ def capture(url,output):
                     if t==8:(matrix/f'galaxy-{view}.png').write_bytes(png)
                     tile=Image.open(io.BytesIO(png)).convert('RGB');tile.thumbnail((504,317));time_sheet.paste(tile,(col*504,row*342+25));labels.text((col*504+8,row*342+6),f'{view} / t={t}s',fill='white')
             time_sheet.save(matrix/'galaxy-times.png')
+            charge_core=evaluate('window.__galaxyPreview.chargeCoreCheck()')
+            charge_checks=[];charge_sheet=Image.new('RGB',(3*504,3*342),'#090e14');charge_labels=ImageDraw.Draw(charge_sheet)
+            for row,scene in enumerate(('planet','galaxy','text')):
+                base_charge=None
+                for col,percent in enumerate((0,50,100)):
+                    info=evaluate(f'window.__galaxyPreview.chargeSample({json.dumps(scene)},{percent/100})')
+                    if abs(info['charge']-percent/100)>1e-9:raise RuntimeError('蓄力进度不一致')
+                    png=base64.b64decode(command('Page.captureScreenshot',dict(format='png'))['data'])
+                    if percent==0:base_charge=png
+                    elif png==base_charge:raise RuntimeError('场景内蓄力没有改变画面')
+                    (matrix/f'{scene}-charge-{percent}.png').write_bytes(png)
+                    tile=Image.open(io.BytesIO(png)).convert('RGB');tile.thumbnail((504,317));charge_sheet.paste(tile,(col*504,row*342+25))
+                    charge_labels.text((col*504+8,row*342+5),f'{scene} / {percent}%',fill='white');charge_checks.append(info)
+            charge_sheet.save(matrix/'charge-contact.png')
+            (matrix/'charge-checks.json').write_text(json.dumps(dict(source='synthetic_fixed_visual_progress',camera_and_time_fixed=True,core_gpu=charge_core,checks=charge_checks),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             active_checks=evaluate('window.__galaxyPreview.spotlightCheck()')
             # Dedicated gallery views for the stronger scene interactions.
             for state,name in [('base','galaxy-default.png'),('zoom','galaxy-fly-in.png')]:
@@ -226,7 +241,7 @@ def capture(url,output):
                 for elapsed in (150,300):
                     row=evaluate(f'window.__galaxyPreview.combinedSample({json.dumps(scene)},{elapsed})');combined.append(row)
                     if abs(row['scatter']-max(row['hand_scatter'],row['burst_scatter']))>1e-8 or row['scatter']>1:raise RuntimeError('手势与闭眼打散发生叠加')
-            active_report=dict(combined=combined,spotlights=active_checks,letter=letter,assembly=assembly,bursts=bursts)
+            active_report=dict(charge=charge_checks,combined=combined,spotlights=active_checks,letter=letter,assembly=assembly,bursts=bursts)
             (matrix/'active-checks.json').write_text(json.dumps(active_report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             (matrix/'index.html').write_text(interaction_html(),encoding='utf-8')
             (matrix/'manifest.json').write_text(json.dumps(dict(source='synthetic_swiftshader',hardware_fps_verified=False,checks=checks,sequences=sequences,view_checks=view_checks,galaxy_stability=stability,active_checks=active_report),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')

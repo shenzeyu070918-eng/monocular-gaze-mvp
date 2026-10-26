@@ -152,7 +152,19 @@ class PlanetInteractionSettings:
     zoom_error_scale: float = 2.5
     zoom_viewport_ratio: float = .12
     zoom_core_scale: float = 1.
-    zoom_feedback_fade_ms: float = 400.
+    zoom_feedback_fade_ms: float = 400. # Legacy UI option; no longer renders a ring.
+    charge_response_s: float = .12
+    charge_release_s: float = .45
+    charge_galaxy_light_gain: float = 1.1
+    charge_galaxy_halo_gain: float = 1.25
+    charge_galaxy_bloom_gain: float = .22
+    charge_galaxy_bloom_radius_gain: float = .2
+    charge_galaxy_spin_gain: float = .5
+    charge_galaxy_contract: float = .06
+    charge_planet_rim_gain: float = .75
+    charge_planet_light_gain: float = .35
+    charge_ring_speed_gain: float = .35
+    charge_text_light_gain: float = .8
     scene_switch_mode: str = 'edges'
     edge_ratio: float = .12
     entry_window_ms: float = 300.
@@ -204,8 +216,9 @@ class PlanetInteractionSettings:
         for f in fields(self):
             if f.name=='scene_switch_mode':continue
             v=finite(getattr(self,f.name),'galaxy.interaction.'+f.name)
-            if v<0 or v==0 and f.name not in {'yaw_range_deg','pitch_range_deg','text_yaw_range_deg','text_pitch_range_deg','galaxy_rotation_range_deg','galaxy_pitch_range_deg','text_scatter_curl','text_scatter_stagger','text_well_brightness','galaxy_well_attraction','text_well_attraction','galaxy_well_brightness','spotlight_twinkle','spotlight_size_gain','text_letter_lift','galaxy_scatter_swirl','well_attraction','well_brightness','spin_boost','zoom_leave_grace_ms','zoom_release_ms','zoom_feedback_fade_ms','corner_leave_grace_ms','corner_feedback_fade_ms','corner_feedback_margin_px'}:
+            if v<0 or v==0 and not (f.name.startswith('charge_') and f.name.endswith(('_gain','_contract'))) and f.name not in {'yaw_range_deg','pitch_range_deg','text_yaw_range_deg','text_pitch_range_deg','galaxy_rotation_range_deg','galaxy_pitch_range_deg','text_scatter_curl','text_scatter_stagger','text_well_brightness','galaxy_well_attraction','text_well_attraction','galaxy_well_brightness','spotlight_twinkle','spotlight_size_gain','text_letter_lift','galaxy_scatter_swirl','well_attraction','well_brightness','spin_boost','zoom_leave_grace_ms','zoom_release_ms','zoom_feedback_fade_ms','corner_leave_grace_ms','corner_feedback_fade_ms','corner_feedback_margin_px'}:
                 raise ValueError('交互参数必须为正数（可禁用项允许零）')
+        if self.charge_galaxy_contract>=.3:raise ValueError('核球蓄力收拢必须小于30%')
         if not 0<self.edge_ratio<.5 or not 0<self.zoom_viewport_ratio<.5 or self.zoom_exit_ratio<1:raise ValueError('边缘/推近命中范围无效')
         if not 0<self.corner_ratio<.5 or max(self.yaw_range_deg,self.pitch_range_deg)>75:
             raise ValueError('角落范围/相机角度无效')

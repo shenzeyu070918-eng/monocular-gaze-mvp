@@ -5,6 +5,7 @@ attribute vec4 aSeed,aGalaxy;attribute vec3 aLetter;attribute float aFlow;
 uniform float time,intro,kind,radius,innerRatio,orbitSpeed,planetSpin,swirlAmplitude,swirlSpeed;
 uniform float wanderFraction,wanderDistance,pointSize,pointMin,pointMax,pixelRatio,referenceDistance,absorption,intensity,galaxySpin,coreIntensity,textWidth;
 uniform float galaxyDrift,galaxyDriftSpeed,galaxyPitchCot;
+uniform float chargeLevel,chargePhase,chargeCoreRadius,chargeCoreLight,chargeCoreSpin,chargeCoreContract,chargeRingSpeed;
 uniform vec3 warmA,warmB,warmC,coolA,coolB,coolC,well;
 uniform float letterWeights[80],letterScale,letterLift,letterBrightness,spotSize,spotTwinkle,spotSpeed,galaxySwirl;
 uniform float wellRadius,eyeAlpha,wellAttraction,wellBrightness,sceneFade;
@@ -25,7 +26,7 @@ void main(){
   light*=.8+.2*clamp(p.y/radius+.5,0.,1.);
  }else if(kind<1.5){
   float speed=orbitSpeed*pow(radius*innerRatio/max(r,.001),1.5);
-  p=turnY(p,time*speed);
+  p=turnY(p,time*speed+chargePhase*speed*chargeRingSpeed);
   p.y+=sin(atan(p.z,p.x)*3.+time*.35)*radius*.009;
   if(aSeed.w<wanderFraction){float drift=pow(max(0.,sin(fract(time*.045+aSeed.z)*3.14159265)),6.);
    p.xz*=1.+wanderDistance*radius*drift/max(r,.01);p.y+=drift*radius*.17*sin(phase);}
@@ -35,7 +36,10 @@ void main(){
  }else if(kind<2.5){
   p=galaxyMotion(p,aSeed,time,galaxySpin,galaxyDrift,galaxyDriftSpeed,galaxyPitchCot,sceneRotation);
   p.y+=sin(time*.3+phase)*radius*.017;
-  color=aGalaxy.rgb;light*=aGalaxy.a;
+  // aFlow==3 tags the bulge. Never differentially rotate or contract the arms.
+  if(aFlow>2.5&&aFlow<3.5){p=turnY(p,chargePhase*galaxySpin*chargeCoreSpin);p*=1.-chargeLevel*chargeCoreContract;}
+  float coreMask=1.-smoothstep(0.,chargeCoreRadius,r);
+  color=aGalaxy.rgb;light*=aGalaxy.a*(1.+chargeLevel*chargeCoreLight*coreMask);
  }else{
   // aFlow is bounded by distance INSIDE the filled glyph, keeping its body full.
   p.xy+=vec2(sin(time*.7+phase),cos(time*.63+phase*1.7))*aFlow*.65;
@@ -103,7 +107,7 @@ void main(){float r=length(gl_PointCoord-.5)*2.;if(r>1.)discard;
 `;
 
 export const coreVertex=`uniform float size,pixelRatio,fade;varying float alpha;void main(){gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);gl_PointSize=size*pixelRatio;alpha=fade;}`;
-export const coreFragment=`varying float alpha;void main(){vec2 p=gl_PointCoord-.5;float r=length(p);
+export const coreFragment=`uniform float brightness;varying float alpha;void main(){vec2 p=gl_PointCoord-.5;float r=length(p);
  float core=exp(-r*r*80.);float halo=exp(-r*r*55.)*.11;
  float rays=exp(-min(abs(p.x),abs(p.y))*180.)*exp(-r*14.)*.26;
- gl_FragColor=vec4(vec3(.85,.95,1.12)*(core+halo+rays)*2.3,alpha);}`;
+ gl_FragColor=vec4(vec3(.85,.95,1.12)*(core+halo+rays)*2.3*brightness,alpha);}`;

@@ -10,4 +10,3 @@
 
 .edge-meter{position:fixed;top:12%;height:76%;width:3px;opacity:0;transition:opacity var(--corner-fade) ease-out;background:#cceef615;pointer-events:none;z-index:30}
 .edge-0{left:12px}.edge-1{right:12px}.edge-fill{height:100%;background:#cceef6;box-shadow:0 0 7px #8cddec88;transform:scaleY(0);transform-origin:bottom}
-#zoom-progress{position:fixed;transform:translate(-50%,-50%);opacity:0;pointer-events:none;z-index:29;fill:none;stroke:#cceef6;stroke-width:.7;overflow:visible}

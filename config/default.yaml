@@ -305,7 +305,19 @@ galaxy:
     zoom_error_scale: 2.5
     zoom_viewport_ratio: 0.12
     zoom_core_scale: 1.0
-    zoom_feedback_fade_ms: 400
+    zoom_feedback_fade_ms: 400   # Legacy only; UI ring removed.
+    charge_response_s: 0.12
+    charge_release_s: 0.45
+    charge_galaxy_light_gain: 1.1
+    charge_galaxy_halo_gain: 1.25
+    charge_galaxy_bloom_gain: 0.22
+    charge_galaxy_bloom_radius_gain: 0.2
+    charge_galaxy_spin_gain: 0.5  # Bulge only; log arms keep rigid motion.
+    charge_galaxy_contract: 0.06
+    charge_planet_rim_gain: 0.75
+    charge_planet_light_gain: 0.35
+    charge_ring_speed_gain: 0.35
+    charge_text_light_gain: 0.8
     scene_switch_mode: edges   # edges / corners / off; corners opt-in only.
     edge_ratio: 0.12
     entry_window_ms: 300       # Reuse M4 sampling/quality thresholds.

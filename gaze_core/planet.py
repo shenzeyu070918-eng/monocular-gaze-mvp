@@ -79,7 +79,7 @@ class PlanetVisualSettings:
     galaxy_face_fill: float = .9
     galaxy_view_fill: float = 1.1
     galaxy_fly_ratio: float = .5
-    galaxy_zoom_bloom_gain: float = .65
+    galaxy_zoom_bloom_gain: float = 0.1
     galaxy_arm_colors: tuple = ('#649ac4','#b3e0ed','#a89ad0')
     galaxy_knot_colors: tuple = ('#ed78b8','#ffc0df','#d858a5')
     text_distance: float = 7.8
@@ -155,9 +155,9 @@ class PlanetInteractionSettings:
     zoom_feedback_fade_ms: float = 400. # Legacy UI option; no longer renders a ring.
     charge_response_s: float = .12
     charge_release_s: float = .45
-    charge_galaxy_light_gain: float = 1.1
-    charge_galaxy_halo_gain: float = 1.25
-    charge_galaxy_bloom_gain: float = .22
+    charge_galaxy_light_gain: float = 0.45
+    charge_galaxy_halo_gain: float = 0.5
+    charge_galaxy_bloom_gain: float = 0.08
     charge_galaxy_bloom_radius_gain: float = .2
     charge_galaxy_spin_gain: float = .5
     charge_galaxy_contract: float = .06

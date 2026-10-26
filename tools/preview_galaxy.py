@@ -16,6 +16,9 @@ RENDER_CHECKS|={f'{scene}-view-{edge}-{zoom}.png' for scene in ('galaxy','text')
 
 RENDER_CHECKS|={f'galaxy-time-{t}-{view}.png' for t in (8,60,300,600) for view in ('face','oblique')}|{'galaxy-times.png','galaxy-face.png','galaxy-oblique.png','galaxy-stability.json'}
 
+RENDER_CHECKS|={'galaxy-default.png','galaxy-fly-in.png','text-letter-focus.png','active-checks.json','assembly.gif','assembly.png'}
+RENDER_CHECKS|={f'{scene}-eye-burst.{suffix}' for scene in ('planet','galaxy','text') for suffix in ('gif','png')}
+
 REFERENCES={'particle_planet_frames.png','particle_planet_closeup.png','render_check.png',
             'render_closeup.png','render_galaxy.png','render_text.png','render_comparison.png','render_comparison.html'}
 
@@ -37,7 +40,7 @@ class PreviewHandler(BaseHTTPRequestHandler):
         if self.headers.get('Host')!=f'127.0.0.1:{self.server.server_port}':self.respond(403);return
         path=unquote(urlsplit(self.path).path)
         if path=='/preview-config':
-            data=dict(interaction=asdict(self.options.interaction),stale_ms=self.options.stale_ms,transition_s=self.options.transition_s,text=self.options.text,pixel_ratio=self.options.pixel_ratio,intro_s=self.options.intro_s,low_fps=self.options.low_fps,low_fps_s=self.options.low_fps_s,min_pixel_ratio=self.options.min_pixel_ratio,visual=asdict(self.options.visual))
+            data=dict(interaction=asdict(self.options.interaction),stale_ms=self.options.stale_ms,transition_s=self.options.transition_s,transition_scatter_s=self.options.transition_scatter_s,text=self.options.text,pixel_ratio=self.options.pixel_ratio,intro_s=self.options.intro_s,low_fps=self.options.low_fps,low_fps_s=self.options.low_fps_s,min_pixel_ratio=self.options.min_pixel_ratio,visual=asdict(self.options.visual))
             self.respond(200,json.dumps(data,ensure_ascii=False,allow_nan=False).encode(),'application/json; charset=utf-8');return
         assets=self.root/'static/galaxy';target=None
         if path=='/':target=assets/'index.html'

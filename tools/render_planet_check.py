@@ -32,7 +32,7 @@ def interaction_html():
     for scene,label in [('planet','粒子行星'),('galaxy','螺旋星系'),('text','文字')]:
         cells=''.join(f'<figure><img src="/render-check/{scene}-{state}.png"><figcaption>{title}</figcaption></figure>' for state,title in [('base','静止'),('scatter','张手甩散'),('well','视线引力井'),('zoom','凝视推近')])
         rows.append(f'<h2>{label}</h2><div class="row">{cells}</div>')
-    return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>三场景交互检查</title><style>body{background:#090e14;color:#cddbe7;font:15px system-ui;margin:20px}.row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}figure{margin:0}img{width:100%}figcaption{padding:5px}</style><h1>三场景交互 · 合成输入</h1><p>同一时间 t=8秒、固定视角；只有推近改变镜头距离。独立Chrome/SwiftShader，不代表实机帧率。</p>'+''.join(rows)+''.join(f'<h2>{label} · 2秒甩散→收回</h2><img width=756 src="/render-check/{scene}-scatter-return.gif"><p>0–650ms张手，其后握拳，10fps合成采样。</p><h2>四角及上下边缘 · 上排默认距离 / 下排最坏推近</h2><img width="100%" src="/render-check/{scene}-views.png">' for scene,label in [('galaxy','银河'),('text','文字')])+'<h2>银河长期稳定性 · 上排正面 / 下排斜视</h2><img src="/render-check/galaxy-times.png"><p>8/60/300/600秒；GPU实际顶点输出的螺距/角分布检查见galaxy-stability.json。</p></html>'
+    return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>三场景交互检查</title><style>body{background:#090e14;color:#cddbe7;font:15px system-ui;margin:20px}.row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}figure{margin:0}img{width:100%}figcaption{padding:5px}</style><h1>三场景交互 · 合成输入</h1><p>同一时间 t=8秒、固定视角；只有推近改变镜头距离。独立Chrome/SwiftShader，不代表实机帧率。</p>'+''.join(rows)+''.join(f'<h2>{label} · 2秒甩散→收回</h2><img width=756 src="/render-check/{scene}-scatter-return.gif"><p>0–650ms张手，其后握拳，10fps合成采样。</p><h2>四角及上下边缘 · 上排默认距离 / 下排最坏推近</h2><img width="100%" src="/render-check/{scene}-views.png">' for scene,label in [('galaxy','银河'),('text','文字')])+'<h2>银河长期稳定性 · 上排正面 / 下排斜视</h2><img src="/render-check/galaxy-times.png"><p>8/60/300/600秒；GPU实际顶点输出的螺距/角分布检查见galaxy-stability.json。</p><h2>银河默认 / 飞入银心 / 字母点亮</h2><div class="row"><img src="/render-check/galaxy-default.png"><img src="/render-check/galaxy-fly-in.png"><img src="/render-check/text-letter-focus.png"></div><h2>换景：旧场散开 → 新场汇聚</h2><img src="/render-check/assembly.gif"><h2>闭眼蓄力后打散（合成采集帧）</h2>'+''.join(f'<h3>{scene}</h3><img src="/render-check/{scene}-eye-burst.gif">' for scene in ('planet','galaxy','text'))+'</html>'
 
 
 def capture(url,output):
@@ -181,8 +181,55 @@ def capture(url,output):
                     if t==8:(matrix/f'galaxy-{view}.png').write_bytes(png)
                     tile=Image.open(io.BytesIO(png)).convert('RGB');tile.thumbnail((504,317));time_sheet.paste(tile,(col*504,row*342+25));labels.text((col*504+8,row*342+6),f'{view} / t={t}s',fill='white')
             time_sheet.save(matrix/'galaxy-times.png')
+            active_checks=evaluate('window.__galaxyPreview.spotlightCheck()')
+            # Dedicated gallery views for the stronger scene interactions.
+            for state,name in [('base','galaxy-default.png'),('zoom','galaxy-fly-in.png')]:
+                info=evaluate(f'window.__galaxyPreview.snapshot("galaxy",{json.dumps(state)},8)')
+                (matrix/name).write_bytes(base64.b64decode(command('Page.captureScreenshot',dict(format='png'))['data']))
+            letter=evaluate('window.__galaxyPreview.letterSample(0)')
+            if letter['letter_selected']!=0 or letter['letter_weights'][0]<.99:raise RuntimeError('未整体选中字母')
+            (matrix/'text-letter-focus.png').write_bytes(base64.b64decode(command('Page.captureScreenshot',dict(format='png'))['data']))
+            def animation(name,rows,expression):
+                frames=[];metadata=[]
+                for ms,extra in rows:
+                    metadata.append(evaluate(expression(ms,extra)))
+                    image=Image.open(io.BytesIO(base64.b64decode(command('Page.captureScreenshot',dict(format='png'))['data']))).convert('RGB');image.thumbnail((756,475));frames.append(image)
+                atlas=Image.new('RGB',(756,475*len(frames)))
+                for n,frame in enumerate(frames):atlas.paste(frame,(0,n*475))
+                palette=atlas.quantize(colors=256);gif=[im.quantize(palette=palette,dither=Image.Dither.NONE) for im in frames]
+                gif[0].save(matrix/f'{name}.gif',save_all=True,append_images=gif[1:],duration=100,loop=0,disposal=2,optimize=False)
+                indices=[0,len(frames)//4,len(frames)//2,len(frames)*3//4,len(frames)-1]
+                strip=Image.new('RGB',(5*504,342),'#090e14');draw=ImageDraw.Draw(strip)
+                for col,index in enumerate(indices):
+                    tile=frames[index].copy();tile.thumbnail((504,317));strip.paste(tile,(col*504,25));draw.text((col*504+8,5),str(rows[index][0])+'ms',fill='white')
+                strip.save(matrix/f'{name}.png');return metadata
+            total=evaluate('fetch("/preview-config").then(r=>r.json()).then(o=>(o.transition_scatter_s+o.transition_s)*1000)')
+            assembly=animation('assembly',[(t,None) for t in range(0,round(total)+101,100)],lambda t,_:f'window.__galaxyPreview.assemblySample("planet","galaxy",{t})')
+            if any(r['scatter']>0 for r in assembly if r['transition']['busy']):raise RuntimeError('汇聚期间响应了手势')
+            # The real Python detector supplies all charge/trigger fields; only pixels are synthetic.
+            from types import SimpleNamespace
+            from gaze_core.galaxy_burst import ClosedEyeBurst
+            config=evaluate('fetch("/preview-config").then(r=>r.json())')
+            detector=ClosedEyeBurst(SimpleNamespace(**config['interaction']));eye_rows=[]
+            closed_end=100+((round(config['interaction']['blink_hold_ms'])+99)//100)*100
+            eye_end=closed_end+100+round(config['interaction']['burst_duration_ms'])
+            for ms in range(0,eye_end+100,100):
+                detector.feed(ms*1_000_000,'blink' if 100<=ms<=closed_end else 'tracking',stale_ms=config['stale_ms'])
+                eye_rows.append((ms,detector.snapshot(ms*1_000_000)))
+            if detector.blink_count!=1:raise RuntimeError('真实采集时钟闭眼状态机没有只触发一次')
+            bursts={}
+            for scene in ('planet','galaxy','text'):
+                bursts[scene]=animation(scene+'-eye-burst',eye_rows,lambda t,s:f'window.__galaxyPreview.eyeBurstSample({json.dumps(scene)},{t},{json.dumps(s)})')
+                if max(r['scatter'] for r in bursts[scene])<.99 or bursts[scene][-1]['scatter']>1e-5:raise RuntimeError('闭眼包络没有完整打散/回收')
+            combined=[]
+            for scene in ('planet','galaxy','text'):
+                for elapsed in (150,300):
+                    row=evaluate(f'window.__galaxyPreview.combinedSample({json.dumps(scene)},{elapsed})');combined.append(row)
+                    if abs(row['scatter']-max(row['hand_scatter'],row['burst_scatter']))>1e-8 or row['scatter']>1:raise RuntimeError('手势与闭眼打散发生叠加')
+            active_report=dict(combined=combined,spotlights=active_checks,letter=letter,assembly=assembly,bursts=bursts)
+            (matrix/'active-checks.json').write_text(json.dumps(active_report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             (matrix/'index.html').write_text(interaction_html(),encoding='utf-8')
-            (matrix/'manifest.json').write_text(json.dumps(dict(source='synthetic_swiftshader',hardware_fps_verified=False,checks=checks,sequences=sequences,view_checks=view_checks,galaxy_stability=stability),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+            (matrix/'manifest.json').write_text(json.dumps(dict(source='synthetic_swiftshader',hardware_fps_verified=False,checks=checks,sequences=sequences,view_checks=view_checks,galaxy_stability=stability,active_checks=active_report),ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             # Exercise the same in-page scene/view controls used by reviewers.
             controls=evaluate('''(()=>{document.querySelector('[data-scene="planet"]').click();
                 const view=document.getElementById('preview-view');view.value='top';view.dispatchEvent(new Event('change'));
@@ -212,7 +259,7 @@ def capture(url,output):
                 height=evaluate('document.documentElement.scrollHeight')
                 (output/'render_comparison.png').write_bytes(base64.b64decode(command('Page.captureScreenshot',dict(format='png',captureBeyondViewport=True,clip=dict(x=0,y=0,width=1512,height=height,scale=1)))['data']))
             report=dict(source='isolated_headless_swiftshader',real_camera_used=False,hardware_fps_verified=False,
-                viewport=[1512,950],time_s=8,captures=captures,motion_checks=motion,interaction_checks=checks,sequence_checks=sequences,view_checks=view_checks,galaxy_stability=stability,preview_controls_ok=controls,preview_simulation_controls_ok=simulations,unexpected_events=events,script_errors=errors)
+                viewport=[1512,950],time_s=8,captures=captures,motion_checks=motion,interaction_checks=checks,sequence_checks=sequences,view_checks=view_checks,galaxy_stability=stability,active_checks=active_report,preview_controls_ok=controls,preview_simulation_controls_ok=simulations,unexpected_events=events,script_errors=errors)
             (output/'render_check.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             if errors or events:raise RuntimeError('渲染检查出现脚本/着色器错误或意外WebSocket，见render_check.json')
             print('画面与对照图：'+str(output),flush=True)

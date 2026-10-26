@@ -1,12 +1,11 @@
 import {Intro,QualityController,usableFrame} from './logic.mjs';
 import {SceneSelection,sceneDirection,cornerDiagnostic,entryDiagnostic} from './scene-controls.mjs';
-import {ZoomIndicator} from './zoom-indicator.mjs';
 import {CornerIndicator} from './corner-indicator.mjs';
 import {burstDiagnostic} from './burst.mjs';
 import {handDiagnostic} from './planet-controls.mjs';
 const $=id=>document.getElementById(id),debug=new URLSearchParams(location.search).has('debug');
 const token=location.hash.slice(1);history.replaceState(null,'',location.pathname+location.search);
-const scene=new SceneSelection();let zoomIndicator,entryStatus=null,indicator,cornerStatus=null,debugBase='',burstStatus=null,lastAck=-Infinity;
+const scene=new SceneSelection();let entryStatus=null,indicator,cornerStatus=null,debugBase='',burstStatus=null,lastAck=-Infinity;
 let socket,renderer,options,quality,intro,latest=null,received=0,revision=0,nativeFull=false,ready=false,raf=0,last=null,reportAt=0,intervals=[],renderTimes=[],longFrames=0;
 const send=message=>{if(socket?.readyState===1)socket.send(JSON.stringify(message));};
 function updateDebug(){if(debug)$('debug').textContent=debugBase+'\n'+cornerDiagnostic(latest,cornerStatus,[innerWidth,innerHeight])+'\n'+entryDiagnostic(entryStatus)+'\n'+burstDiagnostic(burstStatus)+'\n'+(renderer?.transitionInfo?.busy?'切换汇聚中（交互锁定）':'交互就绪');}
@@ -39,7 +38,7 @@ function tick(now){
   if(renderer.transitionInfo?.ready&&renderer.transitionInfo.external&&now-lastAck>250){lastAck=now;send({type:'scene_done',scene_revision:renderer.transitionInfo.revision,viewport:revision});}
   renderTimes.push(performance.now()-renderStart);
   }catch(error){fail('星系绘制失败：'+error.message+'。可切回 Qt 星空。',2);return;}
-  indicator.draw(cornerStatus,usable&&progress>=1);zoomIndicator.draw(renderer.zoomFeedback);
+  indicator.draw(cornerStatus,usable&&progress>=1);
   $('eye').classList.toggle('online',!!frame?.gaze_valid);$('hand').classList.toggle('online',!!(frame?.control&&frame?.hands.length));
   $('eye').title=frame?.gaze_valid?'视线在线':'视线离线';$('hand').title=handDiagnostic(latest,usable);
   $('hand').classList.toggle('warming',!!frame?.hand_detected&&!frame?.control);
@@ -66,7 +65,7 @@ async function connect(){
    if(m.type==='config'){
     if(m.v!==5)throw new Error('版本不匹配，请完全退出并重启悬浮层及Demo页面');
     options=m.options;quality=new QualityController(options,options.visual.planet_particles+options.visual.ring_particles,options.visual.low_particle_count);intro=new Intro(options.intro_s);
-    const {GalaxyRenderer}=await import('./renderer.mjs');renderer=new GalaxyRenderer($('universe'),options,quality);indicator=new CornerIndicator(options.interaction);zoomIndicator=new ZoomIndicator(options.interaction);send({type:'clock_request'});
+    const {GalaxyRenderer}=await import('./renderer.mjs');renderer=new GalaxyRenderer($('universe'),options,quality);indicator=new CornerIndicator(options.interaction);send({type:'clock_request'});
     $('start').disabled=false;message('窗口就绪后，看着「进入星系」按钮中心再点击。凝视核心推近，凝视左右边缘换景；闭眼蓄力后睁眼或按B打散。');
    }else if(m.type==='clock_probe'){send({type:'clock_reply',probe_id:m.probe_id,browser_ms:performance.now()});}
    else if(m.type==='entry'){entryStatus=m.data;updateDebug();}
@@ -84,7 +83,7 @@ async function connect(){
  socket.addEventListener('error',()=>message('无法连接本机，请在悬浮层选择 Qt 星空备用。'));
 }
 let ended=false;
-function stop(){ended=true;send({type:'stop'});cancelAnimationFrame(raf);renderer?.close();indicator?.dispose();zoomIndicator?.dispose();socket?.close();window.close();$('gate').hidden=false;message('体验已结束，可关闭此页面。');}
+function stop(){ended=true;send({type:'stop'});cancelAnimationFrame(raf);renderer?.close();indicator?.dispose();socket?.close();window.close();$('gate').hidden=false;message('体验已结束，可关闭此页面。');}
 $('start').addEventListener('click',start);$('fallback').addEventListener('click',()=>{send({type:'fallback'});ended=true;window.close();});
 addEventListener('keydown',event=>{
  if(event.key==='Escape'){event.preventDefault();stop();return;}

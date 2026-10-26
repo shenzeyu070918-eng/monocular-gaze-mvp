@@ -18,7 +18,7 @@ from test_galaxy import geometry
 
 
 def packet(seq=0):
-    return dict(v=4,seq=seq,capture_us=0,completed_us=0,viewport=1,gaze_valid=1,gaze_state=0,
+    return dict(v=5,switch_mode=1,seq=seq,capture_us=0,completed_us=0,viewport=1,gaze_valid=1,gaze_state=0,
                 fixation=1,xy=[10.,20.],radius=[50.,50.],control=0,hands=[],distance=0.,
                 pattern=0,scene_revision=0,scene_from=0,scene_transition=0,scene_transition_ms=0.,burst_revision=0,burst_active=0,burst_elapsed_ms=0.,burst_source=0,blink_closed_ms=0.,blink_count=0,blink_reason=0,corner=-1,corner_dwell_ms=0.,corner_progress=0.,corner_state=0,corner_reset=0,intro=1,hand_ms=0.,hand_available=0,hand_detected=0,hand_openings=[],hand_error=0)
 
@@ -83,7 +83,7 @@ class GalaxyBridgeTests(unittest.TestCase):
         ws.send(json.dumps(dict(type='scene_done',viewport=revision,scene_revision=1)))
         self.assertEqual(self.receive(ws,'scene')['data']['scene_transition'],0)
         for ms in range(4300,5901,100):
-            current=self.bridge.scene_feed([-20,20],[50,50],ms*1_000_000,True,viewport_revision=revision)
+            current=self.bridge.scene_feed([1520,400],[50,50],ms*1_000_000,True,viewport_revision=revision)
         self.assertEqual(current['pattern'],2);self.assertEqual(current['corner_progress'],1)
         now[0]=8_100_000_000
         ws.send(json.dumps(dict(type='scene_done',viewport=revision,scene_revision=2)))
@@ -100,6 +100,29 @@ class GalaxyBridgeTests(unittest.TestCase):
         self.assertEqual(old['pattern'],0)
         ws.send(json.dumps(dict(type='scene_step',direction=1,viewport=new_revision,key='ArrowRight')))
         with self.assertRaises(ConnectionClosed):ws.recv(timeout=2)
+
+    def test_entry_clock_sampling_before_viewport_then_session_only_offset(self):
+        from gaze_core.config import ScreenGeometry
+        from overlay.galaxy_processor import GalaxyProcessor
+        from gaze_core.capture import CapturedFrame
+        import numpy as np
+        from unittest.mock import Mock
+        self.bridge.configure_entry(ScreenGeometry(30.,20.,1.,1.,measured=True),(.01,.01))
+        now=[1_000_000_000];self.bridge.clock=lambda:now[0]
+        p=GalaxyProcessor(self.bridge,self.bridge.options,(30,30),(.01,.01),model_factory=Mock())
+        image=np.zeros((3,3,3),np.uint8)
+        for n,ms in enumerate(range(0,1001,50)):
+            p.process(CapturedFrame(n,ms*1_000_000,image),dict(valid=True,status='tracking',raw=[.3,.6],head_degrees=[0,0,0],display=dict(unfiltered=[.49,.5])))
+        self.assertIsNone(p.model);self.assertTrue(self.bridge.entry.rows)
+        ws=self.client();self.receive(ws,'config');probe=self.receive(ws,'clock_probe')
+        ws.send(json.dumps(dict(type='clock_reply',probe_id=probe['probe_id'],browser_ms=1000.)))
+        ws.send(json.dumps(dict(type='geometry',**geometry(),buttonX=755.5,buttonY=458.5,click_ms=1000.)))
+        r=self.receive(ws,'entry')['data'];self.receive(ws,'ready')
+        self.assertEqual(r['applied'],1);self.assertEqual(r['samples'],7)
+        np.testing.assert_allclose(r['used_offset_cm'],[.3,0],atol=1e-12)
+        self.assertAlmostEqual(self.bridge.current_offset((0,0))[0],.01)
+        self.assertTrue(any(k=='entry_refresh' for k,_ in self.bridge.drain()))
+        self.bridge.close();self.assertFalse(self.bridge.entry.rows)
 
     def test_local_burst_cooldown_transition_lock_and_whitelist(self):
         now=[0];self.bridge.clock=lambda:now[0]
@@ -120,7 +143,7 @@ class GalaxyBridgeTests(unittest.TestCase):
         with self.assertRaises(ConnectionClosed):ws.recv(timeout=2)
 
     def test_notch_geometry_latest_frame_and_numeric_whitelist(self):
-        ws=self.client();config=self.receive(ws,'config');self.assertEqual(config['v'],4)
+        ws=self.client();config=self.receive(ws,'config');self.assertEqual(config['v'],5)
         self.assertNotIn('hand_model',config['options'])
         ws.send(json.dumps(dict(type='geometry',**geometry(fullscreen=0))))
         self.receive(ws,'geometry_error');self.assertIsNone(self.bridge.context()[0])

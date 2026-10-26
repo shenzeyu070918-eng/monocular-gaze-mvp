@@ -2,32 +2,42 @@
 import {Spring2D} from './logic.mjs';
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 export class CaptureDwell{
- constructor(durationMs,staleMs){this.duration=durationMs*1000;this.gap=staleMs*1000;this.reset();}
- reset(){this.last=null;this.since=null;this.active=false;}
- feed(frame,inside){
-  if(!frame?.gaze_valid||frame.intro){this.reset();return false;}
+ constructor(durationMs,staleMs,graceMs=0,releaseMs=0){this.duration=durationMs*1000;this.gap=staleMs*1000;this.grace=graceMs*1000;this.release=releaseMs*1000;this.reset();}
+ reset(){this.last=null;this.elapsed=0;this.active=false;this.away=null;this.lastInside=false;}
+ get progress(){return Math.min(1,this.elapsed/this.duration);}
+ feed(frame,inside,retain=inside){
+  if(!frame||frame.intro){this.reset();return false;}
   const t=frame.capture_us;
   if(this.last!==null&&t<=this.last)return this.active;
-  if(this.last!==null&&t-this.last>this.gap){this.since=null;this.active=false;}
-  this.last=t;
-  if(!inside){this.since=null;this.active=false;return false;}
-  if(this.since===null)this.since=t;
-  return this.active=t-this.since>=this.duration;
+  const dt=this.last===null?0:t-this.last;
+  if(dt>this.gap)this.reset();this.last=t;
+  let hit=!!frame.gaze_valid&&(this.active?retain:inside);const limit=this.active?this.release:this.grace;
+  if(this.away!==null&&t-this.away>limit){this.elapsed=0;this.active=false;this.lastInside=false;this.away=null;hit=!!frame.gaze_valid&&inside;}
+  if(!hit){
+   if(this.away===null)this.away=t;
+   this.lastInside=false;
+   if(limit===0){this.elapsed=0;this.active=false;}
+   return this.active;
+  }
+  if(!this.active&&this.away===null&&this.lastInside)this.elapsed+=dt;
+  this.away=null;this.lastInside=true;
+  if(this.elapsed>=this.duration)this.active=true;
+  return this.active;
  }
 }
 export class PlanetDirector{
- constructor(options){this.o=options;this.camera=new Spring2D();this.zoom=new Spring2D();this.eyeAlpha=0;this.scene=null;this.dwell=new CaptureDwell(options.interaction.zoom_dwell_ms,options.stale_ms);}
+ constructor(options){this.o=options;this.camera=new Spring2D();this.zoom=new Spring2D();this.eyeAlpha=0;this.scene=null;this.dwell=new CaptureDwell(options.interaction.zoom_dwell_ms,options.stale_ms,options.interaction.zoom_leave_grace_ms??300,options.interaction.zoom_release_ms??400);}
  reset(){this.camera=new Spring2D();this.zoom=new Spring2D();this.eyeAlpha=0;this.scene=null;this.dwell.reset();}
- update(frame,dt,size,inside,intro=1,scene='planet'){
+ update(frame,dt,size,inside,intro=1,scene='planet',retain=inside){
   if(scene!==this.scene){this.scene=scene;this.dwell.reset();this.zoom=new Spring2D();}
   const o=this.o,i=o.interaction,usable=intro>=1&&frame?.intro===0,eye=usable&&!!frame.gaze_valid;
   const yaw=scene==='text'?i.text_yaw_range_deg:scene==='galaxy'?i.galaxy_rotation_range_deg:i.yaw_range_deg,pitch=scene==='text'?i.text_pitch_range_deg:scene==='galaxy'?i.galaxy_pitch_range_deg:i.pitch_range_deg;
   const target=eye?[clamp(frame.xy[0]/size[0]*2-1,-1,1)*yaw,clamp(1-frame.xy[1]/size[1]*2,-1,1)*pitch]:[0,0];
   const angles=this.camera.step(target,dt,i.camera_spring_hz);
-  const zoom=this.dwell.feed(eye?frame:null,inside);
+  const zoom=this.dwell.feed(usable?frame:null,inside,retain);
   const z=this.zoom.step([Number(zoom),0],dt,i.zoom_spring_hz)[0];
   this.eyeAlpha+=(Number(eye)-this.eyeAlpha)*(1-Math.exp(-dt/i.gaze_fade_s));
-  return {yaw:clamp(angles[0],-yaw,yaw),pitch:clamp(angles[1],-pitch,pitch),zoom:clamp(z,0,1),eyeAlpha:this.eyeAlpha,eye};
+  return {yaw:clamp(angles[0],-yaw,yaw),pitch:clamp(angles[1],-pitch,pitch),zoom:clamp(z,0,1),eyeAlpha:this.eyeAlpha,eye,dwell_progress:this.dwell.progress,dwell_active:this.dwell.active};
  }
 }
 

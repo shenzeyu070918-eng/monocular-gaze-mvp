@@ -146,6 +146,18 @@ class PlanetInteractionSettings:
     text_pitch_range_deg: float = 3.
     camera_spring_hz: float = .7
     zoom_dwell_ms: float = 1500.
+    zoom_leave_grace_ms: float = 300.
+    zoom_release_ms: float = 400.
+    zoom_exit_ratio: float = 1.6
+    zoom_error_scale: float = 2.5
+    zoom_viewport_ratio: float = .12
+    zoom_core_scale: float = 1.
+    zoom_feedback_fade_ms: float = 400.
+    scene_switch_mode: str = 'edges'
+    edge_ratio: float = .12
+    entry_window_ms: float = 300.
+    entry_max_correction_cm: float = 3.
+    entry_clock_max_rtt_ms: float = 100.
     zoom_spring_hz: float = .65
     corner_ratio: float = .2
     corner_leave_grace_ms: float = 300.
@@ -188,10 +200,13 @@ class PlanetInteractionSettings:
     max_hand_scale: float = 1.5
 
     def __post_init__(self):
+        if self.scene_switch_mode not in ('edges','corners','off'):raise ValueError('scene_switch_mode 必须为 edges/corners/off')
         for f in fields(self):
+            if f.name=='scene_switch_mode':continue
             v=finite(getattr(self,f.name),'galaxy.interaction.'+f.name)
-            if v<0 or v==0 and f.name not in {'yaw_range_deg','pitch_range_deg','text_yaw_range_deg','text_pitch_range_deg','galaxy_rotation_range_deg','galaxy_pitch_range_deg','text_scatter_curl','text_scatter_stagger','text_well_brightness','galaxy_well_attraction','text_well_attraction','galaxy_well_brightness','spotlight_twinkle','spotlight_size_gain','text_letter_lift','galaxy_scatter_swirl','well_attraction','well_brightness','spin_boost','corner_leave_grace_ms','corner_feedback_fade_ms','corner_feedback_margin_px'}:
+            if v<0 or v==0 and f.name not in {'yaw_range_deg','pitch_range_deg','text_yaw_range_deg','text_pitch_range_deg','galaxy_rotation_range_deg','galaxy_pitch_range_deg','text_scatter_curl','text_scatter_stagger','text_well_brightness','galaxy_well_attraction','text_well_attraction','galaxy_well_brightness','spotlight_twinkle','spotlight_size_gain','text_letter_lift','galaxy_scatter_swirl','well_attraction','well_brightness','spin_boost','zoom_leave_grace_ms','zoom_release_ms','zoom_feedback_fade_ms','corner_leave_grace_ms','corner_feedback_fade_ms','corner_feedback_margin_px'}:
                 raise ValueError('交互参数必须为正数（可禁用项允许零）')
+        if not 0<self.edge_ratio<.5 or not 0<self.zoom_viewport_ratio<.5 or self.zoom_exit_ratio<1:raise ValueError('边缘/推近命中范围无效')
         if not 0<self.corner_ratio<.5 or max(self.yaw_range_deg,self.pitch_range_deg)>75:
             raise ValueError('角落范围/相机角度无效')
         if not 0<self.galaxy_zoom_core_ratio<=1 or not 0<self.galaxy_min_pitch_deg<=80 or self.galaxy_rotation_range_deg>180 or self.galaxy_pitch_range_deg>45:raise ValueError('银河核心/俯仰/旋转范围无效')

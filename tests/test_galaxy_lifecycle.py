@@ -13,6 +13,8 @@ from gaze_core.capture import CameraPipeline
 from gaze_core.config import load_settings
 from gaze_core.demo_frame import DemoFrameSlot
 from overlay.galaxy_session import GalaxySession
+from overlay.galaxy_bridge import GalaxyBridge
+from overlay.galaxy_browser import GalaxyBrowser
 from overlay.mapping import ScreenRect
 from overlay.state import RingView
 
@@ -30,6 +32,20 @@ class GalaxyLifecycleTests(unittest.TestCase):
                 galaxy.close();galaxy.cleanup.join(3)
         self.addCleanup(close)
         return galaxy,bridge,browser
+
+    def test_demo_debug_reaches_dedicated_chrome_url_query_before_token_removal(self):
+        from urllib.parse import urlsplit,parse_qs
+        for debug in (False,True):
+            with self.subTest(debug=debug):
+                options=load_settings(use_local=False).galaxy;screen=ScreenRect(0,0,1512,982)
+                bridge=GalaxyBridge(options,screen);bridge.port=8765;bridge.debug=debug
+                browser=GalaxyBrowser(bridge,screen,options);browser._stop.set()
+                process=Mock();process.wait.return_value=0
+                with patch('overlay.galaxy_browser.chrome_executable',return_value='/synthetic/chrome'),patch('overlay.galaxy_browser.subprocess.Popen',return_value=process) as launch:
+                    browser._run()
+                url=next(a.removeprefix('--app=') for a in launch.call_args.args[0] if a.startswith('--app='))
+                parsed=urlsplit(url);self.assertEqual(parsed.fragment,bridge.token)
+                self.assertEqual('debug' in parse_qs(parsed.query,keep_blank_values=True),debug)
 
     def test_resize_long_after_start_gets_fresh_geometry_timeout(self):
         now=[0.]

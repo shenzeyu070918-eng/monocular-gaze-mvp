@@ -258,6 +258,7 @@ class DemoWindow(QWidget):
         for button in self.run.buttons:
             x,y,w,h=button.rect;cx,cy=x+w/2,y+h/2
             painter.drawLine(QPointF(cx-10,cy),QPointF(cx+10,cy));painter.drawLine(QPointF(cx,cy-10),QPointF(cx,cy+10))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(QRectF(self.rect()).adjusted(1,1,-1,-1))
         font=QFont(self.heading_font);font.setPixelSize(18);painter.setFont(font)
         text='粉：修正前  蓝：修正后/按钮中心  '+(self.mapping_reason or '完整内屏逻辑坐标')

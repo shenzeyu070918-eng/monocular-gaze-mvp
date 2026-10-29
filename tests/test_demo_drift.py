@@ -53,7 +53,7 @@ class DemoDriftTests(unittest.TestCase):
             else:
                 self.assertEqual(result.status, 'rejected')
                 self.assertGreater(result.magnitude_cm, 3.)
-                self.assertIn('重新九点校准', result.reason)
+                self.assertIn('按 C 直接开始九点校准', result.reason)
                 self.assertEqual(drift.offset, (0., 0.))
                 self.assertFalse(drift.has_correction)
 

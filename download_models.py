@@ -6,6 +6,9 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parent
 MODELS = (
+    ('hand_landmarker.task',
+     'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+     'fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1'),
     ('eth-xgaze.safetensors',
      'https://huggingface.co/hysts/ptgaze-eth-xgaze-resnet18/resolve/5b6aebd02c7a612b50afb2e48c453f23533b8de3/model.safetensors',
      'd1c91b2aa6a0c73856c16890d337afdecdb05563ed52182dfdb77742f1c856bc'),

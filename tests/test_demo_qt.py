@@ -60,6 +60,19 @@ class DemoQtTests(unittest.TestCase):
                 window.refresh((500,500),.65,123);update.assert_not_called()
         finally:window.dispose();self.app.processEvents()
 
+    def test_c_key_requests_calibration_only_from_rejected_practice(self):
+        run=DemoRun('galaxy',DemoSettings(),1512,982,(90,90),group='B')
+        window=DemoWindow(run,self.app.primaryScreen(),run.options)
+        requested=Mock();window.calibration_requested.connect(requested)
+        def press(modifiers=Qt.KeyboardModifier.NoModifier,repeat=False):
+            window.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress,Qt.Key.Key_C,modifiers,'c',repeat))
+        try:
+            press();requested.assert_not_called()
+            window.calibration_available=True;press();requested.assert_called_once()
+            press(repeat=True);press(Qt.KeyboardModifier.ControlModifier);requested.assert_called_once()
+            run.phase='playing';press();requested.assert_called_once()
+        finally:window.dispose();self.app.processEvents()
+
     def make_session(self,*,group='B',pipeline='python',recording=False,practice=False):
         now=[0];settings=load_settings(use_local=False)
         settings=replace(settings,demo=replace(settings.demo,practice=practice,dwell_ms=1000))

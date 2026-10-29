@@ -144,7 +144,7 @@ class CameraPipeline:
     def __init__(self, settings=None, *, camera_factory=None, engine_factory=None,
                  collect_timings=False, clock_ns=time.perf_counter_ns,
                  recorder=None, recording_factory=None, display_pipeline=None, idle_after_s=None, idle_fps=None,
-                 result_sink=None):
+                 result_sink=None, demo_processor=None):
         if recorder is not None and recording_factory is not None:
             raise ValueError('recorder 和 recording_factory 只能指定一个。')
         self.settings = settings or load_settings()
@@ -175,6 +175,7 @@ class CameraPipeline:
         self._display_matrix_set = False
         self._display_matrix_revision = 0
         self._result_sink = result_sink
+        self._demo_processor = demo_processor
         self._result_queue = queue.Queue(self.settings.recording.queue_size)
         self._result_sink_error = None
         self._result_thread = None
@@ -617,6 +618,8 @@ class CameraPipeline:
                     display=self._display_pipeline.process(data,source='python',capture_ns=frame.captured_ns,
                                                            geometry=self.settings.geometry, **matrix_kwargs)
                     data=dict(data,display=dict(display,matrix_revision=matrix_revision))
+                if self._demo_processor is not None:
+                    self._demo_processor.process(frame,data)
                 with self._condition:
                     if self._pacing is not None:self._pacing.observe(data.get('status'),frame.captured_ns)
                     self._predicted += 1
@@ -633,6 +636,7 @@ class CameraPipeline:
             self._fail(exc)
         finally:
             self._engine_ready.set()
+            if self._demo_processor is not None:self._demo_processor.close()
             with self._condition:
                 self._in_flight = False
                 self._condition.notify_all()

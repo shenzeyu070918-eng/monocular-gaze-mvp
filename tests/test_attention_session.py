@@ -99,6 +99,23 @@ class AttentionSessionTests(unittest.TestCase):
                 self.wait(lambda:s.state=='paused');self.assertEqual(s.blocked,'camera_conditions_changed_restart_session')
                 self.assertEqual(list(read_jsonl(s.path/'gaze.jsonl')),[])
             finally:s.close()
+    def test_real_camera_adapter_metadata_aliases_are_accepted(self):
+        from gaze_core.camera import CameraAdapter
+        from gaze_core.profiles import build_conditions
+        with tempfile.TemporaryDirectory() as root:
+            settings=self.settings(root);screen=ScreenRect(0,0,320,200)
+            camera=CameraAdapter(None,undistort=settings.camera.undistort).prepare((640,480),settings.geometry.focal_scale).metadata
+            self.assertNotIn('index',camera);self.assertNotIn('grayscale',camera)
+            conditions=build_conditions(settings,camera,screen);profile=dict(PROFILE,conditions=conditions)
+            image=Path(root)/'fixture.png';Image.new('RGB',(10,10)).save(image)
+            s=AttentionSession(settings,screen,processor=self.processor,root=Path(root)/'sessions')
+            try:
+                s.start(profile,conditions,KERNEL,mode='stimulus',stimulus=dict(path=str(image),screen_rect=[0,0,1,1],kernel=KERNEL))
+                self.wait(lambda:s.scene_count==1);now=time.perf_counter_ns()
+                s.observe(NS(captured_ns=now,completed_ns=now+10,data=dict(valid=True,status='tracking',raw=[.5,.5],camera=camera)))
+                self.wait(lambda:(s.path/'gaze.jsonl').stat().st_size>0)
+                self.assertIsNone(s.blocked);self.assertEqual(len(list(read_jsonl(s.path/'gaze.jsonl'))),1)
+            finally:s.close()
     def test_real_processing_roundtrip_numpy_no_ocr_cloud(self):
         with tempfile.TemporaryDirectory() as root:
             settings=self.settings(root);metadata=dict(start_ns=0,end_ns=1000000000,geometry=asdict(settings.geometry),fixation=asdict(settings.fixation),heatmap=asdict(settings.heatmap),kernel=KERNEL,profile=PROFILE,mode='screen',analysis_size=[320,200])

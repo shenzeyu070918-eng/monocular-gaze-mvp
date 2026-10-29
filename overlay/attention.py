@@ -1,7 +1,7 @@
 """Minimal M9 controls and stimulus window. All analysis stays off Qt."""
 from pathlib import Path
 import time
-from PySide6.QtCore import Qt,QTimer,Signal,QPoint,QRectF
+from PySide6.QtCore import Qt,QTimer,Signal,QPoint,QRectF,QBuffer,QByteArray,QIODevice
 from PySide6.QtGui import QPainter,QImage,QImageReader
 from PySide6.QtWidgets import QLabel,QWidget,QFileDialog,QMessageBox
 from gaze_core.attention.session import AttentionSession
@@ -12,17 +12,23 @@ from gaze_core.heatmap import kernel_scale
 
 class StimulusWindow(QWidget):
     ready=Signal(object);cancelled=Signal()
-    def __init__(self,path,qscreen,screen):
+    def __init__(self,path,qscreen,screen,options=None):
         super().__init__()
         import hashlib
-        reader=QImageReader(str(path));reader.setAutoTransform(True);self.image=reader.read()
-        self.source_sha=hashlib.sha256(Path(path).read_bytes()).hexdigest()
-        self.screen_rect=screen;self.mapping=None;self._announced=False
+        from gaze_core.attention.settings import AttentionSettings
+        options=options or AttentionSettings()
+        if Path(path).stat().st_size>options.stimulus_max_mb*1024*1024:raise ValueError('刺激图片超过文件大小上限')
+        raw=Path(path).read_bytes();buffer=QBuffer();buffer.setData(QByteArray(raw));buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+        reader=QImageReader(buffer);reader.setAutoTransform(True);size=reader.size()
+        if size.width()*size.height()>options.stimulus_max_pixels:raise ValueError('刺激图片像素数超过配置上限')
+        self.image=reader.read();self.source_sha=hashlib.sha256(raw).hexdigest()
+        self.screen_rect=screen;self.mapping=None;self._announced=False;self._ended=False
         if self.image.isNull():raise ValueError('无法读取PNG/JPG图片')
         self.setWindowTitle('屏幕注意力 · 图片刺激物（Esc结束）')
         self.winId();self.windowHandle().setScreen(qscreen);self.setGeometry(qscreen.geometry())
         self.showFullScreen();QTimer.singleShot(400,self._ready)
     def _ready(self):
+        if self._ended:return
         p=self.mapToGlobal(QPoint(0,0));c=DemoCoordinates(self.screen_rect,window_origin=(p.x(),p.y()),window_size=(self.width(),self.height()),fullscreen=self.isFullScreen())
         if not c.ready:self.ready.emit(ValueError(c.reason));return
         self.mapping=StimulusMapping(c,(self.image.width(),self.image.height()));self.update()
@@ -31,17 +37,22 @@ class StimulusWindow(QWidget):
         if self.mapping:painter.drawImage(QRectF(*self.mapping.image_rect),self.image)
         painter.end()
         if self.mapping is not None and not self._announced:
-            self._announced=True;QTimer.singleShot(0,lambda:self.ready.emit(self.mapping))
+            self._announced=True;QTimer.singleShot(0,lambda:self.ready.emit(self.mapping) if not self._ended else None)
     def resizeEvent(self,event):
         if self.mapping is not None:
             # A changed fit invalidates binding. End this session rather than
             # silently stretching earlier gaze into a new image geometry.
             self.cancelled.emit()
         super().resizeEvent(event)
+    def moveEvent(self,event):
+        if self.mapping is not None:
+            p=self.mapToGlobal(QPoint(0,0))
+            if (p.x(),p.y())!=self.mapping.coordinates.window_origin:self.cancelled.emit()
+        super().moveEvent(event)
     def keyPressEvent(self,event):
         if event.key()==Qt.Key.Key_Escape:self.cancelled.emit()
         else:super().keyPressEvent(event)
-    def closeEvent(self,event):self.cancelled.emit();event.accept()
+    def closeEvent(self,event):self._ended=True;self.cancelled.emit();event.accept()
 
 
 class AttentionUI:
@@ -80,7 +91,9 @@ class AttentionUI:
         if not s._running or s.latest is None or s.active or s._demo_active or s.clicks is not None and s.clicks.active:raise ValueError('请先恢复摄像头并结束当前交互任务')
         if s._active_group!='B':raise ValueError('请先启用匹配的 Python 九点校准，粗校准不适用。')
         self.service.screen=s.screen
-        self.service.start(s.profiles.profile,s.profiles.conditions,self._kernel(),**kwargs)
+        report=s.controller.snapshot().report or {}
+        runtime={key:report.get(key) for key in ('device','device_name','actual_resolution','actual_backend','inference_max_fps')}
+        self.service.start(s.profiles.profile,s.profiles.conditions,self._kernel(),runtime=runtime,**kwargs)
         if kwargs.get('mode')=='stimulus':self.controls.panel.hide()
         self._last=None
 
@@ -126,8 +139,10 @@ class AttentionUI:
         try:
             self.controls.panel.hide()
             self._pending_stimulus=True
-            self.stimulus=StimulusWindow(path,self.controls.screen,self.session.screen)
+            self.stimulus=StimulusWindow(path,self.controls.screen,self.session.screen,self.session.settings.attention)
+            opened=self.stimulus
             def ready(mapping):
+                if self.stimulus is not opened:return
                 self._pending_stimulus=False
                 if isinstance(mapping,Exception):self.notice(str(mapping),True);self._close_stimulus();return
                 try:self._start(mode='stimulus',stimulus=dict(path=path,sha256=self.stimulus.source_sha,screen_rect=mapping.normalized_rect(),kernel=mapping.kernel(self._kernel())))
@@ -138,7 +153,7 @@ class AttentionUI:
 
     def _close_stimulus(self):
         if self.stimulus is not None and not self._closing_stimulus:
-            self._closing_stimulus=True;old=self.stimulus;self.stimulus=None;old.close();old.deleteLater();self._closing_stimulus=False
+            self._closing_stimulus=True;self._pending_stimulus=False;old=self.stimulus;self.stimulus=None;old.close();old.deleteLater();self._closing_stimulus=False
 
     def end(self):
         self.service.stop();self._close_stimulus()
@@ -162,7 +177,7 @@ class AttentionUI:
             worker.block(reason)
         hidden=worker.active and not self.controls.actions['attention_ring'].isChecked()
         self.window.set_attention_ring_hidden(hidden)
-        key=(worker.state,worker.error,worker.scene_count,str(worker.path),worker.blocked)
+        key=(worker.state,worker.error,worker.scene_count,str(worker.path),worker.blocked,active,s.latest is not None,s.active,demo_active,screen_changed)
         if key==self._last and (not worker.active or now_ns<self._next_ui):return
         self._last=key;self._next_ui=now_ns+250000000
         seconds=0 if worker.started_ns is None else max(0,int((now_ns-worker.started_ns)/1e9))

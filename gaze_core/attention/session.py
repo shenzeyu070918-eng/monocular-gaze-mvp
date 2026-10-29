@@ -31,14 +31,14 @@ class AttentionSession:
     @property
     def active(self):return self.state in ('starting','recording','paused')
     @property
-    def busy(self):return self.active or self.state in ('finalizing','deleting')
+    def busy(self):return self.active or self.state in ('finalizing','deleting') or (self._cancel.is_set() and self.path is not None)
 
     def _put(self,command):
         try:self._commands.put_nowait(command);self._wake.set();return True
         except queue.Full:
             self.error='注意力数值队列已满，已停止会话；不能丢弃帧后仍报告成功。';self.desired=False;self._end='queue_overflow';self._epoch+=1;self._wake.set();return False
 
-    def start(self,profile,conditions,kernel,*,mode='screen',stimulus=None):
+    def start(self,profile,conditions,kernel,*,mode='screen',stimulus=None,runtime=None):
         if self._shutdown:raise ValueError('注意力后台已关闭')
         if self.busy:raise ValueError('同一时间只允许一个注意力会话')
         from gaze_core.profiles import PYTHON_COORDINATE_VERSION
@@ -54,7 +54,7 @@ class AttentionSession:
         self._accepting_frames=False;self.user_paused=False;self.blocked=None;self.mode=mode;self.profile_id=profile.get('calibration_id')
         self.started_ns=self.clock_ns();self._stop_ns=None;self._sample_count=0;self._first_sample_ns=self._last_sample_ns=None
         metadata=dict(mode=mode,start_ns=self.started_ns,wall_started_at=time.strftime('%Y-%m-%dT%H:%M:%S%z'),system=platform.platform(),
-                      program_version=self._version(),geometry=asdict(self.settings.geometry),fixation=asdict(self.settings.fixation),heatmap=asdict(self.settings.heatmap),
+                      program_commit=self._version(),program_version=self._app_version(),runtime=deepcopy(runtime or {}),inference=asdict(self.settings.inference),camera=asdict(self.settings.camera),geometry=asdict(self.settings.geometry),fixation=asdict(self.settings.fixation),heatmap=asdict(self.settings.heatmap),
                       attention={k:v for k,v in asdict(self.settings.attention).items() if k not in ('excluded_apps','manual_aoi')},screen=asdict(self.screen),analysis_size=[self.screen.width,self.screen.height],
                       profile=deepcopy(profile),kernel=deepcopy(kernel),time_source='perf_counter_ns; snapshot request/receive interval',
                       privacy=dict(local_only=True,cursor=False,window_titles=False,ocr_during_capture=False))
@@ -62,6 +62,12 @@ class AttentionSession:
         queued=self._put(('start',metadata,stimulus,self._epoch))
         if not queued:self.state='error'
         return queued
+
+    @staticmethod
+    def _app_version():
+        from gaze_core.config import ROOT
+        try:return json.loads((ROOT/'package.json').read_text(encoding='utf-8'))['version']
+        except Exception:return 'unknown'
 
     @staticmethod
     def _version():
@@ -84,7 +90,13 @@ class AttentionSession:
         if not self._accepting_frames or not self.active or not self.desired or self.user_paused or self.blocked or prediction.captured_ns<=self.started_ns:return
         camera=prediction.data.get('camera')
         expected=(self._metadata or {}).get('profile',{}).get('conditions',{}).get('camera')
-        if camera is not None and expected is not None and any(camera.get(k)!=expected.get(k) for k in ('index','width_px','height_px','grayscale','intrinsics_source','intrinsics_reason','undistort_applied') if k in expected):
+        # Match build_conditions' aliases/defaults: frame metadata has
+        # camera_index (often absent), not profile.camera.index/grayscale.
+        actual=None if camera is None else dict(index=camera.get('camera_index',self.settings.camera.index),grayscale=self.settings.camera.grayscale,
+                    width_px=camera.get('width_px'),height_px=camera.get('height_px'),intrinsics_source=camera.get('intrinsics_source'),
+                    intrinsics_reason=camera.get('intrinsics_reason'),undistort_applied=camera.get('undistort_applied',False),
+                    undistort_enabled=camera.get('undistort_enabled',self.settings.camera.undistort))
+        if actual is not None and expected is not None and any(actual[k]!=expected[k] for k in actual if k in expected):
             self.block('camera_conditions_changed_restart_session',since_ns=int(prediction.captured_ns));return
         try:self._put(('frame',frame_record(prediction),self._epoch))
         except Exception as exc:self.error='注意力数值格式失败：'+str(exc);self.stop('invalid_numeric')
@@ -193,7 +205,7 @@ class AttentionSession:
         finished=self.clock_ns()
         self._store.write_json('completion.json',dict(end_requested_ns=end,artifacts_flushed_ns=finished,finalization_ms=(finished-end)/1e6,definition='结束请求至主要数据文件写完并flush/fsync；不含本完成标记自身写入耗时'),final=True)
         self._store=None;self._metadata=None;self._detector=None
-        self.state='error' if self.error else 'ended'
+        self.state='deleting' if self._cancel.is_set() else 'error' if self.error else 'ended'
 
     def _run(self):
         next_capture=0.

@@ -137,6 +137,9 @@ overlay:
     heatmap_view: Ctrl+Alt+V
     demo: Ctrl+Alt+D
     demo_practice: Ctrl+Alt+R
+    attention_start: Ctrl+Alt+A
+    attention_pause: Ctrl+Alt+S
+    attention_end: Ctrl+Alt+E
 
 # M5: offset only, no nine-point fine tuning. Sampling thresholds remain M4's.
 autocal:
@@ -450,3 +453,28 @@ galaxy:
     text_flow: 0.06
     planet_colors: ['#d8ad55', '#ffe498', '#fff5bf']
     ring_colors: ['#437b9f', '#83c4d7', '#effaff']
+
+# M9 opt-in LOCAL screen attention; no screenshots outside an active session.
+attention:
+  capture_hz: 2
+  stable_ms: 750
+  min_scene_interval_ms: 1000
+  max_unstable_ms: 4000
+  thumbnail_width: 320
+  tile_px: 16
+  pixel_delta: 12
+  min_changed_area: 0.025
+  repeat_samples: 6
+  repeat_count: 3
+  max_dynamic_area: 0.35
+  max_disk_mb: 1024
+  queue_size: 256
+  hide_ring: true
+  excluded_apps: [1Password, 微信, WeChat]
+  output_dir: data/attention
+  manual_aoi: null
+  ocr_languages: [zh-Hans, en-US]
+  scroll_min_confidence: 0.25
+  scroll_max_horizontal_px: 12
+  aoi_merge_gap_sigma: 0.5
+  soft_grid_width: 320

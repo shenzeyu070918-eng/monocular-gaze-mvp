@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 from .starfield import StarfieldSettings
 from .galaxy import GalaxySettings
+from .attention.settings import AttentionSettings
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / 'config/default.yaml'
@@ -239,7 +240,7 @@ class OverlaySettings:
     presentation_label_font_px: int = 26
     calibration_notice_s: float = 3.0
     coordinate_warning_s: float = 1.0
-    hotkeys: dict = field(default_factory=lambda: dict(toggle='Ctrl+Alt+G', pause='Ctrl+Alt+P', calibrate='Ctrl+Alt+C', panel='Ctrl+Alt+O', heatmap_toggle='Ctrl+Alt+H',heatmap_view='Ctrl+Alt+V',demo='Ctrl+Alt+D',demo_practice='Ctrl+Alt+R'))
+    hotkeys: dict = field(default_factory=lambda: dict(toggle='Ctrl+Alt+G', pause='Ctrl+Alt+P', calibrate='Ctrl+Alt+C', panel='Ctrl+Alt+O', heatmap_toggle='Ctrl+Alt+H',heatmap_view='Ctrl+Alt+V',demo='Ctrl+Alt+D',demo_practice='Ctrl+Alt+R',attention_start='Ctrl+Alt+A',attention_pause='Ctrl+Alt+S',attention_end='Ctrl+Alt+E'))
 
     def __post_init__(self):
         import re
@@ -273,8 +274,8 @@ class OverlaySettings:
             raise ValueError('overlay.presentation_label_font_px 必须为正整数')
         if not isinstance(self.presentation_color,str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',self.presentation_color):
             raise ValueError('overlay.presentation_color 必须为 #RRGGBB')
-        if not isinstance(self.hotkeys,dict) or not {'toggle','pause','calibrate','panel'}<=set(self.hotkeys) or set(self.hotkeys)-{'toggle','pause','calibrate','panel','heatmap_toggle','heatmap_view','demo','demo_practice'} or any(not isinstance(v,str) for v in self.hotkeys.values()):
-            raise ValueError('overlay.hotkeys 必须包含 toggle / pause / calibrate / panel，可加 heatmap_toggle / heatmap_view / demo / demo_practice；空字符串禁用该项')
+        if not isinstance(self.hotkeys,dict) or not {'toggle','pause','calibrate','panel'}<=set(self.hotkeys) or set(self.hotkeys)-{'toggle','pause','calibrate','panel','heatmap_toggle','heatmap_view','demo','demo_practice','attention_start','attention_pause','attention_end'} or any(not isinstance(v,str) for v in self.hotkeys.values()):
+            raise ValueError('overlay.hotkeys 必须包含 toggle / pause / calibrate / panel，可加热力图 / Demo / attention_start / attention_pause / attention_end；空字符串禁用该项')
         from urllib.parse import urlsplit
         url=urlsplit(self.web_url)
         if url.scheme!='http' or url.hostname not in {'127.0.0.1','localhost','::1'}:
@@ -420,6 +421,7 @@ class Settings:
     demo: DemoSettings = DemoSettings()
     starfield: StarfieldSettings = StarfieldSettings()
     galaxy: GalaxySettings = GalaxySettings()
+    attention: AttentionSettings = AttentionSettings()
 
 
 def select_device(requested, cuda_available, mps_available=False):
@@ -478,7 +480,7 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
         note(override, str(local))
         sources.append(str(local))
     required = {'inference', 'camera', 'geometry', 'recording', 'jump'}
-    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay', 'click_session', 'heatmap', 'autocal', 'demo', 'starfield', 'galaxy'}:
+    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay', 'click_session', 'heatmap', 'autocal', 'demo', 'starfield', 'galaxy', 'attention'}:
         raise ValueError('配置必须包含 inference、camera、geometry、recording、jump 五部分')
     settings = Settings(InferenceSettings(**data['inference']), CameraSettings(**data['camera']),
                         ScreenGeometry(**data['geometry']), RecordingSettings(**data['recording']), JumpSettings(**data['jump']),
@@ -495,7 +497,8 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
                        autocal=AutocalSettings(**data.get('autocal', {})),
                        demo=DemoSettings(**data.get('demo', {})),
                        starfield=StarfieldSettings(**data.get('starfield', {})),
-                       galaxy=GalaxySettings(**data.get('galaxy', {})))
+                       galaxy=GalaxySettings(**data.get('galaxy', {})),
+                       attention=AttentionSettings(**data.get('attention', {})))
     i, c, g = settings.inference, settings.camera, settings.geometry
     # Validate the request separately from actual device availability.
     if i.device not in {'auto', 'cpu', 'cuda', 'mps'}:

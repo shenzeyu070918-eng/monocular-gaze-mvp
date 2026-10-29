@@ -68,7 +68,7 @@ class SceneDetector:
         uncertain=None if self.last_old is None else [self.last_old.time_ns,first.time_ns]
         result=dict(type='scene',scene_id=f'{self.number:06d}',start_ns=first.time_ns,confirmed_ns=now,
                     request_ns=first.request_ns,received_ns=first.received_ns,time_source='snapshot_request_receive_midpoint',
-                    capture_uncertainty_ns=(first.received_ns-first.request_ns)//2,transition=uncertain,
+                    request_span_ns=first.received_ns-first.request_ns,timestamp_bound_guaranteed=False,transition=uncertain,
                     dynamic=bool(forced and not stable),ignored_dynamic_fraction=float(mask.mean()),app_name=sample.app_name)
         if self.last_scene_pixels is not None and self.last_app==sample.app_name:
             result['scroll']=scroll_offset(self.last_scene_pixels,sample.pixels,self.o)

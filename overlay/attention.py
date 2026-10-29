@@ -121,7 +121,7 @@ class AttentionUI:
                     self.service._put(('acceptance',dict(type='acceptance',kind='cpu_recording',time_ns=event['time_ns'],measurement=event['cpu'])))
                     self.end()
                 else:self.service._put(('acceptance',event))
-            self.guide.message.connect(message)
+            self.guide.message.connect(message,Qt.ConnectionType.QueuedConnection)
             self.controls.panel.hide()
             if not QDesktopServices.openUrl(QUrl(self.guide.url)):raise RuntimeError('无法打开本地验收页')
         except Exception as exc:self.notice('无法开始引导：'+str(exc),True)

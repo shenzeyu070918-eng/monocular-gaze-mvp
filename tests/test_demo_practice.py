@@ -151,7 +151,37 @@ class DemoPracticeTests(unittest.TestCase):
         self.assertGreater(manager.drift.last_result.magnitude_cm, 3)
         self.assertEqual(manager.drift.offset, old_offset)
         self.assertEqual(manager.drift.magnitude_cm, old_magnitude)
-        self.assertIn('重新九点校准', manager.run.practice_message)
+        self.assertIn('按 C 直接开始九点校准', manager.run.practice_message)
+
+    def test_rejected_practice_calibrates_and_returns_to_same_demo_only_after_success(self):
+        for application in ('board','galaxy'):
+            with self.subTest(application=application):
+                manager,session,overlay,panel,now=self.make()
+                screen=object();manager.start(application,screen)
+                saved=manager._saved;old_window=manager.window
+                manager.start_calibration=Mock(return_value=SimpleNamespace(calibration_id='new-nine'))
+                self.assertFalse(manager.calibrate_from_practice()) # no rejected estimate yet
+                self.practice(manager,now,offset=(.11,0),early_offset=(0,0))
+                self.assertEqual(manager.drift.status,'rejected');self.assertTrue(old_window.calibration_available)
+                session.active=True
+                self.assertTrue(manager.calibrate_from_practice());self.assertFalse(manager.active)
+                manager.start_calibration.assert_called_once();old_window.dispose.assert_called_once()
+                manager.poll_calibration_return(active=True);self.assertIsNotNone(manager._calibration_return)
+                session.active=False;session.display_revision+=1;session.profiles.calibration_id='new-nine'
+                if application=='galaxy':session.settings=replace(session.settings,demo=replace(session.settings.demo,practice=False))
+                self.assertTrue(manager.calibration_succeeded());self.assertEqual(manager.run.app,application)
+                self.assertEqual(manager.run.phase,'practice');self.assertEqual(manager.drift.offset,(0.,0.))
+                self.assertIs(manager._qscreen,screen);self.assertEqual(manager._saved,saved)
+                self.assertFalse(manager.calibration_succeeded());manager.cancel()
+
+    def test_cancelled_or_failed_calibration_never_reopens_demo_on_later_success(self):
+        for stop in ('cancelled','paused','wrong_profile'):
+            manager,session,_,_,now=self.make();manager.start('galaxy',None)
+            manager.start_calibration=Mock(return_value=SimpleNamespace(calibration_id='requested'))
+            self.practice(manager,now,offset=(.11,0),early_offset=(0,0));session.active=True;manager.calibrate_from_practice()
+            session.active=False;session.profiles.calibration_id='other' if stop=='wrong_profile' else 'requested'
+            if stop!='wrong_profile':manager.poll_calibration_return(active=stop!='paused')
+            self.assertFalse(manager.calibration_succeeded());self.assertFalse(manager.active)
 
     def test_unmeasured_screen_continues_without_inventing_cm_or_offset(self):
         manager, session, overlay, panel, now = self.make(measured=False)

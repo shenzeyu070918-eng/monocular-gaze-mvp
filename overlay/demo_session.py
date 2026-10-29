@@ -1,5 +1,6 @@
 """Demo ownership, filtered-result delivery and optional numeric recording."""
 import time
+from copy import deepcopy
 from gaze_core.demo import DemoRun
 
 
@@ -11,6 +12,8 @@ class DemoSession:
         self._token=None;self._deferred=[];self.debug=debug;self._mapping_reason=None
         self.drift=None;self._mapping=None
         self._viewport=None;self._coordinate_blocked_since=None
+        self.galaxy=None;self._galaxy_dialog=None;self._qscreen=None
+        self.start_calibration=None;self._calibration_return=None
 
     @property
     def active(self):return self.run is not None
@@ -19,7 +22,8 @@ class DemoSession:
         s=self.session
         return s.display_revision,s.profiles.conditions,getattr(s,'_active_group','A')
 
-    def start(self,app,qscreen):
+    def start(self,app,qscreen,*,force_practice=False):
+        self._calibration_return=None
         s=self.session
         if self.active or s.active or s.profiles.busy or (s.clicks is not None and s.clicks.active):
             raise ValueError('请先结束当前任务或点击采集会话')
@@ -28,6 +32,7 @@ class DemoSession:
             raise ValueError('请先完成条件匹配的悬浮层九点校准或点击粗校准')
         if s.controller.snapshot().status!='running':raise ValueError('请先恢复摄像头')
         settings=s.settings;rect=self.overlay.rect_info
+        self._qscreen=qscreen
         radius=s.radius if s.radius is not None else settings.overlay.radius_cm
         radii=rect.radii(radius,settings.geometry,settings.overlay.fallback_radius_px)
         if app=='stars':
@@ -39,6 +44,7 @@ class DemoSession:
         o=settings.demo;geometry=settings.geometry
         self.drift=DemoDrift(DriftSettings(o.practice_window_ms,o.practice_min_samples,o.practice_min_span_ms,o.practice_max_correction_cm),
                              width_cm=geometry.width_cm,height_cm=geometry.height_cm,measured=geometry.measured)
+        if force_practice:run.repractice(self.clock())
         run.practice_gate=self._practice_gate
         if self.window_factory is None:
             from .demo_window import DemoWindow
@@ -52,7 +58,9 @@ class DemoSession:
         self._viewport=None;self._coordinate_blocked_since=None
         run.prepare_coordinates=self._prepare_coordinates
         self._practice_status('等待看着练习按钮中间的点' if settings.demo.practice else '未做本次 Demo 漂移修正')
+        window.calibration_available=False
         window.cancelled.connect(self.cancel)
+        if hasattr(window,'calibration_requested'):window.calibration_requested.connect(self.calibrate_from_practice)
         try:
             s.set_demo_active(True)
             self.overlay.hide();self.panel.hide();window.open()
@@ -64,11 +72,18 @@ class DemoSession:
         if self._context()!=self._token:self.cancel('conditions_changed');return
         if not active:self.cancel('camera_paused');return
         run=self.run
+        if self.galaxy is not None:
+            self._galaxy_tick();return
         if run.app=='stars' and run.worker.error:
             self.notice(run.worker.error,True);self.cancel('prediction_error');return
         mapping=self.window.coordinates()
         coordinate_ready=self._prepare_coordinates(mapping,now_ns)
         run.advance(now_ns)
+        if run.app=='galaxy' and run.phase=='playing':
+            from .galaxy_session import GalaxySession
+            self.window.hide()
+            self.galaxy=GalaxySession(self.session,run.radii,self.drift.offset,debug=self.debug)
+            self._events();return
         if prediction is not None and eligible:
             valid=display.tracking and coordinate_ready and not self.panel.isVisible()
             if run.phase=='practice':
@@ -125,15 +140,83 @@ class DemoSession:
         target=self._mapping.window_to_screen((x+w/2,y+h/2))
         result=self.drift.estimate(target,event['capture_ns'])
         self.run.practice_message=result.reason;self._practice_status(result.reason)
+        self.window.calibration_available=result.status=='rejected' and self.start_calibration is not None
         return result.status in {'applied','unmeasured'}
+
+    def calibrate_from_practice(self):
+        if not self.active or self.run.phase!='practice' or self.drift.status!='rejected' or self.start_calibration is None:return False
+        app,screen,saved=self.run.app,self._qscreen,self._saved
+        conditions=deepcopy(self.session.profiles.conditions);rect=self.overlay.rect_info
+        self.cancel('recalibrate')
+        try:
+            runner=self.start_calibration()
+            self._calibration_return=(app,screen,rect,conditions,runner.calibration_id,saved)
+        except Exception:
+            # The normal task launcher reports the error and restores controls.
+            try:
+                self.start(app,screen,force_practice=True);self._saved=saved
+            except Exception as exc:self.notice('未能返回 Demo 练习：'+str(exc),True)
+            return False
+        return True
+
+    def calibration_succeeded(self,qscreen=None):
+        pending,self._calibration_return=self._calibration_return,None
+        if pending is None:return False
+        app,screen,rect,conditions,calibration_id,saved=pending
+        if (self.session.profiles.calibration_id!=calibration_id or self.overlay.rect_info!=rect
+                or self.session.profiles.conditions!=conditions):return False
+        try:self.start(app,screen if qscreen is None else qscreen,force_practice=True)
+        except Exception as exc:self.notice('九点已保存，但未能返回 Demo 练习：'+str(exc),True);return False
+        self._saved=saved
+        return True
+
+    def poll_calibration_return(self,*,active):
+        # Called only while waiting; success is signalled after profile activation.
+        if self._calibration_return is not None and (not active or not self.session.active):
+            self._calibration_return=None
 
     def repractice(self):
         if not self.active:return False
+        if self.galaxy is not None:self.galaxy.close();self.galaxy=None
         if self.speech is not None:self.speech.stop()
-        self.drift.restart();self.run.repractice(self.clock())
+        self.drift.restart();self.run.repractice(self.clock());self.window.calibration_available=False
         self._practice_status('请看着练习按钮中间的点；新的结果替换旧偏移')
         self.panel.hide();self.window.open()
         return True
+
+    def _galaxy_tick(self):
+        for kind,value in self.galaxy.poll():
+            if kind=='stop':self.cancel('window_closed');return
+            if kind=='disconnected':kind,value='error','本地连接已断开，可重试或切回 Qt 星空'
+            if kind=='fallback':self._galaxy_fallback();return
+            if kind=='warning':self.notice('眼手星系：'+str(value),False)
+            if kind=='geometry':
+                message='星系网页实际客户区：'+str(value)
+                logger=getattr(self.session,'geometry_logger',None)
+                if logger is not None:logger(message)
+            if kind=='error' and self._galaxy_dialog is None:
+                from PySide6.QtWidgets import QMessageBox
+                value={1:'页面连接不可用',2:'WebGL2或GPU浮点渲染不可用',3:'本地连接断开'}.get(value,value)
+                self.galaxy.close();self.panel.present()
+                self.notice('眼手星系不可用：'+str(value),True)
+                box=QMessageBox(self.panel);box.setWindowTitle('眼手星系')
+                box.setText('星系连接或WebGL不可用。是否切回Qt星空？\n'+str(value))
+                fallback=box.addButton('切回 Qt 星空',QMessageBox.ButtonRole.AcceptRole)
+                box.addButton('退出 Demo',QMessageBox.ButtonRole.RejectRole)
+                self._galaxy_dialog=box
+                def chosen(button):
+                    if not self.active:return
+                    use_qt=button is fallback
+                    self._galaxy_dialog=None
+                    if use_qt:self._galaxy_fallback()
+                    else:self.cancel('window_closed')
+                box.buttonClicked.connect(chosen);box.open()
+                box.finished.connect(lambda *_:self.cancel('window_closed') if self._galaxy_dialog is box and self.active else None)
+
+    def _galaxy_fallback(self):
+        screen=self._qscreen
+        self.cancel('window_closed')
+        self.start('stars',screen)
 
     def _speak(self,text):
         if self.speech is None:
@@ -166,7 +249,11 @@ class DemoSession:
             recording.emit(kind,**event)
 
     def cancel(self,reason='escape',*,restore=True):
+        self._calibration_return=None
         if not self.active:return
+        if self._galaxy_dialog is not None:
+            dialog,self._galaxy_dialog=self._galaxy_dialog,None;dialog.close()
+        if self.galaxy is not None:self.galaxy.close();self.galaxy=None
         self.run.close(self.clock(),reason);self._events(final=True)
         undone=bool(self.run.selections and self.run.selections[-1]['false_activation'] is True)
         if self.speech is not None:self.speech.stop();self.speech=None

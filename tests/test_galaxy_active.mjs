@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {AssemblyTransition} from '../static/galaxy/assembly.mjs';
+import {BurstEnvelope} from '../static/galaxy/burst.mjs';
+import {letterHit,LetterFocus} from '../static/galaxy/letter-focus.mjs';
+import {textField} from '../static/galaxy/particle-fields.mjs';
+const visual=JSON.parse(readFileSync(new URL('./fixtures/galaxy-visual.json',import.meta.url)));
+const o={transition_scatter_s:.5,transition_s:1.6,interaction:{burst_attack_ms:300,burst_hold_ms:400,burst_duration_ms:2500}};
+const t=new AssemblyTransition(o);t.accept({pattern:1,scene_from:0,scene_revision:1,scene_transition:1,scene_transition_ms:0},1000);
+assert.equal(t.sample(1000).pattern,0);assert.equal(t.sample(1250).assembly,.5);
+assert.equal(t.sample(1500).pattern,1);assert.equal(t.sample(1500).assembly,0);
+assert.ok(t.sample(2300).assembly>.49&&t.sample(2300).assembly<.51);assert.equal(t.sample(3100).ready,true);assert.equal(t.sample(5000).busy,true);
+t.accept({pattern:1,scene_from:0,scene_revision:1,scene_transition:0,scene_transition_ms:0},5000);assert.equal(t.sample(5000).busy,false);
+t.accept({pattern:1,scene_from:0,scene_revision:1,scene_transition:1,scene_transition_ms:100},5100);assert.equal(t.sample(5100).busy,false);
+t.request(2,5200);assert.equal(t.sample(5200).busy,true);t.request(0,5300);assert.equal(t.pattern,2);assert.equal(t.sample(7300).busy,false);
+const burst=new BurstEnvelope(o);burst.accept({burst_revision:1,burst_active:1,burst_elapsed_ms:0},1000);
+assert.equal(burst.value(1000),0);assert.equal(burst.value(1300),1);assert.equal(burst.value(1600),1);assert.equal(burst.value(3500),0);
+burst.accept({burst_revision:0,burst_active:1,burst_elapsed_ms:0},3600);assert.equal(burst.revision,1);
+burst.accept({burst_revision:1,burst_active:0,burst_elapsed_ms:2500},3600);burst.accept({burst_revision:1,burst_active:1,burst_elapsed_ms:500},3700);assert.equal(burst.value(3700),0);
+const mask=new Uint8Array(40*20);for(let y=4;y<16;y++)for(let x=2;x<38;x++)if(x<18||x>21)mask[y*40+x]=1;
+const f=textField(500,visual,mask,40,20,[[0,20],[20,40]]);assert.equal(f.letters.length,2);
+const focus=new LetterFocus(f.letters,2),first=f.letters[0],second=f.letters[1];assert.equal(letterHit(f.letters,first.center,focus.weights,.08),0);assert.equal(letterHit(f.letters,[0,0],focus.weights,.08),-1);
+for(let n=0;n<100;n++)focus.step(1,.016);assert.ok(focus.weights[1]>.99);assert.equal(focus.weights[0],0);
+assert.equal(letterHit(f.letters,second.center,focus.weights,.08),1);assert.ok(f.letter.every(Number.isFinite));
+for(let n=0;n<500;n++){const id=f.letter[n*3];assert.ok(id===0||id===1);assert.deepEqual([...f.letter.slice(n*3+1,n*3+3)].map(v=>Math.round(v*1000)),f.letters[id].center.map(v=>Math.round(v*1000)));}
+console.log('canonical assembly ACK/late-frame lock, burst envelope/max composition and per-glyph masks/rigid focus passed');

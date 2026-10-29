@@ -1,0 +1,12 @@
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#eef7ff;font-family:system-ui,sans-serif}canvas{display:block;width:100%;height:100%}#status{position:fixed;bottom:24px;right:28px;display:flex;gap:18px;font-size:24px;pointer-events:none}#status span{opacity:.2;transition:opacity .3s}#status .online{opacity:1;color:#b9ddff;text-shadow:0 0 15px #55c8ff}#gate{position:fixed;inset:0;background:radial-gradient(ellipse at 50% 55%,#15214a 0,rgba(0,0,0,.96) 70%);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:36px;text-align:center}#gate[hidden]{display:none}h1{font-size:clamp(48px,6vw,88px);font-weight:350;letter-spacing:.14em;margin:0 0 12px}p{font-size:22px;max-width:720px;line-height:1.6}button{font:inherit;font-size:22px;color:#eef7ff;background:#173664;border:1px solid #648cba;padding:16px 34px;border-radius:40px;cursor:pointer}button:focus-visible{outline:3px solid #ffc778;outline-offset:5px}button:disabled{opacity:.35;cursor:wait}#fallback{background:transparent;font-size:16px;opacity:.75}#debug{position:fixed;top:16px;left:16px;background:#000a;color:#d2e8ff;font:14px/1.5 monospace;pointer-events:none;padding:12px}#gaze{position:fixed;border:1px solid #ffc778;border-radius:50%;width:18px;height:18px;pointer-events:none;transform:translate(-50%,-50%)}body.debug{outline:2px solid #55c8ff;outline-offset:-3px}
+
+#status .warming{opacity:.7;color:#ffd589}
+
+#corner-progress{display:contents;pointer-events:none}
+.corner-meter{position:fixed;width:var(--corner-size);height:var(--corner-size);opacity:0;transition:opacity var(--corner-fade) ease-out;pointer-events:none;z-index:30;fill:none;stroke:#cceef6;stroke-width:1.6;filter:drop-shadow(0 0 3px #8cddec66)}
+.corner-track{opacity:.13}.corner-arc{stroke-linecap:round}
+.corner-0,.corner-3{left:var(--corner-margin)}.corner-1,.corner-2{right:var(--corner-margin)}
+.corner-0,.corner-1{top:var(--corner-margin)}.corner-2,.corner-3{bottom:var(--corner-margin)}
+
+.edge-meter{position:fixed;top:12%;height:76%;width:3px;opacity:0;transition:opacity var(--corner-fade) ease-out;background:#cceef615;pointer-events:none;z-index:30}
+.edge-0{left:12px}.edge-1{right:12px}.edge-fill{height:100%;background:#cceef6;box-shadow:0 0 7px #8cddec88;transform:scaleY(0);transform-origin:bottom}

@@ -3,6 +3,7 @@ from dataclasses import dataclass, replace, field
 import math
 from pathlib import Path
 from .starfield import StarfieldSettings
+from .galaxy import GalaxySettings
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / 'config/default.yaml'
@@ -418,6 +419,7 @@ class Settings:
     autocal: AutocalSettings = AutocalSettings()
     demo: DemoSettings = DemoSettings()
     starfield: StarfieldSettings = StarfieldSettings()
+    galaxy: GalaxySettings = GalaxySettings()
 
 
 def select_device(requested, cuda_available, mps_available=False):
@@ -476,7 +478,7 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
         note(override, str(local))
         sources.append(str(local))
     required = {'inference', 'camera', 'geometry', 'recording', 'jump'}
-    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay', 'click_session', 'heatmap', 'autocal', 'demo', 'starfield'}:
+    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay', 'click_session', 'heatmap', 'autocal', 'demo', 'starfield', 'galaxy'}:
         raise ValueError('配置必须包含 inference、camera、geometry、recording、jump 五部分')
     settings = Settings(InferenceSettings(**data['inference']), CameraSettings(**data['camera']),
                         ScreenGeometry(**data['geometry']), RecordingSettings(**data['recording']), JumpSettings(**data['jump']),
@@ -492,7 +494,8 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
                        heatmap=HeatmapSettings(**data.get('heatmap', {})),
                        autocal=AutocalSettings(**data.get('autocal', {})),
                        demo=DemoSettings(**data.get('demo', {})),
-                       starfield=StarfieldSettings(**data.get('starfield', {})))
+                       starfield=StarfieldSettings(**data.get('starfield', {})),
+                       galaxy=GalaxySettings(**data.get('galaxy', {})))
     i, c, g = settings.inference, settings.camera, settings.geometry
     # Validate the request separately from actual device availability.
     if i.device not in {'auto', 'cpu', 'cuda', 'mps'}:
@@ -601,7 +604,7 @@ def configuration_info(settings):
     return {'files': list(settings.config_sources), 'keys': dict(settings.key_sources or {}),
             'device_file': settings.device_file, 'camera': asdict(settings.camera), 'geometry': asdict(settings.geometry), 'filter': asdict(settings.filter),
             'fixation': asdict(settings.fixation), 'offline_filter': asdict(settings.offline_filter), 'heatmap': asdict(settings.heatmap),
-            'demo':asdict(settings.demo),'starfield':asdict(settings.starfield),
+            'demo':asdict(settings.demo),'starfield':asdict(settings.starfield),'galaxy':asdict(settings.galaxy),
             'inference':dict(device=settings.inference.device,num_threads=settings.inference.num_threads,max_fps=settings.inference.max_fps)}
 
 

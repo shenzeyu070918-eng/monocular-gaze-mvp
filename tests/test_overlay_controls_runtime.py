@@ -303,7 +303,7 @@ class ControlsRuntimeTests(unittest.TestCase):
             dialog=c.message_box.return_value
             dialog.addButton.side_effect=[board,game,object()];dialog.clickedButton.return_value=board
             c.hotkey_dispatch('demo');self.qt_app.processEvents()
-            manager.start.assert_called_once_with('board',c.controls.screen)
+            manager.start.assert_called_once_with('galaxy',c.controls.screen)
             self.tick(c,.1)
             manager.tick.assert_called_once()
             self.assertFalse(c.actions['calibrate'].isEnabled());self.assertFalse(c.actions['check'].isEnabled())

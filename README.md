@@ -1,6 +1,6 @@
 # 视线实验台 — 单目摄像头笔记本 MVP
 
-普通笔记本摄像头 → 本机三维视线估计 → 应用内注视点 → 九点个人校准 → 独立评估与 CSV 导出。首个测试版本 **v0.1.0** 是同学试用基线；当前开发分支为 **M7（展示基础：热图渲染与内置屏投影适配，实机待验收）**，已包含 M5 点击粗校准与 M6 按需热力图。已报告的 Mac 核对与性能结果见验证记录；尚未完成双机或项目精度验收。
+普通笔记本摄像头 → 本机三维视线估计 → 应用内注视点 → 九点个人校准 → 独立评估与 CSV 导出。首个测试版本 **v0.1.0** 是同学试用基线；当前开发分支为 **M8b（眼手星系，实机待验收）**，保留 M5 点击粗校准、M6 按需热力图及 M7 内置屏投影适配。已报告的 Mac 核对与性能结果见验证记录；尚未完成双机或项目精度验收。
 
 **这是下载后在各自电脑运行的应用。GitHub 仓库页面不直接运行眼动模型；无需把摄像头画面传到云端。**
 
@@ -9,6 +9,171 @@
 - [版本记录](CHANGELOG.md) · [已完成的验证](验证记录.md)
 
 ![界面预览，不含摄像头画面](界面预览.jpg)
+
+## M8b：眼手星系
+
+### 粒子行星与独立画面预览
+
+画面方向已获用户确认；正式入口已使用同一套粒子行星渲染。下面的独立预览无需相机、个人档案或眼动数据，可先检查配色、颗粒、视角和投影效果。
+
+在项目目录运行（使用已有虚拟环境）：
+
+```sh
+# Mac
+./.venv/bin/python -m tools.preview_galaxy
+```
+
+```powershell
+# Windows
+.\.venv\Scripts\python.exe -m tools.preview_galaxy
+```
+
+用 Chrome 打开 **http://127.0.0.1:8768/?preview**。底部按钮可切换「粒子行星 / 螺旋星系 / 文字」、斜视/俯视/近景、暂停、重播约2秒开场及全屏。文字读取 `galaxy.text`。新增模拟按钮：凝视中心（停留推近）、鼠标模拟视线、关闭视线、张手/握拳/无手与恢复静止；局部按键 **O/F/N** 对应张手/握拳/无手，**G** 切换鼠标视线，**B** 触发一次打散并自动收回；预览切场景也经过散开/汇聚。模拟输入为15 Hz，复用正式的采集时间停留与手势平滑，不打开摄像头。`?preview&debug` 显示浏览器实际rAF帧率与渲染提交耗时；提交耗时不等于GPU完成耗时。预览只绑定本机，不启动WebSocket或摄像头，资源均在本地；终端 Ctrl+C 结束服务。
+
+画面使用GPU顶点着色器直接计算轨道/翻涌：默认8万体积球粒子、15万宽环粒子，暖金/青白配色、距离缩小/变暗、开普勒差速与少量游离。辉光克制，经过HDR色调映射；银河为两条对数主旋臂（默认螺距角15°），附少量短支臂；指数星盘中30%的盘面粒子为弥散星盘（不含核球/亮团），宽度与亮度随半径变化、外缘逐渐变淡变碎。更大的扁暖金核球、青白蓝/少量紫色旋臂、零星粉品红亮团及内侧尘埃暗带共同形成层次。尘埃用降低采样密度和发光亮度近似，不做真实吸收。图案整体刚性旋转，只有沿对数旋臂很小且有界的周期漂移；手势加速只加快整体相位，运行多久都不应卷成同心环。文字填满笔画并在笔画内流动。球体有边缘增亮和小核心；星环内缘白而密、向外渐暗转青蓝，默认两道浅环缝。约1.5%的颗粒更大、更亮并带微光晕与慢闪烁。参数集中在 `galaxy.visual`，真实GPU/投影性能待测。预览与正式入口均启用下文的自动降档，静帧截图保持原粒子数。
+
+固定种子/时间的截图可复现（需要Chrome与已有overlay依赖；先保持预览服务运行，在另一个终端执行）：
+
+```sh
+./.venv/bin/python -m tools.render_planet_check
+# Windows: .\.venv\Scripts\python.exe -m tools.render_planet_check
+```
+
+输出都在忽略提交的 `data/reference/`：`render_check.png`（斜视）、`render_closeup.png`（近景）、`render_galaxy.png`、`render_text.png`；原参考图存在时另生成 `render_comparison.png` / `.html`，浏览器可打开 **http://127.0.0.1:8768/comparison** 并排查看。该命令用独立无头Chrome/SwiftShader，只截取自身画布及用户提供的参考图，不读取真实桌面或摄像头；`render_check.json`记录渲染错误和逐场景运动检查，不用软件渲染成绩代替Mac实机性能。静态复查可用 `?preview&still&clean&t=8&scene=planet&view=oblique`。新增 `data/reference/render_check/` 的 **12张交互截图**（planet/galaxy/text × base/scatter/well/zoom）、`contact-sheet.png` 和 `manifest.json`；浏览器打开 **http://127.0.0.1:8768/render-check** 查看。每组固定时间和镜头角度，仅推近改变距离；工具核对甩散/引力井/推近确实改变像素、握拳回到同一时刻的动态原形。银河和文字另输出 `*-scatter-return.gif`（两秒、10fps合成采样，非游戏帧率）、`*-scatter-return.png` 拼帧、`*-views.png`，以及四角/上下边缘在默认距离与最坏推近下的24张PNG；同一时刻在不同历史帧后重复绘制应完全一致，检查历史拖影。银河另有 `galaxy-face.png`（正面）、`galaxy-oblique.png`（默认斜视）、`galaxy-times.png`（8/60/300/600秒两视角拼图）和 `galaxy-stability.json`。工具通过transform feedback读取**正式顶点着色器**输出的主臂粒子，去除统一旋转/有界漂移后比较螺距与分半径角分布；任一变化超过 `galaxy_stability_tolerance_deg`（默认2°）即非零退出。另检验默认最大手势加速对应的motionTime=2400秒；这是设置着色器时间的合成检查，不是连续运行40分钟的实机测量。预览可选「银河正面」，或用 `?preview&still&clean&scene=galaxy&view=face&t=600`。
+
+新增检查产物：`render_check/galaxy-default.png`、`galaxy-fly-in.png`、`text-letter-focus.png`、`assembly.gif`/`.png`，以及三个场景的 `*-eye-burst.gif`/`.png`。闭眼序列由真实Python判定器喂入合成采集帧状态生成；`active-checks.json`记录聚光灯开启前后GPU顶点位置不变、整字母刚性变换、汇聚门控和手/闭眼取最大值检查。这些序列是离线合成采样，不是实机帧率。
+
+`render_check/{planet,galaxy,text}-charge-{0,50,100}.png` 是三场景固定镜头/时间的蓄力对照（文字保持同一个字母被命中），`charge-contact.png` 为九图拼图，`charge-checks.json` 保存实际配置下的视觉参数与GPU核验。0/50/100%是合成视觉进度，不是实机成功率；不让推近移动镜头，避免把取景变化当成光效。
+
+### 眼手交互入口
+
+已有项目环境先运行 `python3.12 setup_mvp.py --overlay`（Windows：`py -3.12 setup_mvp.py --overlay`），安装本地WebSocket依赖并校验/下载Hand Landmarker权重。之后可断网运行；three.js 0.180.0、GPU粒子与辉光模块已放在仓库本地，许可见 `static/galaxy/vendor/NOTICE.md`。浏览器不申请相机权限，Python与手势使用同一相机帧。
+
+1. 用悬浮层启动脚本打开面板，完成匹配当前条件的Python九点校准（已有匹配粗校准也可进入）。面板「眼控 Demo」或原生 `Ctrl+Alt+D` 默认选择「眼手星系」，Qt星空保留为备用，沟通板保留代码。
+2. 先看Qt练习页中心靶点，完成本次会话的漂移修正；不改档案。随后程序打开独立Chrome窗口，定位内置屏并请求全屏。**点击「进入星系」**确认真实客户区；刘海下面的较小客户区可用，不假设内容覆盖完整内屏。点击时再尝试一次会话内偏移刷新：取点击前300ms的原始视线，复用M4取样/筛选，用同批已个人修正但未滤波的位置中位数对齐按钮中心。总偏移超过3cm、样本不足、屏幕未实测或时钟不可靠时保留练习偏移；不写档案。进入后约2秒粒子由四散汇聚成行星，再响应视线与手势。
+3. 行星原有运镜、引力井和手势参数保持。银河默认按视口取景，最紧边界铺到110%，旋臂更宽更亮；水平视线带动银盘绕自身法线±45°旋转，竖直仍只调俯仰±8°、观察夹角至少20°。银河/文字的推近命中区在屏幕空间取以投影核心为中心的圆，半径=max(世界核心投影半径×zoom_core_scale, 误差圈像素半径×2.5, 视口高×12%)；行星仍按原球体命中。凝视1.5秒后“飞入银心”：距离拉到当前默认距离的0.5倍，辉光随推近增强，允许外缘出画，核心仍居中。文字仍是yaw±4°/pitch±3°，推近保留90%取景约束。银河/文字的视线反馈改为聚光灯：误差半径投影范围内提亮、轻闪和略增点尺寸，默认吸引强度为0，粒子位置不被局部拉扯。文字按字形区间分配编号，命中的整字母用弹簧平滑提亮、浮起并放大8%，不局部扭曲。三场景蓄力均有300ms离开宽限（冻结、不补计），推近后要离开1.6倍命中范围超过400ms才拉回；行星退出范围使用放大的球体。蓄力直接反馈在场景中，不画UI圆环：银河银心与辉光渐亮/变宽、核球略加速并收拢；行星边缘光/整体亮度增强、星环略加速；文字命中字母逐渐更亮，只有真实新采集帧增加进度。
+4. 伸手连续被识别3帧后自动接管；张手甩散、握拳收回当前动态轨道/字形，挥手临时加速、双手距离缩放。银河与文字散开距离比上一版加倍，旋涡更强；文字仍用独立种子随机方向、限制z位移与点尺寸，不积累历史帧。手消失超过500 ms退出接管。**不用手也能打散**：先保持正常睁眼，脸在且连续闭眼至少600 ms，睁眼那一帧触发；约2.5秒后自动汇聚，触发间隔至少3.5秒。网页局部 **B** 键触发同一包络。手势与包络取较大值，不叠加。短眨眼、丢脸或采集断档不会触发。
+5. 默认凝视**左边缘**切上一个，**右边缘**切下一个；判定条各占视口宽12%、整高，停留1.5秒，边缘细光条按进度填充。`scene_switch_mode: edges / corners / off` 可选择旧角落模式（默认关闭）或关闭凝视切换；角落模式仍向前循环。沿用误差半径/原20%区域距离取大的屏外椭圆容差，仅夹回命中、不改坐标；同区域抖动不重计，300ms短暂离开/眨眼/无脸宽限冻结，采集断档清零。网页局部 **→ / 空格** 下一场景、**←** 上一场景继续保留。切换先让旧形状散成星尘0.5秒，再让新几何从混沌汇聚1.6秒；完成前忽略视线、手势及换景/B键，不排队补触发。Python统一管理目标、来源和场景版本，直到网页确实画完并确认后才解除角落冷却；慢页面不会提前解锁。开场约2秒也不响应交互。不安装全局键盘监听，不记录键名或键盘输入。
+6. 页面按Esc退出并恢复进入前的悬浮层状态。原生 `Ctrl+Alt+R`/面板可关闭网页回到练习。摄像头暂停、屏幕条件变化时取消Demo；退出关闭本次回环服务、手势模型和专用Chrome，不关闭用户的浏览器窗口。
+
+Qt练习页若提示「漂移修正超过安全上限」，可直接按 **C** 开始现有九点校准（含可选补看）。对应档案保存成功并激活后，自动回到原Demo的练习页：沟通板回沟通板，星系回星系，并重新取本次练习偏移；不会跳过练习。取消、保存失败或条件变化时不自动进入Demo。C仅在这条超限提示出现的练习窗口内响应，不注册全局热键。
+
+找不到Chrome时会提示并使用默认浏览器：手动移到内置屏，点击进入全屏；切换完成后**再点击一次**核对视口。保持页面100%缩放。移动窗口、缩放或客户区变化后需重点击；不在内屏内会明确拒绝。默认浏览器可能不能被自动关闭，退出后手动关本次页面。连接/WebGL2/浮点渲染失败可切回Qt星空；缺手势模型或识别失败仅关闭手势，保留视线体验并提示原因。
+
+可在忽略提交的 `config/local.yaml` 中覆盖：
+
+```yaml
+galaxy:
+  text: BME                    # 可改为队名/课题名，1–80字
+  visual:
+    planet_particles: 80000
+    ring_particles: 150000
+    low_particle_count: 100000
+    camera_distance: 7.8         # 行星默认距离
+    close_distance: 3.6          # 行星推近距离
+    galaxy_view_fill: 1.1        # 银盘按视口自动取景，最紧边界铺到110%
+    galaxy_fly_ratio: 0.5        # 飞入银心：默认距离的0.5倍
+    galaxy_zoom_bloom_gain: 0.1
+    galaxy_pitch_deg: 15         # 对数旋臂螺距角，典型展示范围12–18°
+    galaxy_arm_width: 0.7
+    galaxy_diffuse_fraction: 0.30 # 盘面比例，不含核球和粉色亮团
+    galaxy_bulge_fraction: 0.22
+    galaxy_bulge_radius: 0.32     # 银河半径的倍数
+    galaxy_bulge_flattening: 0.55
+    galaxy_knot_fraction: 0.009
+    galaxy_dust_depth: 0.7
+    galaxy_drift_fraction: 0.006  # 沿旋臂有界漂移，不累积卷绕
+    galaxy_stability_tolerance_deg: 2
+    text_distance: 7.8
+    text_close_distance: 5.8      # 还会按视口比例自动拉远，避免裁字
+    text_viewport_fraction: 0.9
+    text_point_size_max: 2.5
+    rim_strength: 3.5
+    bright_fraction: 0.015
+    ring_gap_centers: [2.25, 3.3] # 球半径的倍数；[]关闭环缝
+  interaction:
+    yaw_range_deg: 35
+    pitch_range_deg: 35
+    galaxy_rotation_range_deg: 45 # 绕银盘法线，不绕相机
+    galaxy_pitch_range_deg: 8
+    galaxy_min_pitch_deg: 20
+    galaxy_zoom_core_ratio: 0.35
+    text_yaw_range_deg: 4        # 文字围绕正面、无翻滚
+    text_pitch_range_deg: 3
+    scatter_distance: 4.0        # 行星环：球半径的倍数
+    scatter_height: 1.2
+    galaxy_scatter_distance: 2.4 # 银河半径的倍数
+    galaxy_scatter_height: 0.35
+    galaxy_scatter_swirl: 0.9
+    text_scatter_distance: 2.0   # 单位为半字宽，默认散开约1字宽
+    text_scatter_height: 0.08    # 垂直文字平面，最多0.04字宽
+    text_scatter_curl: 0.4
+    text_scatter_stagger: 0.35   # 沿手势包络的种子错峰比例，不是秒
+    text_well_brightness: 1.0
+    well_attraction: 0.12
+    well_brightness: 0.65
+    well_radius_scale: 1.5
+    galaxy_well_attraction: 0    # 聚光灯默认不改变粒子位置
+    text_well_attraction: 0
+    galaxy_well_brightness: 0.9
+    spotlight_size_gain: 0.2
+    spotlight_twinkle: 0.08
+    text_letter_scale: 1.08
+    text_letter_lift: 0.12       # 世界坐标单位，不是厘米
+    text_letter_brightness: 1.25
+    text_letter_spring_hz: 2
+    blink_hold_ms: 600
+    burst_duration_ms: 2500
+    burst_cooldown_ms: 3500
+    camera_spring_hz: 0.7
+    zoom_dwell_ms: 1500
+    zoom_leave_grace_ms: 300
+    zoom_release_ms: 400
+    zoom_exit_ratio: 1.6
+    zoom_error_scale: 2.5
+    zoom_viewport_ratio: 0.12
+    zoom_core_scale: 1.0
+    charge_response_s: 0.12      # 视觉渐入；不改变采集时钟的停留证据
+    charge_release_s: 0.45       # 宽限/迟滞结束后平滑回落
+    charge_galaxy_light_gain: 0.45
+    charge_galaxy_halo_gain: 0.5
+    charge_galaxy_bloom_gain: 0.08
+    charge_galaxy_bloom_radius_gain: 0.2
+    charge_galaxy_spin_gain: 0.5 # 只加速核球，不改旋臂运动
+    charge_galaxy_contract: 0.06
+    charge_planet_rim_gain: 0.75
+    charge_planet_light_gain: 0.35
+    charge_ring_speed_gain: 0.35
+    charge_text_light_gain: 0.8
+    scene_switch_mode: edges    # corners可选；off关闭凝视换景
+    edge_ratio: 0.12
+    entry_window_ms: 300
+    entry_max_correction_cm: 3.0
+    entry_clock_max_rtt_ms: 100
+    corner_ratio: 0.2
+    corner_leave_grace_ms: 300
+  pixel_ratio: 1.5
+  min_pixel_ratio: 0.75
+  low_fps: 50
+  low_fps_s: 3
+  intro_s: 2
+  transition_scatter_s: 0.5     # 旧场景散成星尘
+  transition_s: 1.6             # 新场景从混沌汇聚
+```
+
+默认23万粒子，连续3秒低于50 fps先降至10万（球/环数量比例保留、亮度部分补偿），仍慢时逐次降低像素比，最低0.75；不自动升档，隐藏页不参与降档计时。旧 `galaxy.particle_count`、顶层旧辉光/物理参数，以及 `visual.galaxy_distance/galaxy_close_distance` 仅为旧配置兼容保留；银河实时距离由 `galaxy_view_fill/galaxy_fly_ratio` 决定。新版视觉使用 `galaxy.visual`，眼手控制使用 `galaxy.interaction`。本轮目标是Mac上23万粒子约120 FPS；是否达标仍需在实际刷新率/投影条件下复测，不用无头截图的FPS代替。
+
+启动 `./.venv/bin/python overlay.py --demo-debug`（Windows用 `.venv\Scripts\python.exe`），再进入眼手星系，可看到FPS/帧间隔P90、当前实际粒子数/像素比/降档次数、视线点、视口边界，以及**模型状态、当前检测手数、张开度、接管状态、手势检测耗时**。手势图标亮表示已接管，暖色表示检测到手但仍在确认；灰色可通过debug区分“模型加载/检测失败”“模型就绪但没有手”“帧已过期”。缺模型时先重跑 `setup_mvp.py --overlay`；模型就绪但0手时把整只手掌/手指放在摄像头可见范围，检查光照，记录实际手数/张开度及问题，不降低阈值冒充通过。
+
+调试参数会沿Python启动链路给Chrome页面附上 `?debug`；页面只移除令牌片段，保留查询参数，无需刷新补加。Qt练习页的调试视线点、中心十字和窗口边界不应遮住练习靶点。网页debug还显示未裁剪的视口uv、带符号越界量、边缘（或配置的角落）、区域内/宽限/冷却状态、有效停留毫秒数/进度及最近清零原因（离开 / 断档 / 冷却 / 无效）。`galaxy.interaction.corner_leave_grace_ms`默认300，设0关闭宽限；角落模式的圆弧尺寸/边距/淡出时间也在该配置下；左右边缘光条保持。`zoom_feedback_fade_ms`仅保留旧配置兼容，不再绘制圆环。场景蓄力视觉层独立平滑，不改宽限/迟滞/推近时机；离开时先冻结，再按原门槛释放并平滑回落。额外旋转采用积分相位，不能用time乘瞬时进度而造成位置跳变。
+
+闭眼判定复用引擎已有的 `blink`：先检测到脸，再以左右眼EAR平均值低于 `inference.blink_threshold`（默认0.14）判为闭眼。只按连续闭眼采集帧首尾的时间差计时，不把睁眼前的间隔补算为闭眼；断档超过 `galaxy.stale_ms`（默认400 ms）、无脸或异常会取消蓄力，必须再次观察到睁眼才能重试。闭眼计时/触发次数/最近未触发原因和切换锁定状态显示在 `?debug` 中。浏览器只插值包络，不能自行生成闭眼证据。协议升级为v5，Python和页面需同时更新；旧页面请退出Demo后重新进入，不能用刷新丢失令牌的方式重连。
+
+进入偏移的时钟以服务端发送/收到探针的单调时刻中点，对齐浏览器 `performance.now()` / 点击事件时间戳；往返超过100ms不采用，半往返时间只作为对齐不确定度，不能称为实测传输延迟。以此换算的点击时刻截取capture_ns前窗，拒收未来/过旧时刻，不取换算点击时刻之后的帧（对齐仍受探针不确定度约束）。M4的min_frames、覆盖、有效率、头姿、注视稳定性和离群筛选保持原值；未引入全局点击监听。等待进入时才保留短期数值缓冲，进入后停止采样、退出清空。debug显示采用/保留原因、候选/当前偏移cm、样本数，启动日志与退出的 `data/performance/*-galaxy.json` 记录同样摘要，不写点击位置或样本序列。
+
+“处理+接收后”时间为Python处理耗时加浏览器接收后的等待，不含跨时钟无法直接测量的网络传输，不能称为端到端延迟。停留仅用采集时间；rAF只做视觉平滑，不增加采样证据。退出的 `data/performance/*-galaxy.json`记录实际推理帧率、手势耗时中位/P90及检测/接管帧数、浏览器逐秒FPS/长帧/档位和渲染提交中位/P90。渲染提交耗时包含该次降档重建，但不等于GPU完成耗时；不把rAF帧率当推理帧率，也不把无头软件渲染当Mac GPU成绩。
+
+没有视频、骨架图、摄像头或屏幕截图经过本地桥或写入日志。桥只在Demo期间监听127.0.0.1，随机令牌随会话失效；本次网页点击排除出点击拟合。实机验收清单见 `验证记录.md`，数据协议与线程说明见 `docs/m8b-galaxy-design.md`。
 
 ## 首次安装
 
@@ -387,7 +552,7 @@ Windows 使用 `.\.venv\Scripts\python.exe` 替换 Python 入口，其余参数�
 
 1. 验证基线时，从 Releases 下载 **v0.1.0** 的 Source code ZIP，或切到 `v0.1.0` 标签。验证 M2 时使用对应 PR 的 `m2-filter` 分支；合并后使用 `main`。两个版本分别解压/检出，环境不要混用。
 2. 从 [Python 官网](https://www.python.org/downloads/) 安装 Python 3.12。Windows 安装时启用 Python Launcher；macOS 安装后重新打开终端。
-3. 在解压目录打开终端，执行对应命令（整个目录路径含空格或中文也可以）：
+3. 在解压目录打开终端，执行对应命令。**本分支修复后，Windows项目路径可以包含中文和空格**：人脸和手势模型由Python读取字节，再传给MediaPipe。旧版本如遇中文路径模型加载失败，更新代码后重新运行安装命令；不用修改`.venv`里的ptgaze文件。详细步骤见 [Windows安装说明](docs/Windows安装说明.md)。
 
 **Windows（PowerShell 或命令提示符）**
 
@@ -397,6 +562,14 @@ py -3.12 setup_mvp.py
 ```
 
 以后可双击 `启动-Windows.cmd`。不需要激活虚拟环境或更改 PowerShell 执行策略。
+
+如果已安装Python 3.12，但`py -3.12`仍找不到它，改用**实际Python安装路径**运行。PowerShell示例（替换为本机路径；悬浮层安装保留`--overlay`，仅网页可省略）：
+
+```powershell
+& "C:\Users\你的用户名\AppData\Local\Programs\Python\Python312\python.exe" setup_mvp.py --overlay
+```
+
+命令提示符中去掉开头的`&`，保留路径双引号。下载出现SSL报错时重新运行同一安装命令即可；长时间卡住可按Ctrl+C结束后重试。无需删除`.venv`或已下载成功的模型，安装程序会复用已完成的依赖并检查模型摘要；若持续失败，保留完整报错。
 
 **macOS**
 
@@ -747,12 +920,13 @@ print(session.summary())
 
 | 现象 | 处理 |
 |---|---|
-| 找不到 `py` 或 `python3.12` | 确认已安装 Python 3.12，重新打开终端；Windows 检查 Python Launcher |
-| 下载失败或超时 | 检查能否访问 Python 包源、Hugging Face 和 Google 模型来源，保留错误，再执行安装命令；不需要删掉已下载成功的模型 |
+| 找不到 `py` 或 `python3.12` | 确认已安装 Python 3.12，重新打开终端；Windows的`py -3.12`未找到已装Python时，改用带双引号的完整python.exe路径运行安装程序，见Windows安装说明 |
+| 下载出现SSL报错、卡住或超时 | 重新运行相同安装命令即可；卡住先Ctrl+C退出。无需删除`.venv`或已下载成功的模型；持续失败时保留错误并检查模型来源和包源是否可访问 |
 | 页面连接失败 | 先启动服务并保持终端打开，确认地址是 `127.0.0.1:8765`，不要直接打开 `static/index.html` |
 | 端口已占用 | 检查是否已经启动过同一应用；已有服务可直接使用，不要重复启动 |
 | 摄像头打不开 | 在 Chrome 和系统隐私设置中允许相机访问，关闭会议软件后重试；macOS 的 Python 管线首次从后台线程打开摄像头可能因权限请求失败，需先在「系统设置 → 隐私与安全性 → 摄像头」中为终端授权 |
 | 模型加载失败 | 保存页面与终端错误，通过测试反馈模板报告；不要把个人路径或摄像头画面贴到公开 Issue |
+| Windows中文路径下MediaPipe无法打开task文件 | 更新到本修复后重新运行安装命令，使环境重新安装仓库内ptgaze；人脸/手势均按字节加载，不再要求移到英文路径或手改`.venv` |
 | 切换灰度、全屏或窗口后没有已校准结果 | 设置或窗口尺寸变化会清除校准。先固定条件，再重新校准 |
 
 ## 使用

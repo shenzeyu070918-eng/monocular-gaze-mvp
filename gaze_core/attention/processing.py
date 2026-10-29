@@ -1,7 +1,7 @@
 """Deterministic offline binding/AOI/export, shared by session finalization."""
 from dataclasses import replace
 from collections import deque
-import csv,io,json,time
+import csv,io,json,time,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image
@@ -36,7 +36,9 @@ def process_session(store,options,*,reocr=True,prefix='',ocr_function=None,cance
         if cancelled():raise InterruptedError('会话已取消')
     try:
         for scene in scenes:
-            check();name=scene['scene_id'];path=store.destination(scene['image']);pixels=np.asarray(Image.open(path).convert('RGB'))
+            check();name=scene['scene_id'];path=store.destination(scene['image']);image_bytes=path.read_bytes()
+            if hashlib.sha256(image_bytes).hexdigest()!=scene['sha256']:raise ValueError('场景PNG校验和不匹配，拒绝错误绑定：'+name)
+            pixels=np.asarray(Image.open(io.BytesIO(image_bytes)).convert('RGB'))
             if name in cached and not reocr:
                 lines=cached[name].get('ocr_lines',[])
                 selected=(manual.get(name,[]) if isinstance(manual,dict) else manual) or [r for r in cached.get(name,{}).get('regions',[]) if r.get('source')=='manual']
@@ -93,10 +95,12 @@ def process_session(store,options,*,reocr=True,prefix='',ocr_function=None,cance
         rgba=render_heatmap(grid,size,max_opacity=heat.max_opacity,alpha_threshold=heat.alpha_threshold,render_scale=heat.render_scale,dither_strength=heat.dither_strength)
         store.write_image(prefix+f'heatmaps/{name}.png',rgba);results[name]=result
     store.write_json(prefix+'aoi.json',dict(schema_version=1,scenes=aoi))
-    summary=dict(timeline.summary(),scene_count=len(scenes),bound_fixation_parts=bound_count,
+    summary=dict(timeline.summary(),synthetic_input=bool(metadata.get('synthetic',False)),scene_count=len(scenes),bound_fixation_parts=bound_count,
                  valid_bound_fixation_s=sum(s['valid_fixation_s'] for s in results.values()),excluded_fixation_s=excluded,
                  frame_interval_state_s=state_durations,ocr_ms=ocr_times,warnings=warnings,
                  interpretation='块级注意力；AOI为候选，不做逐行逐字结论；未归属、背景和屏外概率不丢弃。')
+    api_ms=[(e['received_ns']-e['request_ns'])/1e6 for e in events if e.get('type')=='screen_sample']
+    summary['screen_request_ms']=dict(count=len(api_ms),median_ms=float(np.median(api_ms)) if api_ms else None,p90_ms=float(np.percentile(api_ms,90)) if api_ms else None,definition='截图API请求至回调；不含PNG/OCR/写盘，不是屏幕呈现延迟')
     summary['read_to_result_latency']=dict(frame_count=frame_count,sample_count=len(latencies),median_ms=float(np.median(latencies)) if latencies else None,p90_ms=float(np.percentile(latencies,90)) if latencies else None,definition='最后至多10000个已完成帧，OpenCV read返回至推理完成；不含曝光、驱动缓冲或显示')
     if any(e.get('type')=='acceptance' for e in events):
         from .acceptance import score

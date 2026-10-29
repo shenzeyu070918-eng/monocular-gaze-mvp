@@ -52,7 +52,9 @@ class SessionStore:
 
     def append(self,name,row,*,final=False):
         data=(json.dumps(numeric_json(row),ensure_ascii=False,allow_nan=False)+'\n').encode('utf-8');self._check(len(data),final)
-        if name not in self.streams:self.streams[name]=self.destination(name).open('ab')
+        if name not in self.streams:
+            destination=self.destination(name);destination.parent.mkdir(parents=True,exist_ok=True)
+            self.streams[name]=destination.open('ab')
         self.streams[name].write(data);self.streams[name].flush();self.used+=len(data);self.counts[name]=self.counts.get(name,0)+1
 
     def write_bytes(self,name,data,*,final=False):

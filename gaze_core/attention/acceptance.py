@@ -70,8 +70,9 @@ def score(fixations,events,screen_size):
         extra=running['process_tree_percent_one_core']-baseline['process_tree_percent_one_core']
     steps=[e for e in events if e.get('kind')=='phase' and e.get('phase') in ('scroll','tab','app')]
     scenes=[e for e in events if e.get('type')=='scene'];used=set();detected=0
+    initial_app=scenes[0].get('app_name') if scenes else None
     for step in steps:
-        possible=[s for s in scenes if s['scene_id'] not in used and 0<=s['start_ns']-step['time_ns']<=4500000000]
+        possible=[s for s in scenes if s['scene_id'] not in used and not s.get('dynamic') and 0<=s['start_ns']-step['time_ns']<=4500000000 and ((s.get('app_name')!=initial_app) if step['phase']=='app' else (s.get('app_name')==initial_app))]
         if possible:
             s=min(possible,key=lambda x:x['start_ns']);used.add(s['scene_id']);detected+=1
     valid_reference=list(screen_size)==[1512,982]

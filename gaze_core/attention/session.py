@@ -25,7 +25,7 @@ class AttentionSession:
         self.state='idle';self.error=None;self.path=None;self.summary=None;self.desired=False;self.user_paused=False;self.blocked=None
         self.scene_count=0;self.mode=None;self.started_ns=None;self.profile_id=None;self._store=None;self._backend=None
         self._effective_state=None;self._detector=None;self._metadata=None;self.timings=[];self._end=None;self._stop_ns=None
-        self._sample_count=0;self._first_sample_ns=None;self._last_sample_ns=None;self._baseline=None
+        self._sample_count=0;self._first_sample_ns=None;self._last_sample_ns=None;self._baseline=None;self._accepting_frames=False
         self.thread=threading.Thread(target=self._run,name='attention-local',daemon=True);self.thread.start()
 
     @property
@@ -39,6 +39,7 @@ class AttentionSession:
             self.error='注意力数值队列已满，已停止会话；不能丢弃帧后仍报告成功。';self.desired=False;self._end='queue_overflow';self._epoch+=1;self._wake.set();return False
 
     def start(self,profile,conditions,kernel,*,mode='screen',stimulus=None):
+        if self._shutdown:raise ValueError('注意力后台已关闭')
         if self.busy:raise ValueError('同一时间只允许一个注意力会话')
         from gaze_core.profiles import PYTHON_COORDINATE_VERSION
         from gaze_core.display import calibration_matrix
@@ -50,14 +51,17 @@ class AttentionSession:
         if mode not in ('screen','stimulus'):raise ValueError('未知注意力模式')
         if mode=='stimulus' and stimulus is None:raise ValueError('请先选择PNG/JPG刺激图片')
         self._cancel.clear();self._epoch+=1;self.error=None;self.summary=None;self.path=None;self.scene_count=0;self.timings=[]
-        self.state='starting';self.desired=True;self.user_paused=False;self.blocked=None;self.mode=mode;self.profile_id=profile.get('calibration_id')
+        self._accepting_frames=False;self.user_paused=False;self.blocked=None;self.mode=mode;self.profile_id=profile.get('calibration_id')
         self.started_ns=self.clock_ns();self._stop_ns=None;self._sample_count=0;self._first_sample_ns=self._last_sample_ns=None
         metadata=dict(mode=mode,start_ns=self.started_ns,wall_started_at=time.strftime('%Y-%m-%dT%H:%M:%S%z'),system=platform.platform(),
                       program_version=self._version(),geometry=asdict(self.settings.geometry),fixation=asdict(self.settings.fixation),heatmap=asdict(self.settings.heatmap),
                       attention={k:v for k,v in asdict(self.settings.attention).items() if k not in ('excluded_apps','manual_aoi')},screen=asdict(self.screen),analysis_size=[self.screen.width,self.screen.height],
                       profile=deepcopy(profile),kernel=deepcopy(kernel),time_source='perf_counter_ns; snapshot request/receive interval',
                       privacy=dict(local_only=True,cursor=False,window_titles=False,ocr_during_capture=False))
-        self._metadata=metadata;return self._put(('start',metadata,stimulus,self._epoch))
+        self._metadata=metadata;self.state='starting';self.desired=True
+        queued=self._put(('start',metadata,stimulus,self._epoch))
+        if not queued:self.state='error'
+        return queued
 
     @staticmethod
     def _version():
@@ -77,7 +81,11 @@ class AttentionSession:
     def observe(self,prediction):
         baseline=self._baseline
         if baseline is not None and baseline[0]<=prediction.captured_ns<baseline[0]+baseline[1]:baseline[2].append((prediction.completed_ns-prediction.captured_ns)/1e6)
-        if not self.active or not self.desired or self.user_paused or self.blocked or prediction.captured_ns<=self.started_ns:return
+        if not self._accepting_frames or not self.active or not self.desired or self.user_paused or self.blocked or prediction.captured_ns<=self.started_ns:return
+        camera=prediction.data.get('camera')
+        expected=(self._metadata or {}).get('profile',{}).get('conditions',{}).get('camera')
+        if camera is not None and expected is not None and any(camera.get(k)!=expected.get(k) for k in ('index','width_px','height_px','grayscale','intrinsics_source','intrinsics_reason','undistort_applied') if k in expected):
+            self.block('camera_conditions_changed_restart_session',since_ns=int(prediction.captured_ns));return
         try:self._put(('frame',frame_record(prediction),self._epoch))
         except Exception as exc:self.error='注意力数值格式失败：'+str(exc);self.stop('invalid_numeric')
 
@@ -86,10 +94,10 @@ class AttentionSession:
         self.user_paused=not self.user_paused;self._epoch+=1
         self._put(('state','user_paused' if self.user_paused else 'recording',self.clock_ns()))
 
-    def block(self,reason):
+    def block(self,reason,*,since_ns=None):
         if reason==self.blocked:return
         self.blocked=reason;self._epoch+=1
-        if self.active:self._put(('state',reason or ('user_paused' if self.user_paused else 'recording'),self.clock_ns()))
+        if self.active:self._put(('state',reason or ('user_paused' if self.user_paused else 'recording'),self.clock_ns() if since_ns is None else since_ns))
 
     def stop(self,reason='user_ended'):
         if not self.active or not self.desired:return
@@ -97,7 +105,7 @@ class AttentionSession:
 
     def delete(self):
         if self.path is None:return
-        self._cancel.set();self.desired=False;self._epoch+=1;self._end='deleted';self._put(('delete',))
+        self.state='deleting';self._cancel.set();self.desired=False;self._epoch+=1;self._end='deleted';self._put(('delete',))
 
     def close(self):
         self._shutdown=True;self.desired=False;self._epoch+=1;self._end='overlay_closed';self._wake.set()
@@ -139,6 +147,7 @@ class AttentionSession:
             self._store.write_json('session.json',self._store.metadata)
             self._store.append('scenes.jsonl',dict(type='scene',scene_id='000001',start_ns=metadata['start_ns'],confirmed_ns=self.clock_ns(),image='scenes/000001.png',sha256=digest,app_name='本程序刺激物',dynamic=False))
             self.scene_count=1
+        self._accepting_frames=True
 
     def _capture(self):
         if self.mode!='screen':return
@@ -160,11 +169,11 @@ class AttentionSession:
         self._last_sample_ns=sample.time_ns
         row=self._detector.observe(sample)
         self._store.append('scenes.jsonl',dict(type='screen_sample',time_ns=sample.time_ns,request_ns=sample.request_ns,received_ns=sample.received_ns,pending_since_ns=self._detector.pending_since,app_name=sample.app_name))
-        self.timings.append((self.clock_ns()-began)/1e6)
-        if len(self.timings)>10000:self.timings=self.timings[-10000:]
         if row:
             name='scenes/'+row['scene_id']+'.png';digest=self._store.write_image(name,sample.pixels)
             self._store.append('scenes.jsonl',dict(row,image=name,sha256=digest));self.scene_count+=1
+        self.timings.append((self.clock_ns()-began)/1e6)
+        if len(self.timings)>10000:self.timings=self.timings[-10000:]
 
     def _finish(self,reason):
         self._release_backend()
@@ -176,11 +185,14 @@ class AttentionSession:
             self.summary['capture_worker_ms']=dict(count=len(self.timings),median=float(np.median(self.timings)) if self.timings else None,p90=float(np.percentile(self.timings,90)) if self.timings else None)
             self.summary['observed_capture_hz']=((self._sample_count-1)*1e9/(self._last_sample_ns-self._first_sample_ns) if self._sample_count>1 and self._last_sample_ns>self._first_sample_ns else None)
             self.summary['configured_capture_hz']=self.settings.attention.capture_hz
-            self.summary['finalization_ms']=(self.clock_ns()-end)/1e6
+            self.summary['processing_ms']=(self.clock_ns()-end)/1e6
             self._store.write_json('stats/session.json',self.summary)
         self._store.metadata['processing_complete']=self.summary is not None and not self.summary.get('warnings')
-        self._store.metadata['finalized_ns']=self.clock_ns()
-        self._store.finish(end,reason,self.error);self._store=None;self._metadata=None;self._detector=None
+        self._store.metadata['processing_finished_ns']=self.clock_ns()
+        self._store.finish(end,reason,self.error)
+        finished=self.clock_ns()
+        self._store.write_json('completion.json',dict(end_requested_ns=end,artifacts_flushed_ns=finished,finalization_ms=(finished-end)/1e6,definition='结束请求至主要数据文件写完并flush/fsync；不含本完成标记自身写入耗时'),final=True)
+        self._store=None;self._metadata=None;self._detector=None
         self.state='error' if self.error else 'ended'
 
     def _run(self):
@@ -212,7 +224,7 @@ class AttentionSession:
                     self._capture()
             except InterruptedError:
                 if self._store:self._store.close();self._store=None
-                self.state='ended'
+                self.state='deleting' if self._cancel.is_set() else 'ended'
             except Exception as exc:
                 self.error=str(exc);self.desired=False;self._end=None;self._release_backend()
                 if self._store:

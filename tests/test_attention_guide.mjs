@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {phaseAt, clockEstimate} from '../static/attention/guide-logic.mjs';
+assert.deepEqual(phaseAt(0), {kind:'target', id:1});
+assert.deepEqual(phaseAt(15.99), {kind:'target', id:8});
+assert.deepEqual([16,18,20,22,26].map(t=>phaseAt(t).phase), ['scroll','tab','app','exclude','pause']);
+assert.deepEqual(phaseAt(30), {kind:'end'});
+assert.throws(()=>phaseAt(NaN));
+const clock=clockEstimate([{before:10,after:14,serverNs:1020000000},{before:30,after:32,serverNs:1031000000}]);
+assert.equal(clock.offsetNs,1000000000);assert.equal(clock.uncertaintyNs,1000000);
+assert.throws(()=>clockEstimate([{before:4,after:3,serverNs:5}]));
+console.log('M9 guide boundaries and minimum-RTT clock mapping passed');

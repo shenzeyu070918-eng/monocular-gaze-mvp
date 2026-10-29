@@ -22,7 +22,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
     painted=None;radius_key=object();radii=None;ui_values={}
     clicks=None;own_windows=None;heatmap=None;heat_timer=None;heat_error=None;heatmap_rendered=False
     pending_screen=None;screen_error=None;screen_mismatch_seen=False;detached_visible=None
-    demo=None;demo_dialog=None
+    demo=None;demo_dialog=None;attention_ui=None
 
     def update(widget,method,value):
         key=(widget,method)
@@ -51,11 +51,14 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         controller=OverlayController(settings,result_sink=session.sink,shutdown=session.close)
         session.controller=controller
         heatmap=getattr(session,'heatmap',None)
+        from .attention import AttentionUI
+        attention_ui=AttentionUI(session,window,controls,notice)
     else:controller=OverlayController(settings)
 
     def begin_close():
         nonlocal closing,shutdown_requested
         closing=True;shutdown_requested=True;ring.clear()
+        if attention_ui is not None:attention_ui.end();attention_ui.close_ui()
         if demo_dialog is not None:demo_dialog.reject()
         if demo is not None:demo.cancel('overlay_closed',restore=False)
         if heatmap is not None:heatmap.set_enabled(False)
@@ -363,6 +366,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         if demo is not None:
             demo.poll_calibration_return(active=active)
             if demo.active:demo.tick(view.result,display,now,active=active,eligible=eligible)
+        if attention_ui is not None:attention_ui.poll(active=active,screen_changed=screen_changed,demo_active=demo is not None and demo.active,now_ns=now)
         radius=None if session is None else session.radius
         radius=settings.overlay.radius_cm if radius is None else radius
         radius_text=None if session is None else session.radius_text
@@ -464,6 +468,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
                         predicted_frames=report.get('predicted_frames'),valid_predictions=report.get('valid_predictions'),
                         camera=asdict(settings.camera),refresh_ms=settings.overlay.refresh_ms,
                         profile_loaded=session is not None and session.profiles.profile is not None,
+                        attention_at_profile_end=None if attention_ui is None else dict(state=attention_ui.service.state,mode=attention_ui.service.mode,scenes=attention_ui.service.scene_count,ring_hidden=window._attention_ring_hidden,ocr_during_capture=False),
                         demo_active=demo is not None and demo.active,
                         demo_app=demo.run.app if demo is not None and demo.active else None,
                         presentation=window._presentation,
@@ -489,6 +494,7 @@ def run_camera_overlay(app,window,tray,pause_action,quit_action,timer,settings,p
         controller.request('running')
         return app.exec()
     finally:
+        if attention_ui is not None:attention_ui.end();attention_ui.close_ui()
         if demo is not None:demo.cancel('overlay_closed',restore=False)
         if heat_timer is not None:heat_timer.stop()
         window._paint_heatmap=original_paint

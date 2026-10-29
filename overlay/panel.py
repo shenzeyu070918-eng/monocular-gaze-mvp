@@ -21,13 +21,14 @@ class ControlPanel(QWidget):
         self.heatmap=QLabel('热力图：关闭')
         self.heatmap_sigma=QLabel('核尺度 sigma：等待相机条件')
         self.heatmap_notice=QLabel(NOTICE)
+        self.attention=QLabel('屏幕注意力：关闭 · 只存本机，需九点校准')
         self.hotkeys = QLabel('系统热键：等待注册')
         self.notice = QLabel('托盘不可见时请保留此面板。关闭仅隐藏，退出请使用退出按钮或终端 Ctrl+C。')
-        for label in (self.mode, self.radius, self.recording, self.clicks,self.autocal,self.demo_status, self.heatmap,self.heatmap_sigma,self.heatmap_notice,self.hotkeys, self.notice):
+        for label in (self.mode, self.radius, self.recording, self.clicks,self.autocal,self.demo_status, self.heatmap,self.heatmap_sigma,self.heatmap_notice,self.attention,self.hotkeys, self.notice):
             label.setWordWrap(True); layout.addWidget(label)
         self.buttons = {}
         for name in ('demo','demo_practice','presentation','calibrate','check','load_web','reset','record','clicks','click_session','abort_click_session','autocal',
-                     'heatmap_toggle','heatmap_view','heatmap_clear','heatmap_export','toggle','pause','web','quit'):
+                     'heatmap_toggle','heatmap_view','heatmap_clear','heatmap_export','attention_guide','attention_start','attention_stimulus','attention_pause','attention_end','attention_ring','attention_delete','toggle','pause','web','quit'):
             button = QToolButton(self); button.setDefaultAction(actions[name])
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             self.buttons[name] = button; layout.addWidget(button)

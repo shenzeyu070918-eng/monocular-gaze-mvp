@@ -34,6 +34,14 @@ class SessionStore:
         self.metadata=dict(metadata,session_id=self.id,schema_version=1,state='recording')
         self.write_json('session.json',self.metadata)
 
+    @classmethod
+    def existing(cls,path,limit_bytes):
+        obj=cls.__new__(cls);obj.path=Path(path).resolve();obj.root=obj.path.parent;obj.id=obj.path.name
+        obj.metadata=json.loads((obj.path/"session.json").read_text(encoding="utf-8"))
+        obj.limit=limit_bytes;obj.reserve=min(65536,max(1024,limit_bytes//20));obj.streams={};obj.counts={}
+        obj.used=sum(p.stat().st_size for p in obj.path.rglob("*") if p.is_file())
+        return obj
+
     def destination(self,name):
         path=self.path/name
         if path.is_symlink() or not path.resolve().is_relative_to(self.path.resolve()):raise ValueError('路径超出会话目录')

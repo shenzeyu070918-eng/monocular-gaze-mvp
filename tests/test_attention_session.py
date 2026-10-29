@@ -87,6 +87,18 @@ class AttentionSessionTests(unittest.TestCase):
             try:
                 s.start(PROFILE,{},KERNEL);self.assertTrue(entered.wait(2));s.pause();release.set();self.wait(lambda:s.state=='paused');self.assertNotIn('capture',calls)
             finally:release.set();s.close()
+    def test_changed_camera_frame_rejected_before_ui_poll(self):
+        with tempfile.TemporaryDirectory() as root:
+            image=Path(root)/'fixture.png';Image.new('RGB',(10,10)).save(image)
+            conditions=dict(camera=dict(width_px=640,height_px=480));profile=dict(PROFILE,conditions=conditions)
+            s=AttentionSession(self.settings(root),ScreenRect(0,0,320,200),processor=self.processor,root=Path(root)/'sessions')
+            try:
+                s.start(profile,conditions,KERNEL,mode='stimulus',stimulus=dict(path=str(image),screen_rect=[0,0,1,1],kernel=KERNEL))
+                self.wait(lambda:s.scene_count==1);now=time.perf_counter_ns()
+                s.observe(NS(captured_ns=now,completed_ns=now+10,data=dict(valid=True,status='tracking',raw=[.5,.5],camera=dict(width_px=800,height_px=600))))
+                self.wait(lambda:s.state=='paused');self.assertEqual(s.blocked,'camera_conditions_changed_restart_session')
+                self.assertEqual(list(read_jsonl(s.path/'gaze.jsonl')),[])
+            finally:s.close()
     def test_real_processing_roundtrip_numpy_no_ocr_cloud(self):
         with tempfile.TemporaryDirectory() as root:
             settings=self.settings(root);metadata=dict(start_ns=0,end_ns=1000000000,geometry=asdict(settings.geometry),fixation=asdict(settings.fixation),heatmap=asdict(settings.heatmap),kernel=KERNEL,profile=PROFILE,mode='screen',analysis_size=[320,200])
@@ -98,6 +110,8 @@ class AttentionSessionTests(unittest.TestCase):
                 self.assertAlmostEqual(summary['valid_bound_fixation_s'],.9);self.assertTrue((store.path/'heatmaps/a.png').exists())
                 rows=list(read_jsonl(store.path/'fixations.jsonl'));self.assertEqual(rows[0]['center'],[.25,.5])
                 self.assertEqual(rows[0]['end_ns'],900000000)
+                process_session(store,settings.attention,reocr=False,prefix='derived/test/')
+                self.assertTrue((store.path/'derived/test/fixations.jsonl').exists());self.assertTrue((store.path/'derived/test/heatmaps/a.png').exists())
             finally:store.close()
 
 class NativeAdapterTests(unittest.TestCase):

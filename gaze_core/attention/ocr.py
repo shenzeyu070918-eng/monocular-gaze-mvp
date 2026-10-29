@@ -9,7 +9,7 @@ def recognize_file(path,languages=('zh-Hans','en-US')):
     request.setRecognitionLanguages_(list(languages));request.setUsesLanguageCorrection_(True)
     handler=V.VNImageRequestHandler.alloc().initWithURL_options_(NSURL.fileURLWithPath_(str(path)),{})
     ok,error=handler.performRequests_error_([request],None)
-    if not ok:raise RuntimeError('本地OCR失败：'+str(error))
+    if not ok:raise RuntimeError('本地OCR失败：'+(str(error) if error is not None else 'Vision未提供错误详情；请在正常终端重试并检查本地Vision是否可用'))
     rows=[]
     for item in request.results():
         candidate=item.topCandidates_(1)[0];box=item.boundingBox();x=box.origin.x;y=1-box.origin.y-box.size.height

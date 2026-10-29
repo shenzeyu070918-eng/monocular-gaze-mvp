@@ -6,10 +6,10 @@ from gaze_core.attention.contracts import ScreenSample,CapturePaused
 PERMISSION='没有屏幕录制权限：请到「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」为实际启动的终端/应用授权，按系统提示重新打开后重试。'
 
 class MacScreenCapture:
-    def __init__(self,screen,excluded_apps=(),*,request_permission=False):
+    def __init__(self,screen,excluded_apps=(),*,request_permission=False,timeout_s=15.):
         import Quartz as Q,ScreenCaptureKit as S
         from AppKit import NSWorkspace
-        self.Q,self.S,self.workspace=Q,S,NSWorkspace.sharedWorkspace()
+        self.Q,self.S,self.workspace=Q,S,NSWorkspace.sharedWorkspace();self.timeout_s=timeout_s
         if not Q.CGPreflightScreenCaptureAccess():
             if request_permission:Q.CGRequestScreenCaptureAccess()
             if not Q.CGPreflightScreenCaptureAccess():raise PermissionError(PERMISSION)
@@ -22,7 +22,7 @@ class MacScreenCapture:
         done=threading.Event();result=[]
         def callback(obj,error):result.append((obj,error));done.set()
         invoke(callback)
-        if not done.wait(15):raise RuntimeError('截屏接口超时，已停止采集')
+        if not done.wait(getattr(self,'timeout_s',15)):raise RuntimeError('截屏接口超时，已停止采集')
         obj,error=result[0]
         if error is not None:raise RuntimeError('屏幕采集失败：'+str(error))
         return obj
@@ -72,7 +72,7 @@ class MacScreenCapture:
         bits=q.CGImageGetBitsPerPixel(image);info=int(q.CGImageGetBitmapInfo(image));alpha=info&31
         if bits==32 and info&0x7000==0x2000 and alpha in (2,4,6):
             data=q.CGDataProviderCopyData(q.CGImageGetDataProvider(image));stride=q.CGImageGetBytesPerRow(image)
-            rows=np.frombuffer(data,np.uint8).reshape(h,stride)[:,:w*4].reshape(h,w,4)
+            rows=np.frombuffer(data,np.uint8,count=h*stride).reshape(h,stride)[:,:w*4].reshape(h,w,4)
             return rows[:,:,:3][:,:,::-1].copy()
         # Portable format fallback; direct BGRA path avoids PNG on normal frames.
         from AppKit import NSBitmapImageRep,NSPNGFileType

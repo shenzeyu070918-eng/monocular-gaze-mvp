@@ -18,32 +18,41 @@ def validate_regions(rows):
 
 def blocks(lines,pixels,scale,options,manual=()):
     regions=[]
+    median_height=float(np.median([r['rect'][3]-r['rect'][1] for r in lines])) if lines else 0.
     for line in sorted(lines,key=lambda r:(r['rect'][1],r['rect'][0])):
         rect=list(line['rect']);a,b,c,d=rect;target=None
         for r in regions:
             x,y,z,w=r['rect'];overlap=max(0,min(c,z)-max(a,x))/max(1e-9,min(c-a,z-x))
-            if overlap>.5 and 0<=b-w<=scale['sigma_y']*options.aoi_merge_gap_sigma:target=r;break
+            if overlap>options.aoi_line_overlap and 0<=b-w<=scale['sigma_y']*options.aoi_merge_gap_sigma:target=r;break
         if target is None:regions.append(dict(id=f'text-{len(regions)+1}',rect=rect,kind='text_block_candidate',text=line['text'],source='ocr',confidence=line['confidence']))
         else:
             x,y,z,w=target['rect'];target['rect']=[min(a,x),min(b,y),max(c,z),max(d,w)];target['text']+='\n'+line['text']
             target['confidence']=min(target['confidence'],line['confidence'])
     gray=cv2.cvtColor(pixels,cv2.COLOR_RGB2GRAY);small=cv2.resize(gray,(options.thumbnail_width,max(1,round(gray.shape[0]*options.thumbnail_width/gray.shape[1]))))
-    edges=cv2.Canny(small,40,120);edges=cv2.morphologyEx(edges,cv2.MORPH_CLOSE,np.ones((5,5),np.uint8))
+    edges=cv2.Canny(small,options.aoi_edge_low,options.aoi_edge_high);edges=cv2.morphologyEx(edges,cv2.MORPH_CLOSE,np.ones((options.aoi_close_px,options.aoi_close_px),np.uint8))
     contours,_=cv2.findContours(edges,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
     for contour in contours:
         x,y,w,h=cv2.boundingRect(contour);rect=[x/small.shape[1],y/small.shape[0],(x+w)/small.shape[1],(y+h)/small.shape[0]]
-        if w*h/small.size<.015:continue
+        for r in regions:
+            a,b,c,d=r['rect'];height=d-b
+            box=[x/small.shape[1],y/small.shape[0],(x+w)/small.shape[1],(y+h)/small.shape[0]]
+            if '\n' not in r.get('text','') and box[0]<a< c<box[2] and box[1]<b<d<box[3] and height<(box[3]-box[1])<=height*options.aoi_button_height_ratio:
+                r['kind']='button_candidate';r['rect']=box
+        if w*h/small.size<options.aoi_visual_min_area:continue
         if any(max(rect[0],a)<min(rect[2],c) and max(rect[1],b)<min(rect[3],d) for a,b,c,d in [r['rect'] for r in regions]):continue
         regions.append(dict(id=f'visual-{len(regions)+1}',rect=rect,kind='image_or_color_candidate',source='edges',confidence=None))
     # Also capture large, nearly uniform color components, not just textures.
-    color=cv2.resize(pixels,(small.shape[1],small.shape[0]));quantized=(color//32).astype(np.int32);codes=quantized[:,:,0]*64+quantized[:,:,1]*8+quantized[:,:,2]
-    for code in np.unique(codes):
+    color=cv2.resize(pixels,(small.shape[1],small.shape[0]));quantized=(color//options.aoi_color_bin).astype(np.int32);bins=math.ceil(256/options.aoi_color_bin);codes=quantized[:,:,0]*bins*bins+quantized[:,:,1]*bins+quantized[:,:,2]
+    values,counts=np.unique(codes,return_counts=True)
+    for code in values[np.argsort(counts)[-options.aoi_max_colors:]]:
         count,labels,stats,_=cv2.connectedComponentsWithStats((codes==code).astype(np.uint8),8)
         for x,y,w,h,area in stats[1:]:
-            if area/small.size<.03 or area/small.size>.9:continue
+            if area/small.size<options.aoi_color_min_area or area/small.size>options.aoi_color_max_area:continue
             rect=[x/small.shape[1],y/small.shape[0],(x+w)/small.shape[1],(y+h)/small.shape[0]]
             if any(max(rect[0],a)<min(rect[2],c) and max(rect[1],b)<min(rect[3],d) for a,b,c,d in [r['rect'] for r in regions]):continue
             regions.append(dict(id=f'color-{len(regions)+1}',rect=rect,kind='color_candidate',source='color_component',confidence=None))
+    manual=validate_regions(manual)
+    names={r['id'] for r in manual};regions=[dict(r,source='manual',original_rect=list(r['rect'])) for r in manual]+[r for r in regions if r['id'] not in names]
     # Merge adjacent sub-error-scale blocks. Do not join distant unrelated content.
     for r in list(regions):
         a,b,c,d=r['rect']
@@ -55,11 +64,17 @@ def blocks(lines,pixels,scale,options,manual=()):
         target=min(others,key=gap)
         if gap(target)<=options.aoi_merge_gap_sigma:
             x,y,z,w=target['rect'];target['rect']=[min(a,x),min(b,y),max(c,z),max(d,w)]
-            target.setdefault('merged_ids',[]).append(r['id']);regions.remove(r)
+            target.setdefault('merged_ids',[]).append(r['id'])
+            if r.get('source')=='manual' and target.get('source')!='manual':
+                target['merged_ids'].append(target['id']);target['id']=r['id'];target['source']='manual';target['original_rect']=r['original_rect']
+            if r.get('text'):target['text']=target.get('text','')+'\n'+r['text']
+            regions.remove(r)
         else:r['below_error_scale']=True
-    manual=validate_regions(manual)
-    names={r['id'] for r in manual};regions=[r for r in regions if r['id'] not in names]
-    return validate_regions([dict(r,source='manual') for r in manual]+regions)
+    for r in regions:
+        if r.get('source')=='manual' or r.get('kind')=='button_candidate':continue
+        if '\n' in r.get('text',''):r['kind']='paragraph_candidate'
+        elif median_height and r['rect'][3]-r['rect'][1]>=median_height*options.aoi_title_height_ratio:r['kind']='title_candidate'
+    return validate_regions(regions)
 
 
 class AOIStatistics:

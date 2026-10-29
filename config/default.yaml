@@ -478,3 +478,20 @@ attention:
   scroll_max_horizontal_px: 12
   aoi_merge_gap_sigma: 0.5
   soft_grid_width: 320
+  scroll_width: 640
+  aoi_visual_min_area: 0.015
+  aoi_color_min_area: 0.03
+  aoi_color_max_area: 0.9
+  aoi_color_bin: 32
+  aoi_max_colors: 32
+  aoi_edge_low: 40
+  aoi_edge_high: 120
+  aoi_close_px: 5
+  aoi_line_overlap: 0.5
+  screenshot_timeout_s: 15
+  ocr_timeout_s: 120
+  stimulus_max_pixels: 32000000
+  stimulus_max_mb: 64
+  aoi_title_height_ratio: 1.35
+  aoi_button_height_ratio: 3.5
+  max_dynamic_extent: 0.8

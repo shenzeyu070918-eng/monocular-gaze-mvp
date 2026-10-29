@@ -499,6 +499,9 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
                        starfield=StarfieldSettings(**data.get('starfield', {})),
                        galaxy=GalaxySettings(**data.get('galaxy', {})),
                        attention=AttentionSettings(**data.get('attention', {})))
+    attention_path=Path(settings.attention.output_dir)
+    if not attention_path.is_absolute():attention_path=ROOT/attention_path
+    if not attention_path.resolve().is_relative_to((ROOT/'data/attention').resolve()):raise ValueError('attention.output_dir 只能位于 data/attention/ 下')
     i, c, g = settings.inference, settings.camera, settings.geometry
     # Validate the request separately from actual device availability.
     if i.device not in {'auto', 'cpu', 'cuda', 'mps'}:

@@ -12,7 +12,7 @@ def thumbnail(pixels,width):
 def scroll_offset(old,new,options):
     if old.shape!=new.shape:return None
     a=cv2.cvtColor(old,cv2.COLOR_RGB2GRAY).astype(np.float32);b=cv2.cvtColor(new,cv2.COLOR_RGB2GRAY).astype(np.float32)
-    factor=min(1.,640/a.shape[1]);size=(round(a.shape[1]*factor),round(a.shape[0]*factor))
+    factor=min(1.,options.scroll_width/a.shape[1]);size=(max(2,round(a.shape[1]*factor)),max(2,round(a.shape[0]*factor)))
     a=cv2.resize(a,size);b=cv2.resize(b,size)
     if a.std()<1 or b.std()<1:return dict(vertical_px=None,confidence=0.,accepted=False,method='phase_correlation')
     window=cv2.createHanningWindow(size,cv2.CV_32F)
@@ -45,11 +45,18 @@ class SceneDetector:
         shape=self._tiles(thumb,thumb).shape;mask=np.zeros(shape,bool)
         if len(self.changes)>=self.o.repeat_count:
             repeating=np.sum(self.changes,axis=0)>=self.o.repeat_count
-            if repeating.mean()<=self.o.max_dynamic_area:mask=repeating
+            count,labels,stats,_=cv2.connectedComponentsWithStats(repeating.astype(np.uint8),8)
+            eligible=np.zeros_like(repeating)
+            for label,(_,_,width,height,_) in enumerate(stats[1:],1):
+                # Whole-page vertical changes are not a small animation, even
+                # when sparse text occupies only a small fraction of pixels.
+                if width/repeating.shape[1]<=self.o.max_dynamic_extent and height/repeating.shape[0]<=self.o.max_dynamic_extent:eligible|=labels==label
+            if eligible.mean()<=self.o.max_dynamic_area:mask=eligible
         app_changed=self.last_app is not None and sample.app_name!=self.last_app
         if self.reference is not None and not app_changed and not self._different(self.reference,thumb,mask):
             self.last_old=sample;self.pending=[];self.pending_since=None
             return None
+        if self.pending and self.pending[-1][0].app_name!=sample.app_name:self.pending=[];self.pending_since=None
         if not self.pending:self.pending_since=now
         self.pending.append((sample,thumb))
         # Keep only enough history to cover the bounded unstable period.
@@ -64,12 +71,13 @@ class SceneDetector:
         stable=(now-first.time_ns)/1e6>=self.o.stable_ms
         interval_ok=self.last_scene_ns is None or (now-self.last_scene_ns)/1e6>=self.o.min_scene_interval_ms
         if not interval_ok or not (stable or forced):return None
+        if forced and not stable:first=self.pending[0][0]
         self.number+=1
         uncertain=None if self.last_old is None else [self.last_old.time_ns,first.time_ns]
         result=dict(type='scene',scene_id=f'{self.number:06d}',start_ns=first.time_ns,confirmed_ns=now,
                     request_ns=first.request_ns,received_ns=first.received_ns,time_source='snapshot_request_receive_midpoint',
                     request_span_ns=first.received_ns-first.request_ns,timestamp_bound_guaranteed=False,transition=uncertain,
-                    dynamic=bool(forced and not stable),ignored_dynamic_fraction=float(mask.mean()),app_name=sample.app_name)
+                    dynamic=bool(forced and not stable),start_basis='first_changed_timeout' if forced and not stable else 'first_matching_stable',ignored_dynamic_fraction=float(mask.mean()),app_name=sample.app_name)
         if self.last_scene_pixels is not None and self.last_app==sample.app_name:
             result['scroll']=scroll_offset(self.last_scene_pixels,sample.pixels,self.o)
         self.last_scene_ns=now;self.last_scene_pixels=sample.pixels.copy();self.last_app=sample.app_name

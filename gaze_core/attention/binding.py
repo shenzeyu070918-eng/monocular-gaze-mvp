@@ -9,8 +9,11 @@ def frame_record(prediction):
     data=prediction.data
     row=dict(type='frame',capture_ns=int(prediction.captured_ns),completed_ns=int(prediction.completed_ns),
              valid=bool(data.get('valid')),status=str(data.get('status','invalid')))
-    for key in ('raw','origin_m'):
-        value=data.get(key);row[key]=None if value is None else [number(v,key) for v in value]
+    for key,length in (('raw',2),('origin_m',3)):
+        value=data.get(key)
+        if value is not None and (isinstance(value,(str,bytes,dict)) or len(value)!=length):raise ValueError(key+' 数值维度无效，拒绝图像/任意数组')
+        row[key]=None if value is None else [number(v,key) for v in value]
+    if hasattr(prediction,'sequence'):row['frame_id']=int(prediction.sequence)
     return row
 
 
@@ -30,7 +33,7 @@ def extract_fixations(frames,fixation_settings,geometry,matrix,start_ns):
             durations[key]=durations.get(key,0.)+(now-previous)/1e9
         previous=now
         if not row.get('valid') or row.get('status')!='tracking' or row.get('raw') is None:
-            last_state=row.get('status','invalid')
+            last_state=row.get('status','invalid') if row.get('status')!='tracking' else 'invalid_raw'
             for segment in detector.reset():yield 'fixation',convert(segment)
             continue
         point=np.append(np.asarray(row['raw'],float),1)@matrix
@@ -59,7 +62,9 @@ class Timeline:
         self.start_ns,self.end_ns=start_ns,end_ns
         self.scenes=sorted((e for e in events if e['type']=='scene'),key=lambda e:e['start_ns'])
         self.states=sorted((e for e in events if e['type']=='state'),key=lambda e:e['time_ns'])
-        self.uncertain=merge_intervals([e['transition'] for e in self.scenes if e.get('transition')])
+        guard_intervals=[(e['time_ns'],self.states[i+1]['time_ns'] if i+1<len(self.states) else end_ns) for i,e in enumerate(self.states) if e['status'] in ('foreground_or_filter_changed','frontmost_unknown')]
+        pending_intervals=[(e['start_ns'],e['end_ns']) for e in events if e.get('type')=='transition_pending']
+        self.uncertain=merge_intervals([e['transition'] for e in self.scenes if e.get('transition')]+guard_intervals+pending_intervals)
         self.intervals=[];self.breaks={start_ns,end_ns}
         for i,scene in enumerate(self.scenes):
             following=self.scenes[i+1] if i+1<len(self.scenes) else None

@@ -10,6 +10,9 @@ class OverlayActions:
         'autocal': '点击自动粗校准',
         'demo': '眼控 Demo…', 'presentation': '演示模式',
         'demo_practice': '重新练习修正',
+        'attention_guide': '30秒注意力引导验收…', 'attention_start': '开始屏幕注意力会话', 'attention_stimulus': '开始图片刺激物会话…',
+        'attention_pause': '暂停/恢复注意力会话', 'attention_end': '结束注意力会话',
+        'attention_ring': '注意力会话显示圆环', 'attention_delete': '删除整个注意力会话…',
         'heatmap_toggle':'热力图累加开/关', 'heatmap_view':'查看热力图', 'heatmap_clear':'清空热力图', 'heatmap_export':'导出当前会话热力图',
         'toggle': '隐藏悬浮层', 'pause': '暂停摄像头', 'web': '打开网页', 'quit': '退出',
     }
@@ -22,6 +25,7 @@ class OverlayActions:
         self.items['heatmap_toggle'].setCheckable(True)
         self.items['heatmap_view'].setCheckable(True)
         self.items['presentation'].setCheckable(True)
+        self.items['attention_ring'].setCheckable(True)
 
     def __getitem__(self, name):
         return self.items[name]

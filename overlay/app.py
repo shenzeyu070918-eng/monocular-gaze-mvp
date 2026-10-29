@@ -83,7 +83,7 @@ def _run(args,startup):
         menu=QMenu();mode=menu.addAction('未校准 · Python 管线');mode.setEnabled(False)
         actions.add_to_menu(menu)
         toggle,pause,quit_action=(actions[name] for name in ('toggle','pause','quit'))
-        for name in ('demo','demo_practice','presentation','calibrate','check','load_web','reset','record','pause','web','autocal','heatmap_toggle','heatmap_view','heatmap_clear','heatmap_export'):actions[name].setEnabled(False)
+        for name in ('demo','demo_practice','presentation','calibrate','check','load_web','reset','record','pause','web','autocal','heatmap_toggle','heatmap_view','heatmap_clear','heatmap_export','attention_guide','attention_start','attention_stimulus','attention_pause','attention_end','attention_ring','attention_delete'):actions[name].setEnabled(False)
         tray.setContextMenu(menu);tray.setToolTip('视线悬浮层 · 未校准')
         def toggle_visible():
             window.setVisible(not window.isVisible())

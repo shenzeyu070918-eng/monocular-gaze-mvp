@@ -28,7 +28,7 @@ def phase_start(phase,action_s=4):return 16+PHASES.index(phase)*action_s
 
 
 def instructions(phase,excluded_app='备忘录',pause_key='Control+Option+S'):
-    return dict(scroll='向下滚动到第 9 块',tab='按 ⌘⇧] 切到右侧彩色标签',
+    return dict(scroll='向下滚动到第 9 块',tab='点击右侧彩色标签，停1.5秒，再点回来',
                 app='按 ⌘Tab 切到 Finder 等普通应用',exclude=f'切到「{excluded_app}」',
                 pause=f'回测试页，按 {pause_key} 暂停')[phase]
 

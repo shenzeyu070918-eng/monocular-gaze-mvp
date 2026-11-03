@@ -24,6 +24,7 @@ class OverlayWindow(QWidget):
         self.position=None;self.radii=(options.fallback_radius_px,)*2;self.opacity=0.
         self._heatmap_image=None;self._heatmap_key=None;self._heatmap_enabled=False;self._heatmap_uncalibrated=False
         self._heatmap_coarse=False
+        self._attention_ring_hidden=False
         self.label='未校准 · 窗口诊断（无摄像头）' if diagnostic else '未校准 · 正在启动'
         font=QFont();font.setPixelSize(options.label_font_px);self.setFont(font)
         self._label_metrics=QFontMetrics(font)
@@ -94,8 +95,14 @@ class OverlayWindow(QWidget):
             old_bounds=self._ring_bounds()
             self.position,self.radii,self.opacity=position,radii,opacity
             region=QRegion(old_bounds.toAlignedRect())|QRegion(self._ring_bounds().toAlignedRect())
-            if not region.isEmpty():self.update(region.intersected(QRegion(self.rect())))
+            if not self._attention_ring_hidden and not region.isEmpty():self.update(region.intersected(QRegion(self.rect())))
         self.set_status(label,kind=label_kind)
+
+    def set_attention_ring_hidden(self,hidden):
+        hidden=bool(hidden)
+        if hidden==self._attention_ring_hidden:return
+        self._attention_ring_hidden=hidden
+        self.update(self._ring_bounds().toAlignedRect())
 
     def set_status(self,label,*,kind='immediate',force=False):
         observed=(label,'immediate' if force else kind)
@@ -172,7 +179,7 @@ class OverlayWindow(QWidget):
                 painter.drawLine(QRectF(x,y-size,0,size*2).topLeft(),QRectF(x,y-size,0,size*2).bottomLeft())
                 painter.drawText(QRectF(x-120 if point[0] else x+8,y-35 if point[1] else y+8,112,25),
                                  Qt.AlignmentFlag.AlignCenter,f'{index+1}: {point}')
-        elif self.position is not None and self.opacity>0:
+        elif not self._attention_ring_hidden and self.position is not None and self.opacity>0:
             painter.setOpacity(self.opacity)
             painter.setPen(QPen(QColor(self.options.presentation_color if self._presentation else self.options.color),
                                 self.options.presentation_stroke_px if self._presentation else self.options.stroke_px))

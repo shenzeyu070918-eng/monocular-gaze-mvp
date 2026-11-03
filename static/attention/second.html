@@ -1,0 +1,17 @@
+<!doctype html><meta charset="utf-8"><title>M9 右侧第二测试标签 · 彩色验证页</title>
+<style>html{background:#502347;color:#fff;font:28px system-ui}body{margin:4vh;display:grid;grid-template-columns:1fr 1fr;gap:3vh}section{padding:4vh;background:#295f83;border:8px solid #f2b84c;height:24vh}h1,#hint{grid-column:1/-1}#hint{position:fixed;bottom:0;background:#162533;padding:18px;left:0;right:0;font-size:36px}#skip{position:fixed;top:18px;right:22px;z-index:30;min-width:180px;min-height:58px;font-weight:700;background:#ffe08a;color:#172030;border:3px solid #172030;border-radius:10px}section:nth-child(even){background:#925c20}</style>
+<h1>第二测试标签 · 与左侧页面明显不同</h1><section>蓝色验证区 A</section><section>金色验证区 B</section><section>彩色验证区 C</section><section>彩色验证区 D</section><div id="controls" style="position:fixed;bottom:0;left:0;right:0;background:#162533;padding:15px"><div id="hint" style="position:static;padding:0">准备完成。现在点击左侧主测试标签返回，切标签阶段再点本页。</div><button id="skip" hidden style="font-size:22px;padding:12px">跳过本步（K）</button></div>
+<script type="module">
+import {actionText,BrowserEvidence,GuideFullscreen,installSkipShortcut} from '/guide-logic.mjs';
+const token=location.hash.slice(1);history.replaceState(null,'','/second');let busy=false,state=null;const evidence=new BrowserEvidence('secondary');const fullscreenFlow=new GuideFullscreen();
+async function request(path,data){const r=await fetch(path,{method:data?'POST':'GET',headers:{'X-Attention-Token':token,...(data?{'Content-Type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{})});if(!r.ok)throw Error('引导连接失败');return r.json();}
+function observe(reason){return request('/observe',evidence.sample(reason,{visible:document.visibilityState==='visible',fullscreen:!!document.fullscreenElement})).catch(()=>{});}
+document.addEventListener('visibilitychange',()=>observe('visibilitychange'));
+async function skip(){if(state?.stage?.kind==='action')await request('/skip',{step_id:state.stage.step_id}).catch(()=>{});}
+document.getElementById('skip').onclick=skip;installSkipShortcut(window,()=>state?.stage,skip);
+async function poll(){if(busy)return;busy=true;try{await observe('heartbeat');state=await request('/clock');const p=state.stage;await fullscreenFlow.update(p,document,'secondary');
+  document.getElementById('skip').hidden=p.kind!=='action'||!!p.feedback;
+  if(state.elapsed_s!==null)document.getElementById('hint').textContent=state.finished?'测试已结束，请回控制面板':p.kind==='action'?(p.phase==='tab'?(p.feedback?'✓ 本步已结束，请点击左侧主测试标签，再恢复全屏':'请停留1.5秒，再点击左侧主测试标签'):actionText(p,state.excluded_app,state.pause_key)):'点击左侧主测试标签返回';
+}catch(e){document.getElementById('hint').textContent=e.message;}finally{busy=false;}}
+setInterval(poll,300);observe('load');poll();
+</script>

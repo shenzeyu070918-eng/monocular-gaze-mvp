@@ -5,3 +5,5 @@ matplotlib==3.11.2  # M6 PNG export; same pin as requirements-analysis.txt.
 pyobjc-framework-Cocoa==12.2.2; sys_platform == 'darwin'
 pyobjc-framework-Quartz==12.2.2; sys_platform == 'darwin'
 pyobjc-framework-AVFoundation==12.2.2; sys_platform == 'darwin'
+pyobjc-framework-ScreenCaptureKit==12.2.2; sys_platform == 'darwin'
+pyobjc-framework-Vision==12.2.2; sys_platform == 'darwin'

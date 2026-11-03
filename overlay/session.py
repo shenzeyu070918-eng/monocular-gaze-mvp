@@ -15,7 +15,7 @@ class OverlaySession:
                  profile_directory=None,recording_factory=PythonRecording):
         self.settings,self.screen=settings,screen
         self.notice,self.restore,self.results=notice,restore,results
-        self.clock_ns=clock_ns;self.controller=None
+        self.clock_ns=clock_ns;self.controller=None;self.attention=None
         self.buffer=NumericResultBuffer(settings.recording.queue_size)
         self.profiles=ProfileManager(settings,screen,on_matrix=lambda _:self._sync_correction(),directory=profile_directory)
         self.recording=recording_factory(settings,metadata_factory=self.metadata)
@@ -179,6 +179,7 @@ class OverlaySession:
 
     def sink(self,prediction):
         # Both receive numeric copies; overflow is explicit and never waits.
+        if self.attention is not None:self.attention.observe(prediction)
         self.recording.record_prediction(prediction)
         self.buffer.push(prediction)
         if self.clicks is not None:self.clicks.observe(prediction)
@@ -467,6 +468,7 @@ class OverlaySession:
     def close(self):
         # Called by the lifecycle worker only after the camera/sink have drained.
         self._task_inference(False)
+        if self.attention is not None:self.attention.close()
         if self.clicks is not None:self.clicks.close()
         if self._click_hub is not None:self._click_hub.close()
         self.autocal.close()

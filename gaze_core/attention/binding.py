@@ -50,7 +50,9 @@ def extract_fixations(frames,fixation_settings,geometry,matrix,start_ns):
 
 def merge_intervals(intervals):
     result=[]
-    for a,b in sorted(intervals):
+    # JSON transitions are lists; guards/pending intervals are tuples. Sort
+    # one representation without converting nanosecond integers to floats.
+    for a,b in sorted((a,b) for a,b in intervals):
         if b<=a:continue
         if result and a<=result[-1][1]:result[-1][1]=max(b,result[-1][1])
         else:result.append([a,b])

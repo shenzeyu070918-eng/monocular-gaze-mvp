@@ -1,0 +1,42 @@
+<!doctype html><meta charset="utf-8"><title>M9 本地注意力引导 · 左侧主测试页</title>
+<style>html,body{margin:0;background:#eef0f4;color:#172030;font:20px system-ui}#start{position:fixed;inset:12% 18%;background:white;padding:30px;z-index:5;overflow:auto}button{font-size:20px;padding:12px;margin:5px}.block{position:absolute;box-sizing:border-box;border:2px solid #567;padding:16px;background:white}.active{border:2px solid #cc6d18}.active>b{color:#a65d13}#controls{position:fixed;bottom:4px;left:20px;right:20px;background:#132233;color:white;padding:10px;z-index:4}#hint{font-size:36px;font-weight:700}#detail{font-size:18px}#skip{position:fixed;top:18px;right:22px;z-index:30;min-width:180px;min-height:58px;font-size:22px;font-weight:700;background:#ffe08a;color:#172030;border:3px solid #172030;border-radius:10px}#begin-wait{display:inline-block;max-width:440px;font-size:18px;color:#83441d}#restore,#exit-full{font-size:23px;min-height:52px}#board{position:relative}#tail{background:#1e4460;color:white;padding:32px;display:none}.scroll-block{height:38vh;min-height:240px;border:4px solid #7cbed0;padding:20px;margin:20px;background:#28394e;font-size:50px}</style>
+<div id="start">本地验收：自动采集30秒关闭分析的CPU基线。<p>准备有效九点；浏览器放在内置屏，100%缩放。8块注视仍为16秒，之后动作自定节奏，可跳过；提示也显示在屏幕录制条。CPU的30秒录制测量在动作前完成。</p><p id="preparation">先打开排除测试应用及 Finder 备用；本次选定的排除应用会临时加入名单，不修改配置。</p><button id="prepare">① 打开右侧彩色测试标签</button><p>看到第二页后，点击左侧主测试标签返回，再进入全屏。切标签测试会用右侧页。</p><button id="full">② 进入全屏</button><button id="begin" disabled>③ 开始引导</button><span id="begin-wait">等待 30 秒 CPU 基线完成后可点（请勿操作）</span><p id="status">基线采集中…</p></div><div id="board"></div><div id="tail"></div><div id="controls"><div id="hint"></div><div id="detail"></div><button id="restore" hidden>恢复全屏并继续</button><button id="exit-full" hidden>退出全屏，显示标签栏</button><button id="skip" hidden>跳过本步（K）</button></div>
+<script type="module">
+import {clockEstimate,actionText,BrowserEvidence,GuideFullscreen,installSkipShortcut} from '/guide-logic.mjs';
+const token=location.hash.slice(1);history.replaceState(null,'','/');const $=id=>document.getElementById(id);
+let offset=0,last=0,begun=false,ended=false,inflight=false,state=null;const evidence=new BrowserEvidence('primary');const fullscreenFlow=new GuideFullscreen();
+async function request(path,data){const r=await fetch(path,{method:data?'POST':'GET',headers:{'X-Attention-Token':token,...(data?{'Content-Type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{})});const v=await r.json();if(!r.ok)throw Error(v.error||'本地连接失败');return v;}
+function geometry(e){return {screenX:screenX,screenY:screenY,innerWidth,innerHeight,outerWidth,outerHeight,dpr:devicePixelRatio,screenWidth:screen.width,screenHeight:screen.height,fullscreen:Number(!!document.fullscreenElement),clientX:e.clientX,clientY:e.clientY,eventScreenX:e.screenX,eventScreenY:e.screenY,scale:visualViewport?.scale||1};}
+$('prepare').onclick=()=>{const tab=window.open('/second#'+token,'m9-secondary');if(!tab)$('status').textContent='请允许本地测试页打开新标签，然后再点一次';};
+$('full').onclick=()=>document.documentElement.requestFullscreen().catch(e=>$('status').textContent=e.message);
+$('begin').onclick=async e=>{try{const layout=await request('/begin',geometry(e));begun=true;$('start').remove();window.scrollTo(0,0);$('board').style.height=innerHeight+'px';for(const r of layout.rects){const b=document.createElement('div');b.className='block';b.id='b'+r.id;const [x,y,w,h]=r.client_rect;b.style.cssText=`left:${x}px;top:${y}px;width:${w}px;height:${h}px`;b.innerHTML=`<b>${r.id} · 注意力测试块</b><p>看中央十字，不追视线圈</p><div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:28px">＋</div>`;$('board').append(b);}for(let n=9;n<=16;n++){const b=document.createElement('div');b.className='scroll-block';b.textContent=`${n} · 滚动验证内容`;b.style.background=n%2?'#163f5e':'#563447';$('tail').append(b);}$('tail').style.display='block';}catch(e){$('status').textContent=e.message;}};
+function evidenceState(){
+  const target=$('tail').firstElementChild;const rect=target?.getBoundingClientRect();
+  return {visible:document.visibilityState==='visible',fullscreen:!!document.fullscreenElement,
+    scroll_fraction:Math.min(100,Math.abs(scrollY)/innerHeight),target_visible:!!rect&&rect.top>=-30&&rect.top<innerHeight-100};
+}
+function observe(reason){return request('/observe',evidence.sample(reason,evidenceState())).catch(()=>{});}
+addEventListener('scroll',()=>observe('scroll'),{passive:true});
+document.addEventListener('visibilitychange',()=>observe('visibilitychange'));
+async function skip(){if(state?.stage?.kind!=='action')return;try{await request('/skip',{step_id:state.stage.step_id});await poll();}catch(e){$('detail').textContent=e.message;}}
+$('skip').onclick=skip;installSkipShortcut(window,()=>state?.stage,skip);
+$('restore').onclick=async()=>{try{await document.documentElement.requestFullscreen();await observe('heartbeat');}catch(e){$('detail').textContent=e.message;}};
+$('exit-full').onclick=()=>document.exitFullscreen().catch(e=>$('detail').textContent=e.message);
+document.addEventListener('fullscreenchange',()=>observe('heartbeat'));
+async function poll(){if(inflight||ended)return;inflight=true;try{
+  await observe('heartbeat');
+  const a=performance.now(),v=await request('/clock'),b=performance.now();state=v;offset=clockEstimate([{before:a,after:b,serverNs:v.time_ns}]).offsetNs;
+  if(!begun){$('preparation').textContent=`先打开「${state.excluded_app}」及 Finder 备用；排除名单仅本次临时修改。`;$('begin').disabled=!state.baseline_ready||!state.second_ready;$('begin-wait').textContent=state.baseline_ready?'CPU基线已完成，可以开始':'等待 30 秒 CPU 基线完成后可点（请勿操作）';
+    $('status').textContent=`${state.baseline_ready?'CPU基线完成':`请保持主测试页全屏、前台且不操作；30秒基线进度 ${state.baseline_elapsed_s.toFixed(0)}s`}；${state.second_ready?'第二标签已准备':'请先准备右侧标签'}。`;return;}
+  const stage=state.stage;$('skip').hidden=stage.kind!=='action'||!!stage.feedback;
+  const mode=await fullscreenFlow.update(stage,document,'primary');$('restore').hidden=!mode.restore;$('exit-full').hidden=!(stage.phase==='tab'&&!stage.feedback&&!!document.fullscreenElement);
+  if(stage.kind==='waiting'){$('hint').textContent=state.wait_reason||'等待首个画面与浏览器就绪';return;}
+  if(stage.kind==='target'){
+    if(stage.id!==last&&document.visibilityState==='visible'){last=stage.id;document.querySelectorAll('.active').forEach(e=>e.classList.remove('active'));$('b'+last).classList.add('active');requestAnimationFrame(()=>request('/event',{kind:'target',time_ns:Math.round(performance.now()*1e6+offset),id:last}).catch(e=>$('detail').textContent=e.message));}
+    $('hint').textContent=`看第 ${stage.id} 块中央`;$('detail').textContent=`${state.elapsed_s.toFixed(1)} / 16s · 每块2秒`;}
+  else if(stage.kind==='cpu'){$('hint').textContent='注视已完成，请保持此页静止';$('detail').textContent=`独立CPU窗口剩余 ${state.cpu_remaining_s.toFixed(0)}秒；暂不操作，测完自动开始动作。${state.cpu_reason}`;}
+  else if(stage.kind==='action'){$('hint').textContent=mode.restore?'请点击“恢复全屏并继续”':actionText(stage,state.excluded_app,state.pause_key);$('detail').textContent=mode.error|| (stage.phase==='tab'?(stage.feedback?'已记录本步；恢复全屏后再继续':document.fullscreenElement?'请先点击“退出全屏，显示标签栏”按钮':'已退出HTML全屏。点击顶部右侧彩色标签，停1.5秒，再点回本页；K可跳过'):`不限时 · 稳定保持 ${state.stable_s}秒；右上角按钮或 K 跳过。${stage.hold_s.toFixed(1)}s`);}
+  if(state.finished){ended=true;$('hint').textContent='引导结束，正在本机整理';$('detail').textContent='面板会区分动作未执行与已执行但切换未检出。';}
+}catch(e){if($('status'))$('status').textContent=e.message;else $('detail').textContent=e.message;}finally{inflight=false;}}
+setInterval(poll,250);observe('load');poll();
+</script>

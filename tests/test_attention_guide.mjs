@@ -1,0 +1,63 @@
+import assert from 'node:assert/strict';
+import {phaseAt, clockEstimate} from '../static/attention/guide-logic.mjs';
+assert.deepEqual(phaseAt(0), {kind:'target', id:1});
+assert.deepEqual(phaseAt(15.99), {kind:'target', id:8});
+assert.deepEqual([16,20,24,28,32].map(t=>phaseAt(t).phase), ['scroll','tab','app','exclude','pause']);
+assert.deepEqual(phaseAt(36), {kind:'end'});
+assert.throws(()=>phaseAt(NaN));
+const clock=clockEstimate([{before:10,after:14,serverNs:1020000000},{before:30,after:32,serverNs:1031000000}]);
+assert.equal(clock.offsetNs,1000000000);assert.equal(clock.uncertaintyNs,1000000);
+assert.throws(()=>clockEstimate([{before:4,after:3,serverNs:5}]));
+console.log('M9 guide boundaries and minimum-RTT clock mapping passed');
+
+assert.equal(phaseAt(35.9).phase,'pause');
+assert.equal(phaseAt(19.99).phase,'scroll');
+assert.equal(phaseAt(40,5).phase,'pause');
+import {readFileSync} from 'node:fs';
+const main=readFileSync(new URL('../static/attention/guide.html',import.meta.url),'utf8');
+assert.match(main,/window.open\('\/second#/);
+assert.match(main,/n=9;n<=16/);
+assert.match(main,/scrollY/);
+assert.match(main,/elapsed_s/);
+const second=readFileSync(new URL('../static/attention/second.html',import.meta.url),'utf8');
+assert.match(second,/BrowserEvidence\('secondary'\)/);
+
+import {actionText,BrowserEvidence} from '../static/attention/guide-logic.mjs';
+const evidence=new BrowserEvidence('primary');
+assert.equal(evidence.sample('heartbeat',{visible:true}).revision,0);
+assert.equal(evidence.sample('scroll',{visible:true,target_visible:true}).revision,1);
+assert.equal(evidence.sample('heartbeat',{visible:true}).revision,1);
+assert.equal(evidence.sample('visibilitychange',{visible:false}).revision,2);
+assert.throws(()=>evidence.sample('click',{}));
+assert.match(actionText({phase:'scroll'},'备忘录','Ctrl+Alt+S'),/第 9 块/);
+assert.equal(actionText({phase:'app',feedback:'completed'}),'✓ 完成');
+assert.match(actionText({phase:'tab',feedback:'skipped'}),/未执行/);
+assert.match(actionText({phase:'pause',resume_ready:true},'备忘录','MyKey'),/MyKey.*恢复/);
+assert.match(main,/addEventListener\('scroll'/);
+assert.match(main,/addEventListener\('visibilitychange'/);
+assert.match(main,/request\('\/skip'/);
+assert.match(second,/addEventListener\('visibilitychange'/);
+assert.match(second,/request\('\/skip'/);
+
+import {GuideFullscreen,installSkipShortcut,instruction} from '../static/attention/guide-logic.mjs';
+assert.match(instruction('tab'),/点击右侧彩色标签/);
+const fullscreenFlow=new GuideFullscreen();let exits=0;
+const doc={fullscreenElement:{},async exitFullscreen(){exits++;this.fullscreenElement=null;}};
+const tab={kind:'action',phase:'tab',step_id:1};
+await fullscreenFlow.update(tab,doc,'primary');assert.equal(exits,1);assert.equal(doc.fullscreenElement,null);
+await fullscreenFlow.update(tab,doc,'primary');assert.equal(exits,1);
+assert.equal((await fullscreenFlow.update({...tab,feedback:'completed'},doc,'primary')).restore,true);
+assert.equal((await fullscreenFlow.update({...tab,feedback:'completed'},doc,'secondary')).restore,false);
+doc.fullscreenElement={};await fullscreenFlow.update({...tab,feedback:'completed'},doc,'primary');assert.equal(exits,1);
+for(const phase of ['scroll','app','exclude','pause'])await fullscreenFlow.update({...tab,phase},doc,'primary');
+assert.equal(exits,1); // Other actions do not force a fullscreen change.
+const failure=new GuideFullscreen();assert.match((await failure.update(tab,{fullscreenElement:{},exitFullscreen:async()=>{throw Error('denied');}},'primary')).error,/denied/);
+let listener,skips=0,stage={kind:'action',phase:'scroll'};
+installSkipShortcut({addEventListener:(name,cb)=>{assert.equal(name,'keydown');listener=cb;}},()=>stage,()=>skips++);
+function key(extra={}){let prevented=false;listener({key:'k',target:{tagName:'BODY'},preventDefault:()=>{prevented=true;},...extra});return prevented;}
+assert.equal(key(),true);assert.equal(skips,1);
+for(const extra of [{repeat:true},{ctrlKey:true},{metaKey:true},{altKey:true},{isComposing:true},{target:{tagName:'INPUT'}},{target:{isContentEditable:true}}])assert.equal(key(extra),false);
+stage={kind:'cpu'};assert.equal(key(),false);stage={kind:'action',feedback:'completed'};assert.equal(key(),false);
+assert.match(main,/等待 30 秒 CPU 基线完成后可点（请勿操作）/);
+assert.match(main,/#skip\{position:fixed;top:18px/);
+assert.match(main,/恢复全屏并继续/);assert.match(second,/installSkipShortcut/);

@@ -4,7 +4,7 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from PySide6.QtCore import QObject,Signal
 from gaze_core.attention.acceptance import layout,cpu_snapshot,cpu_difference
-from gaze_core.attention.guide import phase_at,phase_start,instructions,foreground_block,native_action,browser_front
+from gaze_core.attention.guide import phase_at,instructions,foreground_block,native_action,browser_front,ActionSteps
 from gaze_core.galaxy_protocol import viewport
 
 
@@ -17,13 +17,16 @@ def mac_foreground():
 
 class AttentionGuide(QObject):
     message=Signal(object)
-    def __init__(self,screen,parent=None,*,action_s=4,excluded_app='备忘录',excluded_bundle='com.apple.Notes',excluded=(),pause_key='Control+Option+S',foreground=mac_foreground):
+    def __init__(self,screen,parent=None,*,action_s=4,excluded_app='备忘录',excluded_bundle='com.apple.Notes',excluded=(),pause_key='Control+Option+S',foreground=mac_foreground,stable_s=1.5,feedback_s=1.):
         super().__init__(parent)
         self.screen=screen;self.token=secrets.token_urlsafe(32);self.baseline=None;self.running_start=None;self.recording_cpu=None
-        self.action_s=action_s;self.duration_s=16+5*action_s;self.excluded_app=excluded_app;self.exclude_target=(excluded_app,excluded_bundle);self.excluded=tuple(excluded);self.pause_key=pause_key;self.foreground=foreground
+        self.action_s=action_s;self.duration_s=None;self.excluded_app=excluded_app;self.exclude_target=(excluded_app,excluded_bundle);self.excluded=tuple(excluded);self.pause_key=pause_key;self.foreground=foreground
         self.requested=False;self.armed=False;self.started_ns=None;self.browser_pid=None;self.finished=False
         self.second_ready=False;self.primary_seen_ns=0;self.secondary_since=None;self._stage=None;self._hold=None;self._observed=set();self._wait_reason=''
         self._primary_scroll_fraction=0.;self._scroll_start_fraction=0.
+        self.flow=ActionSteps(stable_s,feedback_s);self._browser={};self._step_browser_revision=None
+        self._session=dict(paused=False,recording=False);self._cpu_before=None;self._cpu_revision=None;self._cpu_reason=''
+        self._baseline_before=None;self._baseline_revision=None;self._baseline_elapsed_s=0.;self._last_instruction=None
         self._begin_lock=threading.RLock();self._stop=threading.Event();self._baseline_ready=threading.Event();owner=self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*args):pass
@@ -64,10 +67,16 @@ class AttentionGuide(QObject):
                             if browser_front(front):owner.browser_pid=front['pid']
                             owner.message.emit(dict(kind='begin',cpu=owner.baseline))
                             self.reply(200,dict(rects=client_rects));return
+                        if self.path=='/skip':
+                            if set(data)!={'step_id'} or type(data['step_id']) is not int:raise ValueError('跳过步骤无效')
+                            if not owner.skip(data['step_id']):raise ValueError('步骤已变化或当前不可跳过')
+                            self.reply(200,{});return
                         if self.path=='/observe':
-                            if set(data)-{'page','visible','scroll_fraction'} or data.get('page') not in ('primary','secondary') or type(data.get('visible')) is not bool:raise ValueError('观察字段无效')
+                            if set(data)-{'page','visible','scroll_fraction','revision','reason','target_visible','fullscreen'} or data.get('page') not in ('primary','secondary') or type(data.get('visible')) is not bool:raise ValueError('观察字段无效')
                             fraction=data.get('scroll_fraction',0)
                             if isinstance(fraction,bool) or not isinstance(fraction,(int,float)) or not 0<=fraction<=100:raise ValueError('滚动量无效')
+                            if type(data.get('revision')) is not int or data['revision']<0 or data.get('reason') not in ('heartbeat','scroll','visibilitychange','load'):raise ValueError('浏览器动作来源无效')
+                            if type(data.get('target_visible',False)) is not bool or type(data.get('fullscreen',False)) is not bool:raise ValueError('浏览器状态无效')
                             owner.observe_browser(data,time.perf_counter_ns());self.reply(200,{});return
                         if self.path!='/event' or owner.started_ns is None:raise ValueError('请先开始引导')
                         if set(data)-{'kind','time_ns','id'}:raise ValueError('不允许额外字段')
@@ -86,10 +95,10 @@ class AttentionGuide(QObject):
         self.url=self.origin+'/#'+self.token
         self.thread=threading.Thread(target=self.server.serve_forever,name='attention-guide-http',daemon=True);self.thread.start()
         def baseline():
-            try:
-                before=cpu_snapshot()
-                if not self._stop.wait(30):self.baseline=cpu_difference(before,cpu_snapshot());self._baseline_ready.set()
-            except Exception as exc:self.message.emit(dict(kind='error',error=str(exc)))
+            while not self._stop.wait(.2):
+                try:
+                    with self._begin_lock:self.baseline_tick(time.perf_counter_ns())
+                except Exception as exc:self.message.emit(dict(kind='error',error=str(exc)));return
         self.baseline_thread=threading.Thread(target=baseline,name='attention-guide-baseline',daemon=True);self.baseline_thread.start()
         def schedule():
             while not self._stop.wait(.1):
@@ -102,64 +111,125 @@ class AttentionGuide(QObject):
     def arm(self):
         with self._begin_lock:self.armed=True
 
+    def _primary_ready(self,front,now):
+        page=self._browser.get('primary',{})
+        return (browser_front(front) and (self.browser_pid is None or front['pid']==self.browser_pid)
+                and page.get('visible',False) and page.get('fullscreen',False) and now-page.get('seen_ns',0)<1500000000)
+
+    def baseline_tick(self,now):
+        if self.requested or self._baseline_ready.is_set():return
+        front=self.foreground() if self.second_ready else None
+        page=self._browser.get('primary',{});revision=page.get('revision')
+        ready=self.second_ready and self._primary_ready(front,now)
+        if not ready or revision!=self._baseline_revision:
+            self._baseline_before=None;self._baseline_elapsed_s=0.;self._baseline_revision=revision
+        if not ready:return
+        if self._baseline_before is None:
+            self.browser_pid=front['pid']
+            self._baseline_before=cpu_snapshot();self.message.emit(dict(kind='baseline_started'))
+        self._baseline_elapsed_s=max(0,(now-self._baseline_before['time_ns'])/1e9)
+        if self._baseline_elapsed_s>=30:
+            after=cpu_snapshot()
+            self.baseline=dict(cpu_difference(self._baseline_before,after),window_start_ns=self._baseline_before['time_ns'],window_end_ns=after['time_ns'],action_free=True)
+            self._baseline_ready.set()
+
+    def update_session_state(self,paused,recording,excluded=False):
+        # Immutable handoff: the Qt tick must not wait for native CPU sampling
+        # or the HTTP lock. The clock worker owns all step transitions.
+        self._session=dict(paused=bool(paused),recording=bool(recording),excluded=bool(excluded))
+
     def status(self):
         with self._begin_lock:
-            now=time.perf_counter_ns()
-            return dict(time_ns=now,baseline_ready=self._baseline_ready.is_set(),second_ready=self.second_ready,requested=self.requested,
-                        elapsed_s=None if self.started_ns is None else max(0,(now-self.started_ns)/1e9),duration_s=self.duration_s,
-                        action_s=self.action_s,wait_reason=self._wait_reason,finished=self.finished,excluded_app=self.excluded_app,pause_key=self.pause_key)
+            now=time.perf_counter_ns();elapsed=None if self.started_ns is None else max(0,(now-self.started_ns)/1e9)
+            step=self.flow.snapshot(now)
+            stage=(dict(kind='waiting') if elapsed is None else dict(kind='target',id=int(elapsed//2)+1) if elapsed<16 else
+                   dict(kind='cpu') if self.recording_cpu is None else dict(kind='end') if self.finished else dict(kind='action',**step))
+            return dict(time_ns=now,baseline_ready=self._baseline_ready.is_set(),baseline_elapsed_s=self._baseline_elapsed_s,
+                        second_ready=self.second_ready,requested=self.requested,elapsed_s=elapsed,stage=stage,
+                        cpu_remaining_s=max(0,30-(now-self._cpu_before['time_ns'])/1e9) if self._cpu_before else 30,
+                        cpu_reason=self._cpu_reason,wait_reason=self._wait_reason,finished=self.finished,
+                        excluded_app=self.excluded_app,pause_key=self.pause_key,stable_s=self.flow.stable_ns/1e9)
 
     def observe_browser(self,data,now):
-        page=data['page'];visible=data['visible']
+        page=data['page'];old=self._browser.get(page,{})
+        if data['revision']<old.get('revision',-1):return
+        # Keep the actual last scroll/visibilitychange time across heartbeats.
+        changed=data['reason'] in ('scroll','visibilitychange') and data['revision']!=old.get('revision')
+        self._browser[page]=dict(data,seen_ns=now,changed_ns=now if changed else old.get('changed_ns',now),
+                                 change_reason=data['reason'] if changed else old.get('change_reason','load'))
         if page=='secondary':self.second_ready=True
-        if page=='primary' and visible:self.primary_seen_ns=now;self._primary_scroll_fraction=data.get('scroll_fraction',0)
-        if self.started_ns is None or self.finished:return
-        phase=phase_at((now-self.started_ns)/1e9,self.action_s).get('phase')
-        front=self.foreground();browser=front is not None and front.get('pid')==self.browser_pid
-        if page=='primary' and visible and browser and phase=='scroll' and self._primary_scroll_fraction-self._scroll_start_fraction>=.5:self.action('scroll',now,'browser_scroll_half_screen')
-        if page=='secondary':
-            if phase=='tab' and visible and browser:
-                if self.secondary_since is None:self.secondary_since=now
-                if now-self.secondary_since>=1500000000:self.action('tab',self.secondary_since,'secondary_tab_visible_1.5s')
-            else:self.secondary_since=None
+        if page=='primary' and data['visible']:self.primary_seen_ns=now;self._primary_scroll_fraction=data.get('scroll_fraction',0)
 
-    def action(self,phase,now,source):
-        if phase in self._observed:return
-        self._observed.add(phase);self.message.emit(dict(type='acceptance',kind='action',phase=phase,time_ns=now,source=source))
+    def skip(self,step_id):
+        with self._begin_lock:
+            result=self.flow.skip(time.perf_counter_ns(),step_id)
+            self._emit_steps();return result
+
+    def _emit_steps(self):
+        for event in self.flow.drain():
+            self.message.emit(dict(type='acceptance',**event))
+            if event['kind']=='phase':
+                page='primary' if event['phase']=='scroll' else 'secondary'
+                self._step_browser_revision=self._browser.get(page,{}).get('revision',-1)
+
+    def _instruction(self,text):
+        if text!=self._last_instruction:
+            self._last_instruction=text;self.message.emit(dict(kind='instruction',text=text))
 
     def tick(self,now):
         if not self.armed or self.finished:return
         front=self.foreground()
         if self.started_ns is None:
             reason=foreground_block(front)
-            if not reason and (not browser_front(front) or self.browser_pid is not None and front['pid']!=self.browser_pid):reason='请回到左侧测试页，让浏览器保持前台后开始'
-            if not reason and now-self.primary_seen_ns>1500000000:reason='请回到左侧测试标签，等待测试页可见后开始'
-            if reason:
-                if reason!=self._wait_reason:self.message.emit(dict(kind='instruction',text=reason))
-                self._wait_reason=reason;return
-            self._wait_reason='';self.browser_pid=front['pid'];self.running_start=cpu_snapshot();self.started_ns=now
-            self.message.emit(dict(type='acceptance',kind='guide_protocol',time_ns=now,version=2,action_s=self.action_s,duration_s=self.duration_s,cpu_window_s=30,browser_app=front['app_name']))
-            self.message.emit(dict(kind='instruction',text='依次注视测试页8块中央十字，每块2秒'))
-        elapsed=(now-self.started_ns)/1e9;stage=phase_at(elapsed,self.action_s)
-        if self.recording_cpu is None and elapsed>=30:self.recording_cpu=cpu_difference(self.running_start,cpu_snapshot())
-        if stage.get('kind')=='end':
-            self.finished=True
-            self.message.emit(dict(kind='end',time_ns=now,cpu=self.recording_cpu or cpu_difference(self.running_start,cpu_snapshot())));return
-        if stage!=self._stage:
-            self._stage=stage;self._hold=None;self.secondary_since=None
-            if stage.get('phase')=='scroll':self._scroll_start_fraction=self._primary_scroll_fraction
-            if stage['kind']=='phase':self.message.emit(dict(type='acceptance',kind='phase',phase=stage['phase'],time_ns=now))
-        phase=stage.get('phase')
-        if phase:
-            hold=(phase,front.get('pid') if front else None)
-            selected_excluded=self.exclude_target if phase=='exclude' else self.excluded
-            if native_action(phase,front,self.browser_pid,selected_excluded):
-                if self._hold is None or self._hold[0]!=hold:self._hold=(hold,now)
-                if now-self._hold[1]>=1500000000:self.action(phase,self._hold[1],'native_foreground_1.5s')
-            else:self._hold=None
-            text=instructions(phase,self.excluded_app,self.pause_key)
-            remaining=max(0,phase_start(phase,self.action_s)+self.action_s-elapsed)
-            self.message.emit(dict(kind='instruction',text=text+f' · {remaining:.0f}s'))
+            if not reason and not self._primary_ready(front,now):reason='请回到左侧全屏测试页，等待浏览器前台就绪'
+            if reason:self._wait_reason=reason;self._instruction(reason);return
+            self._wait_reason='';self.browser_pid=front['pid'];self.started_ns=now
+            self.message.emit(dict(type='acceptance',kind='guide_protocol',time_ns=now,version=3,
+                                   action_mode='self_paced',stable_s=self.flow.stable_ns/1e9,cpu_window_s=30,browser_app=front['app_name']))
+        elapsed=(now-self.started_ns)/1e9
+        if self.recording_cpu is None:
+            page=self._browser.get('primary',{});revision=page.get('revision')
+            ready=self._primary_ready(front,now) and self._session['recording'] and not self._session['paused']
+            if not ready or revision!=self._cpu_revision:
+                self._cpu_before=None;self._cpu_revision=revision;self._cpu_reason='需保持测试页前台、停止操作；中断后重测完整30秒'
+            if ready:
+                if self._cpu_before is None:self._cpu_before=cpu_snapshot();self._cpu_reason=''
+                if now-self._cpu_before['time_ns']>=30000000000:
+                    after=cpu_snapshot()
+                    self.recording_cpu=dict(cpu_difference(self._cpu_before,after),window_start_ns=self._cpu_before['time_ns'],window_end_ns=after['time_ns'])
+                    self.message.emit(dict(type='acceptance',kind='cpu_recording',time_ns=now,
+                                           measurement=dict(self.recording_cpu,comparison_valid=True,action_free=True)))
+        if elapsed<16:
+            self._instruction('依次注视测试页8块中央十字，每块2秒');return
+        if self.recording_cpu is None:
+            remaining=30 if self._cpu_before is None else max(0,30-(now-self._cpu_before['time_ns'])/1e9)
+            self._instruction(f'注视完成，请保持此页静止 · CPU测量剩余{remaining:.0f}秒');return
+        self.flow.start(now);self.flow.tick(now);self._emit_steps()
+        if self.flow.finished:
+            self.finished=True;self.message.emit(dict(kind='end',time_ns=now));return
+        phase=self.flow.phase
+        if self.flow.feedback is not None:
+            self._instruction('✓ 完成' if self.flow.feedback=='completed' else '已跳过 · 记为未执行');return
+        browser=front is not None and front.get('pid')==self.browser_pid
+        if phase in ('scroll','tab'):
+            page=self._browser.get('primary' if phase=='scroll' else 'secondary',{})
+            expected='scroll' if phase=='scroll' else 'visibilitychange'
+            condition=(browser and page.get('visible',False) and now-page.get('seen_ns',0)<1500000000
+                       and page.get('revision',-1)>self._step_browser_revision and page.get('change_reason')==expected)
+            if phase=='scroll':condition=condition and page.get('target_visible',False)
+            self.flow.observe(phase,now,condition,page.get('revision'),expected,
+                              observed_ns=page.get('changed_ns',now),app_name=(front or {}).get('app_name'))
+        elif phase in ('app','exclude'):
+            selected=self.exclude_target if phase=='exclude' else self.excluded
+            condition=native_action(phase,front,self.browser_pid,selected)
+            if phase=='exclude':condition=condition and self._session.get('excluded',False)
+            self.flow.observe(phase,now,condition,(front or {}).get('app_name'),'native_foreground',app_name=(front or {}).get('app_name'))
+        else:self.flow.pause_state(now,self._session['paused'],self._session['recording'])
+        self._emit_steps()
+        text=('✓ 完成' if self.flow.feedback=='completed' else
+              '已恢复，请回测试页保持1.5秒' if phase=='pause' and self.flow.resume_ready and not self._session['paused'] and not self._session['recording'] else
+              f'按 {self.pause_key} 恢复注意力会话' if phase=='pause' and self.flow.resume_ready else instructions(phase,self.excluded_app,self.pause_key))
+        self._instruction(text)
 
     def close(self):
         self._stop.set();self.server.shutdown();self.server.server_close()

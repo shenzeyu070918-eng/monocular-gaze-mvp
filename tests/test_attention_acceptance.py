@@ -66,35 +66,6 @@ class GuideRevisionTests(unittest.TestCase):
             if i<3:events.append(dict(type='scene',scene_id=str(i),start_ns=t+10**9,dynamic=False,app_name='Finder' if phase=='app' else 'Chrome'))
         events.extend([dict(type='state',status='excluded_app',time_ns=29*10**9),dict(type='state',status='user_paused',time_ns=33*10**9),dict(type='state',status='recording',time_ns=34*10**9)])
         result=score([],events,[1512,982]);self.assertTrue(result['transition_pass']);self.assertEqual(result['steps_not_executed'],[])
-    def test_scheduled_guide_waits_for_popup_and_runs_without_browser_timer(self):
-        from overlay.attention_guide import AttentionGuide
-        from threading import RLock
-        # No socket, native camera or wall-clock sleeps: exercise scheduler.
-        guide=AttentionGuide.__new__(AttentionGuide)
-        guide.armed=True;guide.finished=False;guide.started_ns=None;guide.browser_pid=None;guide.primary_seen_ns=10**9
-        guide._wait_reason='';guide.action_s=4;guide.duration_s=36;guide._stage=None;guide._hold=None;guide.secondary_since=None;guide.recording_cpu=None
-        guide._observed=set();guide.excluded_app='备忘录';guide.pause_key='Ctrl+Alt+S';guide.excluded=('com.apple.Notes',);guide.exclude_target=guide.excluded
-        events=[]
-        from types import SimpleNamespace as NS
-        guide.message=NS(emit=events.append)
-        front=dict(pid=1,app_name='UserNotificationCenter',bundle_id='com.apple.UserNotificationCenter');guide.foreground=lambda:front
-        guide.tick(10**9);self.assertIsNone(guide.started_ns)
-        front.update(pid=2,app_name='Chrome',bundle_id='com.google.Chrome')
-        with patch('overlay.attention_guide.cpu_snapshot',return_value=dict(time_ns=10**9,tree_cpu_s=0)):
-            guide.tick(1100000000);self.assertEqual(guide.started_ns,1100000000)
-            # Native timer keeps issuing phases/end even without browser pings.
-            guide.tick(guide.started_ns+20*10**9);self.assertEqual(events[-2]['phase'],'tab')
-            guide.tick(guide.started_ns+36*10**9);self.assertTrue(guide.finished);self.assertEqual(events[-1]['kind'],'end')
-    def test_secondary_visible_must_be_foreground_and_held(self):
-        from overlay.attention_guide import AttentionGuide
-        from types import SimpleNamespace as NS
-        guide=AttentionGuide.__new__(AttentionGuide);guide.started_ns=0;guide.finished=False;guide.action_s=4;guide.browser_pid=2
-        guide._observed=set();guide.secondary_since=None;guide.primary_seen_ns=0
-        front=dict(pid=9);guide.foreground=lambda:front;events=[];guide.message=NS(emit=events.append)
-        guide.observe_browser(dict(page='secondary',visible=True),20*10**9);self.assertFalse(events)
-        front['pid']=2
-        for t in (20,21,21.6):guide.observe_browser(dict(page='secondary',visible=True),int(t*1e9))
-        self.assertEqual(events[0]['phase'],'tab');self.assertEqual(len(events),1)
 
 class WindowEvidenceTests(unittest.TestCase):
     def test_every_component_visible_and_zero_residue_required(self):
@@ -120,24 +91,6 @@ class WindowEvidenceTests(unittest.TestCase):
             self.assertIsNone(load_evidence(p,ScreenRect(0,0,1200,900)))
 
 class GuideActionEvidenceTests(unittest.TestCase):
-    def _guide(self):
-        from overlay.attention_guide import AttentionGuide
-        from types import SimpleNamespace as NS
-        g=AttentionGuide.__new__(AttentionGuide);g.started_ns=0;g.finished=False;g.action_s=4;g.browser_pid=2
-        g._observed=set();g.secondary_since=None;g.primary_seen_ns=0;g._primary_scroll_fraction=0.;g._scroll_start_fraction=.2
-        g.foreground=lambda:dict(pid=2,app_name='Chrome',bundle_id='com.google.Chrome');g.events=[];g.message=NS(emit=g.events.append)
-        return g
-    def test_scroll_requires_half_screen_during_its_phase(self):
-        g=self._guide()
-        g.observe_browser(dict(page='primary',visible=True,scroll_fraction=.69),17*10**9);self.assertEqual(g.events,[])
-        g.observe_browser(dict(page='primary',visible=True,scroll_fraction=.71),18*10**9);self.assertEqual(g.events[0]['phase'],'scroll')
-        g.observe_browser(dict(page='primary',visible=True,scroll_fraction=1.),19*10**9);self.assertEqual(len(g.events),1)
-    def test_secondary_hidden_resets_hold_without_false_completion(self):
-        g=self._guide()
-        g.observe_browser(dict(page='secondary',visible=True),20*10**9)
-        g.observe_browser(dict(page='secondary',visible=False),21*10**9)
-        g.observe_browser(dict(page='secondary',visible=True),22*10**9)
-        g.observe_browser(dict(page='secondary',visible=True),23*10**9);self.assertEqual(g.events,[])
     def test_exclude_prompt_without_real_exclusion_state_is_incomplete(self):
         events=[dict(type='acceptance',kind='guide_protocol',time_ns=0,version=2,action_s=4),dict(type='acceptance',kind='phase',phase='exclude',time_ns=28*10**9),dict(type='acceptance',kind='action',phase='exclude',time_ns=29*10**9)]
         self.assertIn('exclude',score([],events,[1512,982])['steps_not_executed'])

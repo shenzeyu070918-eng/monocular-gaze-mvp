@@ -112,3 +112,16 @@ class AITests(unittest.TestCase):
             with patch.object(module,'atomic',side_effect=delayed):
                 result=interpret(artifact,p,gate.approve(p),gate,transport=lambda *a:response(p),key_reader=lambda _:KEY,clock=lambda:clock[0],started=0)
             self.assertFalse(result['ok']);self.assertFalse((artifact.directory/'ai.json').exists());self.assertIn('AI总预算超时',artifact.html.read_text());self.assertNotIn(KEY,artifact.html.read_text())
+
+    def test_failed_retry_preserves_previous_success(self):
+        import gaze_core.reporting.build as module
+        with tempfile.TemporaryDirectory() as root:
+            artifact=self.artifact(root);p=prepare(artifact,['a']);gate=ConsentGate()
+            first=interpret(artifact,p,gate.approve(p),gate,transport=lambda *a:response(p),key_reader=lambda _:KEY)
+            self.assertTrue(first['ok']);before_html=artifact.html.read_bytes();before_ai=(artifact.directory/'ai.json').read_bytes();now=[0.];atomic=module.atomic
+            def expire(path,raw):
+                atomic(path,raw)
+                if Path(path)==artifact.html:now[0]=31.
+            with patch.object(module,'atomic',side_effect=expire):
+                result=interpret(artifact,p,gate.approve(p),gate,transport=lambda *a:response(p),key_reader=lambda _:KEY,clock=lambda:now[0],started=0)
+            self.assertFalse(result['ok']);self.assertEqual(artifact.html.read_bytes(),before_html);self.assertEqual((artifact.directory/'ai.json').read_bytes(),before_ai)

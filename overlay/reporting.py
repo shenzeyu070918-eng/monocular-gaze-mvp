@@ -105,7 +105,7 @@ class ReportUI:
         if ok:
             manifest_path=self.artifact.directory/'manifest.json'
             try:
-                value=json.loads(manifest_path.read_text());value['browser_open_requested_ns']=time.perf_counter_ns();atomic(manifest_path,json.dumps(value,ensure_ascii=False).encode())
+                value=json.loads(manifest_path.read_text(encoding='utf-8'));value['browser_open_requested_ns']=time.perf_counter_ns();atomic(manifest_path,json.dumps(value,ensure_ascii=False).encode())
             except OSError:pass
         else:self._status('浏览器未能打开；可手动双击 '+str(self.artifact.html))
     def pdf(self):

@@ -22,7 +22,7 @@ def main(argv=None):
     if not args.aggregate and len(args.sessions)!=1:parser.error('多个会话须指定--aggregate')
     try:
         datasets=[load_session(p,derived=args.derived,options=options) for p in args.sessions]
-        data=aggregate(datasets,participant_map=json.loads(args.participant_map.read_text()) if args.participant_map else None,canonical_regions=json.loads(args.aoi_template.read_text()) if args.aoi_template else None) if args.aggregate else datasets[0]
+        data=aggregate(datasets,participant_map=json.loads(args.participant_map.read_text(encoding='utf-8')) if args.participant_map else None,canonical_regions=json.loads(args.aoi_template.read_text(encoding='utf-8')) if args.aoi_template else None) if args.aggregate else datasets[0]
         result=build(data,options=options);print('离线统计报告：'+str(result.html))
         if args.pdf:
             from gaze_core.reporting.pdf import export_pdf

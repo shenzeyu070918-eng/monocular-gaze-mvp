@@ -50,14 +50,19 @@ def publish_ai(artifact,result,*,deadline,clock=time.monotonic,cancelled=lambda:
     # Stage all bytes before replacing: no partial AI HTML on failures.
     info=json.dumps(result,ensure_ascii=False,allow_nan=False,indent=2).encode()
     if not artifact.directory.is_dir():raise InterruptedError('报告已删除')
-    atomic(artifact.directory/'ai.json',info)
-    if cancelled() or clock()>=deadline:
-        (artifact.directory/'ai.json').unlink(missing_ok=True);raise TimeoutError('AI写入超时，保留统计报告')
+    ai_path=artifact.directory/'ai.json';previous_ai=ai_path.read_bytes() if ai_path.exists() else None
     original=artifact.html.read_bytes()
-    atomic(artifact.html,html.encode())
-    if cancelled() or clock()>=deadline:
-        atomic(artifact.html,original);(artifact.directory/'ai.json').unlink(missing_ok=True)
-        raise TimeoutError('AI更新超时，已还原统计报告')
+    try:
+        atomic(ai_path,info)
+        if cancelled() or clock()>=deadline:raise TimeoutError('AI写入超时')
+        atomic(artifact.html,html.encode())
+        if cancelled() or clock()>=deadline:raise TimeoutError('AI更新超时')
+    except BaseException:
+        # Failed retries must also preserve an older successful interpretation.
+        atomic(artifact.html,original)
+        if previous_ai is None:ai_path.unlink(missing_ok=True)
+        else:atomic(ai_path,previous_ai)
+        raise
     return artifact.html
 
 

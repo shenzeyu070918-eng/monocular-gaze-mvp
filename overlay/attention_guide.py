@@ -204,7 +204,12 @@ class AttentionGuide(QObject):
         if self.recording_cpu is None:
             remaining=30 if self._cpu_before is None else max(0,30-(now-self._cpu_before['time_ns'])/1e9)
             self._instruction(f'注视完成，请保持此页静止 · CPU测量剩余{remaining:.0f}秒');return
-        self.flow.start(now);self.flow.tick(now);self._emit_steps()
+        self.flow.start(now)
+        # Retain the actual tab completion time; restoring the primary page
+        # is a UI prerequisite, not a second scene-detection timestamp.
+        if self.flow.phase=='tab' and self.flow.feedback is not None and not self._primary_ready(front,now):
+            self._instruction('请点回主测试标签，点击“恢复全屏并继续”');return
+        self.flow.tick(now);self._emit_steps()
         if self.flow.finished:
             self.finished=True;self.message.emit(dict(kind='end',time_ns=now));return
         phase=self.flow.phase

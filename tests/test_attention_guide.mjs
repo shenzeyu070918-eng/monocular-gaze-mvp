@@ -38,3 +38,26 @@ assert.match(main,/addEventListener\('visibilitychange'/);
 assert.match(main,/request\('\/skip'/);
 assert.match(second,/addEventListener\('visibilitychange'/);
 assert.match(second,/request\('\/skip'/);
+
+import {GuideFullscreen,installSkipShortcut,instruction} from '../static/attention/guide-logic.mjs';
+assert.match(instruction('tab'),/点击右侧彩色标签/);
+const fullscreenFlow=new GuideFullscreen();let exits=0;
+const doc={fullscreenElement:{},async exitFullscreen(){exits++;this.fullscreenElement=null;}};
+const tab={kind:'action',phase:'tab',step_id:1};
+await fullscreenFlow.update(tab,doc,'primary');assert.equal(exits,1);assert.equal(doc.fullscreenElement,null);
+await fullscreenFlow.update(tab,doc,'primary');assert.equal(exits,1);
+assert.equal((await fullscreenFlow.update({...tab,feedback:'completed'},doc,'primary')).restore,true);
+assert.equal((await fullscreenFlow.update({...tab,feedback:'completed'},doc,'secondary')).restore,false);
+doc.fullscreenElement={};await fullscreenFlow.update({...tab,feedback:'completed'},doc,'primary');assert.equal(exits,1);
+for(const phase of ['scroll','app','exclude','pause'])await fullscreenFlow.update({...tab,phase},doc,'primary');
+assert.equal(exits,1); // Other actions do not force a fullscreen change.
+const failure=new GuideFullscreen();assert.match((await failure.update(tab,{fullscreenElement:{},exitFullscreen:async()=>{throw Error('denied');}},'primary')).error,/denied/);
+let listener,skips=0,stage={kind:'action',phase:'scroll'};
+installSkipShortcut({addEventListener:(name,cb)=>{assert.equal(name,'keydown');listener=cb;}},()=>stage,()=>skips++);
+function key(extra={}){let prevented=false;listener({key:'k',target:{tagName:'BODY'},preventDefault:()=>{prevented=true;},...extra});return prevented;}
+assert.equal(key(),true);assert.equal(skips,1);
+for(const extra of [{repeat:true},{ctrlKey:true},{metaKey:true},{altKey:true},{isComposing:true},{target:{tagName:'INPUT'}},{target:{isContentEditable:true}}])assert.equal(key(extra),false);
+stage={kind:'cpu'};assert.equal(key(),false);stage={kind:'action',feedback:'completed'};assert.equal(key(),false);
+assert.match(main,/等待 30 秒 CPU 基线完成后可点（请勿操作）/);
+assert.match(main,/#skip\{position:fixed;top:18px/);
+assert.match(main,/恢复全屏并继续/);assert.match(second,/installSkipShortcut/);

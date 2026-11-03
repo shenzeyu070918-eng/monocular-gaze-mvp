@@ -3,7 +3,7 @@ from pathlib import Path
 import time
 from PySide6.QtCore import Qt,QTimer,Signal,QPoint,QRectF,QBuffer,QByteArray,QIODevice
 from PySide6.QtGui import QPainter,QImage,QImageReader
-from PySide6.QtWidgets import QLabel,QWidget,QFileDialog,QMessageBox
+from PySide6.QtWidgets import QLabel,QWidget,QFileDialog,QMessageBox,QInputDialog
 from gaze_core.attention.session import AttentionSession
 from gaze_core.attention.stimulus import StimulusMapping
 from gaze_core.demo_coordinates import DemoCoordinates
@@ -155,7 +155,11 @@ class AttentionUI:
         except Exception as exc:self.notice(str(exc),True);return
         path,_=QFileDialog.getOpenFileName(self.controls.panel,'选择本地刺激图片（不截屏）','','图片 (*.png *.jpg *.jpeg)')
         if not path:return
+        from gaze_core.reporting.participants import next_participant_id,participant_id
+        identifier,ok=QInputDialog.getText(self.controls.panel,'匿名参与者编号','请勿填写姓名；同一个人请使用同一编号：',text=next_participant_id(self.service.root))
+        if not ok:return
         try:
+            identifier=participant_id(identifier)
             self.controls.panel.hide()
             self._pending_stimulus=True
             self.stimulus=StimulusWindow(path,self.controls.screen,self.session.screen,self.session.settings.attention)
@@ -164,7 +168,7 @@ class AttentionUI:
                 if self.stimulus is not opened:return
                 self._pending_stimulus=False
                 if isinstance(mapping,Exception):self.notice(str(mapping),True);self._close_stimulus();return
-                try:self._start(mode='stimulus',stimulus=dict(path=path,sha256=self.stimulus.source_sha,screen_rect=mapping.normalized_rect(),kernel=mapping.kernel(self._kernel())))
+                try:self._start(mode='stimulus',participant_id=identifier,stimulus=dict(path=path,sha256=self.stimulus.source_sha,screen_rect=mapping.normalized_rect(),kernel=mapping.kernel(self._kernel())))
                 except Exception as exc:self._close_stimulus();self.notice('刺激物会话未开始：'+str(exc),True)
             self.stimulus.ready.connect(ready);self.stimulus.cancelled.connect(self.end)
         except Exception as exc:

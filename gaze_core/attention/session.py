@@ -38,7 +38,7 @@ class AttentionSession:
         except queue.Full:
             self.error='注意力数值队列已满，已停止会话；不能丢弃帧后仍报告成功。';self.desired=False;self._end='queue_overflow';self._epoch+=1;self._wake.set();return False
 
-    def start(self,profile,conditions,kernel,*,mode='screen',stimulus=None,runtime=None):
+    def start(self,profile,conditions,kernel,*,mode='screen',stimulus=None,runtime=None,participant_id=None):
         if self._shutdown:raise ValueError('注意力后台已关闭')
         if self.busy:raise ValueError('同一时间只允许一个注意力会话')
         from gaze_core.profiles import PYTHON_COORDINATE_VERSION
@@ -50,6 +50,9 @@ class AttentionSession:
             if not np.isfinite(kernel[key]) or kernel[key]<=0:raise ValueError('误差核尺度必须为有限正数')
         if mode not in ('screen','stimulus'):raise ValueError('未知注意力模式')
         if mode=='stimulus' and stimulus is None:raise ValueError('请先选择PNG/JPG刺激图片')
+        if participant_id is not None:
+            from gaze_core.reporting.participants import participant_id as validate_id
+            participant_id=validate_id(participant_id)
         self._cancel.clear();self._epoch+=1;self.error=None;self.summary=None;self.path=None;self.scene_count=0;self.timings=[]
         self._accepting_frames=False;self.user_paused=False;self.blocked=None;self.mode=mode;self.profile_id=profile.get('calibration_id')
         self.started_ns=self.clock_ns();self._stop_ns=None;self._sample_count=0;self._first_sample_ns=self._last_sample_ns=None
@@ -58,6 +61,7 @@ class AttentionSession:
                       attention={k:v for k,v in asdict(self.settings.attention).items() if k not in ('excluded_apps','manual_aoi')},screen=asdict(self.screen),analysis_size=[self.screen.width,self.screen.height],
                       profile=deepcopy(profile),kernel=deepcopy(kernel),time_source='perf_counter_ns; snapshot request/receive interval',
                       privacy=dict(local_only=True,cursor=False,window_titles=False,ocr_during_capture=False))
+        if mode=='stimulus' and participant_id is not None:metadata['participant_id']=participant_id
         self._metadata=metadata;self.state='starting';self.desired=True
         queued=self._put(('start',metadata,stimulus,self._epoch))
         if not queued:self.state='error'

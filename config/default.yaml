@@ -500,3 +500,25 @@ attention:
   aoi_title_height_ratio: 1.35
   aoi_button_height_ratio: 3.5
   max_dynamic_extent: 0.8
+
+# M10：统计报告完全离线；AI只在每次预览确认后发送，无自动重试。
+report:
+  auto_stimulus: true
+  scanpath_max_points: 80
+  scanpath_merge_sigma: 0.0  # 0不合并；仅影响路径图，不影响统计
+  scanpath_gap_s: 0.5
+  image_max_width: 1600
+  ai_image_max_width: 960
+  provider: responses  # responses / chat（OpenAI兼容接口）
+  base_url: https://api.openai.com/v1
+  model: gpt-6.1-terra
+  key_env: OPENAI_API_KEY  # 只写环境变量名，绝不写密钥
+  keychain_service: monocular-gaze-report
+  keychain_account: openai
+  ai_timeout_s: 30.0  # 确认→更新的总预算，含校验与写文件
+  ai_max_output_tokens: 3000
+  # 官方标准价格快照；兼容服务需填其价格，未知请设null，不冒充实际账单。
+  input_usd_per_million: 1.0
+  cached_usd_per_million: 0.05
+  output_usd_per_million: 5.0
+  price_date: '2026-11-03'

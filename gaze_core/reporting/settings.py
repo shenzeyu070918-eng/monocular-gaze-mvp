@@ -1,6 +1,6 @@
 """M10 display and opt-in provider options. No credentials in configuration."""
 from dataclasses import dataclass
-import math
+import math,re
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,10 @@ class ReportSettings:
     price_date: str = '2026-11-03'
 
     def __post_init__(self):
+        for name in ('base_url','model','key_env','keychain_service','keychain_account','price_date'):
+            value=getattr(self,name)
+            if not isinstance(value,str) or not value.strip() or any(c in value for c in ('\r','\n','\0')):raise ValueError('report.'+name+' 必须为非空单行字符串')
+        if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',self.key_env) is None:raise ValueError('key_env只填写环境变量名，不是密钥')
         for name in ('scanpath_max_points','image_max_width','ai_image_max_width','ai_max_output_tokens'):
             value=getattr(self,name)
             if type(value) is not int or value<=0:raise ValueError('report.'+name+' 必须为正整数')

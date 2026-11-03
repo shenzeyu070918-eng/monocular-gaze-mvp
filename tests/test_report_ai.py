@@ -75,7 +75,7 @@ class AITests(unittest.TestCase):
             artifact=self.artifact(root);p=prepare(artifact,['a']);gate=ConsentGate();original=artifact.html.read_bytes();now=[0.]
             def transport(*args):now[0]=30.01;return response(p)
             result=interpret(artifact,p,gate.approve(p),gate,transport=transport,key_reader=lambda _:KEY,clock=lambda:now[0],started=0)
-            self.assertFalse(result['ok']);self.assertEqual(artifact.html.read_bytes(),original);self.assertFalse((artifact.directory/'ai.json').exists())
+            self.assertFalse(result['ok']);self.assertIn('AI总预算超时',artifact.html.read_text());self.assertFalse((artifact.directory/'ai.json').exists())
             bad=Mock(side_effect=RuntimeError(KEY));result=interpret(artifact,p,gate.approve(p),gate,transport=bad,key_reader=lambda _:KEY)
             self.assertFalse(result['ok']);self.assertNotIn(KEY,str(result));self.assertEqual(bad.call_count,1)
             # Rendering and file flush are included, not just HTTP latency.
@@ -85,9 +85,30 @@ class AITests(unittest.TestCase):
             now[0]=0
             with patch.object(module,'render_html',side_effect=slow):
                 result=interpret(artifact,p,gate.approve(p),gate,transport=lambda *a:response(p),key_reader=lambda _:KEY,clock=lambda:now[0],started=0)
-            self.assertFalse(result['ok']);self.assertEqual(artifact.html.read_bytes(),original)
+            self.assertFalse(result['ok']);self.assertIn('统计报告',artifact.html.read_text());self.assertFalse((artifact.directory/'ai.json').exists())
     def test_unknown_usage_and_prices_not_zero(self):
         self.assertIsNone(usage_cost(dict(input_tokens=None,output_tokens=None,cached_tokens=None),dict(input=1,output=5,cached=.05)))
         self.assertIsNone(usage_cost(dict(input_tokens=100,output_tokens=10,cached_tokens=None),dict(input=1,output=5,cached=.05)))
         self.assertAlmostEqual(usage_cost(dict(input_tokens=100,output_tokens=10,cached_tokens=0),dict(input=1,output=5,cached=.05)),.00015)
         with self.assertRaises(ValueError):endpoint(ReportSettings(base_url='https://secret:password@example.com'))
+
+    def test_missing_key_and_redirect_are_safe_fallbacks_without_retry(self):
+        from gaze_core.reporting.ai import MissingCredentials,http_transport
+        with tempfile.TemporaryDirectory() as root:
+            artifact=self.artifact(root);p=prepare(artifact,['a']);gate=ConsentGate();send=Mock()
+            result=interpret(artifact,p,gate.approve(p),gate,transport=send,key_reader=Mock(side_effect=MissingCredentials()))
+            self.assertIn('未配置AI密钥',result['reason']);send.assert_not_called()
+            conn=Mock();conn.getresponse.return_value.status=302
+            with patch('gaze_core.reporting.ai.http.client.HTTPSConnection',return_value=conn) as factory:
+                with self.assertRaises(RuntimeError):http_transport(p,KEY,999,clock=lambda:0)
+            factory.assert_called_once();conn.request.assert_called_once();conn.close.assert_called_once()
+    def test_deadline_write_rollback(self):
+        import gaze_core.reporting.build as module
+        with tempfile.TemporaryDirectory() as root:
+            artifact=self.artifact(root);p=prepare(artifact,['a']);gate=ConsentGate();clock=[0.];atomic=module.atomic
+            def delayed(path,raw):
+                atomic(path,raw)
+                if Path(path)==artifact.html and b'AI' in raw:clock[0]=31.
+            with patch.object(module,'atomic',side_effect=delayed):
+                result=interpret(artifact,p,gate.approve(p),gate,transport=lambda *a:response(p),key_reader=lambda _:KEY,clock=lambda:clock[0],started=0)
+            self.assertFalse(result['ok']);self.assertFalse((artifact.directory/'ai.json').exists());self.assertIn('AI总预算超时',artifact.html.read_text());self.assertNotIn(KEY,artifact.html.read_text())

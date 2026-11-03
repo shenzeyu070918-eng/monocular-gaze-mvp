@@ -1,6 +1,6 @@
 """Self-contained Chinese report, projection-first layout and separate print styles."""
 import base64,html,io,math
-from PIL import Image
+from PIL import Image,ImageDraw
 from .data import public_data
 from .settings import ReportSettings
 
@@ -20,7 +20,12 @@ def data_uri(raw,mime='image/png'):return f'data:{mime};base64,'+base64.b64encod
 def scene_image(scene,options=None):
     options=options or ReportSettings();base=Image.open(io.BytesIO(scene['image'])).convert('RGBA');base.thumbnail((options.image_max_width,options.image_max_width*4))
     heat=Image.open(io.BytesIO(scene['heat'])).convert('RGBA').resize(base.size,Image.Resampling.BICUBIC)
-    combined=Image.alpha_composite(base,heat);output=io.BytesIO();combined.save(output,format='PNG');return output.getvalue()
+    combined=Image.alpha_composite(base,heat)
+    draw=ImageDraw.Draw(combined);w,h=combined.size
+    for index,region in enumerate(scene['regions'],1):
+        a,b,c,d=region['rect'];box=(round(a*w),round(b*h),round(c*w),round(d*h))
+        draw.rectangle(box,outline=(30,93,144,210),width=max(1,w//800));draw.rectangle((box[0]+2,box[1]+2,box[0]+34,box[1]+19),fill=(16,47,80,225));draw.text((box[0]+5,box[1]+3),str(index),fill='white')
+    output=io.BytesIO();combined.save(output,format='PNG');return output.getvalue()
 
 
 def path_svg(scene,options=None):
@@ -28,7 +33,7 @@ def path_svg(scene,options=None):
     parts=[f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" role="img" aria-label="带序号的注视路径图">',f'<image width="{w}" height="{h}" href="{data_uri(scene["image"])}"/>']
     previous=None
     for p in scene['scanpath']:
-        x,y=p['center'][0]*w,p['center'][1]*h;r=max(4,math.sqrt(p['duration_s'])*min(w,h)*.027)
+        x,y=p['center'][0]*w,p['center'][1]*h;r=math.sqrt(p['duration_s'])*min(w,h)*.027
         if previous is not None and p['connect']:parts.append(f'<path d="M {previous[0]:.3f} {previous[1]:.3f} L {x:.3f} {y:.3f}" stroke="#ffae36" stroke-width="{max(2,w/600):.2f}" fill="none"/>')
         parts.append(f'<circle cx="{x:.3f}" cy="{y:.3f}" r="{r:.3f}" fill="#143553" fill-opacity=".7" stroke="#ffbe5c" stroke-width="2"/><text x="{x:.3f}" y="{y:.3f}" text-anchor="middle" dominant-baseline="central" font-size="{max(12,min(w,h)*.025):.2f}" font-family="sans-serif" fill="white">{p["number"]}</text>');previous=(x,y)
     parts.append('</svg>');return ''.join(parts)
@@ -41,7 +46,7 @@ def cards(data):
     facts=[('有效注视覆盖',pct(data['coverage']))]
     if data['kind']=='aggregate':facts.append(('匿名参与者',f'N = {data["N_total"]}（有效 {data["N_valid"]}）'))
     else:facts.append(('会话时长',fmt(data['summary']['duration_s'],' 秒',1)))
-    facts.append(('最先记录到注视的区域','无记录' if first is None else str(first[1].get('label',first[1]['id']))[:24]+' · '+fmt(first[0].get('start_s',0)+first[1]['first_fixation_s'],' 秒',1)))
+    facts.append((('平均首次注视最早的区域' if data['kind']=='aggregate' else '最先记录到注视的区域'),'无记录' if first is None else str(first[1].get('label',first[1]['id']))[:24]+' · '+fmt(first[0].get('start_s',0)+first[1]['first_fixation_s'],' 秒',1)))
     facts.append(('停留最久的区域','无记录' if top is None or not top[1].get('hard_s') else str(top[1].get('label',top[1]['id']))[:24]+' · '+fmt(top[1]['hard_s'],' 秒',1)))
     facts.append(('未记录硬归属注视的区域',str(sum(not r.get('hard_s') for _,r in rows))+' 个'))
     return facts
@@ -51,7 +56,7 @@ def render_html(data,*,options=None,ai=None,ai_reason='尚未请求AI解读；�
     options=options or ReportSettings();aggregate=data['kind']=='aggregate'
     title='刺激物注意力汇总' if aggregate else '屏幕注意力报告'
     parts=['<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">',
-           '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; font-src \'none\'; connect-src \'none\'; base-uri \'none\'; form-action \'none\'">',f'<title>{title}</title><style>{STYLE}</style></head><body><main>',f'<div class="eyebrow">屏幕注意力分析助手 · 本地统计</div><h1>{title}</h1>',
+           '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; font-src \'none\'; connect-src \'none\'; base-uri \'none\'; form-action \'none\'">',f'<title>{title}</title><style>{STYLE}</style></head><body><main>',f'<div class="eyebrow">屏幕注意力分析助手 · 本地统计'+(' · 合成示例，非实测' if data['metadata'].get('synthetic') else '')+f'</div><h1>{title}</h1>',
            '<p class="deck">记录的是屏幕区域上的注意力分配。画面切换、滚动会让同一位置对应不同内容；停留不代表理解或偏好。</p>',
            '<h2>关键结论</h2><section class="key">'+''.join(f'<div class="fact"><b>{esc(v)}</b><span>{esc(k)}</span></div>' for k,v in cards(data))+'</section>']
     if aggregate:parts.append(f'<p>匿名参与者 N_total = {data["N_total"]}；有效参与者 N_valid = {data["N_valid"]}。'+('仅一人数据，不作群体推断。' if data['N_total']==1 else '每人等权，不按会话数或注视时长加权。')+'</p>')
@@ -61,11 +66,12 @@ def render_html(data,*,options=None,ai=None,ai_reason='尚未请求AI解读；�
     if aggregate:parts.append('<details><summary>每位参与者的核尺度</summary><p>'+esc(str(data['metadata'].get('aggregate_kernels',[])))+'</p></details>')
     for s in data['scenes']:
         name=esc(s['id']);parts.append(f'<section><h2>场景 {name}</h2><p class="meta">起点 {fmt(s.get("start_s")," 秒")} · {esc(s.get("app") or "图片刺激物")}'+(' · 动态场景' if s.get('dynamic') else '')+'</p>')
-        parts.append(f'<figure class="visual"><img alt="场景{ name }叠加热力图" src="{data_uri(scene_image(s,options))}"><figcaption>热量按注视时长累加，尺度沿用误差半径；不表示逐行阅读。</figcaption></figure>')
+        parts.append(f'<figure class="visual"><img alt="场景{ name }叠加热力图" src="{data_uri(scene_image(s,options))}"><figcaption>热量按注视时长累加，尺度沿用误差半径；细框编号对应下方AOI表，不表示逐行阅读。</figcaption></figure>')
+        region_numbers={r['id']:i for i,r in enumerate(s['regions'],1)}
         regions=sorted(s['stats']['regions'],key=lambda r:-(r.get('hard_s') or 0))
         parts.append('<h3>AOI 排名 · 硬归属与软归属</h3><div class="tablewrap"><table><thead><tr><th>区域</th><th>硬时长 / 占比</th><th>软时长 / 占比</th><th>首次注视</th><th>进入次数</th>'+('<th>看过人数 / 有效人数</th>' if aggregate else '')+'</tr></thead><tbody>')
         for r in regions:
-            parts.append('<tr><td>'+esc(r.get('label',r['id']))+'</td><td>'+fmt(r.get('hard_s'),' s')+' / '+pct(r.get('hard_fraction'))+'</td><td>'+fmt(r.get('soft_s'),' s')+' / '+pct(r.get('soft_fraction'))+'</td><td>'+fmt(r.get('first_fixation_s'),' s')+'</td><td>'+fmt(r.get('entries'),digits=1 if aggregate else 0)+'</td>'+('<td>'+f'{r["N_seen"]} / {r["N_valid"]}（{pct(r["seen_fraction"])}）'+'</td>' if aggregate else '')+'</tr>')
+            parts.append('<tr><td>'+esc(str(region_numbers.get(r['id'],'?'))+' · '+r.get('label',r['id']))+'</td><td>'+fmt(r.get('hard_s'),' s')+' / '+pct(r.get('hard_fraction'))+'</td><td>'+fmt(r.get('soft_s'),' s')+' / '+pct(r.get('soft_fraction'))+'</td><td>'+fmt(r.get('first_fixation_s'),' s')+'</td><td>'+fmt(r.get('entries'),digits=1 if aggregate else 0)+'</td>'+('<td>'+f'{r["N_seen"]} / {r["N_valid"]}（{pct(r["seen_fraction"])}）'+'</td>' if aggregate else '')+'</tr>')
         parts.append('</tbody></table></div><p class="meta">占比分母为有效注视时间，保留背景和屏外概率，不将AOI重新归一为100%。首次与进入次数来自硬归属；软归属是概率分摊。'+('多人列为每人平均；首次只对看过者求平均。' if aggregate else '')+'</p>')
         missing=[r.get('label',r['id']) for r in regions if not r.get('hard_s')]
         parts.append('<p>未记录硬归属注视的 AOI：'+esc('、'.join(missing) or '无')+'。</p>')
@@ -93,9 +99,11 @@ def render_html(data,*,options=None,ai=None,ai_reason='尚未请求AI解读；�
     if ai:
         parts.append('<p>'+esc(ai['summary'])+'</p>')
         for finding in ai['findings']:parts.append('<h3>'+esc(finding['title'])+'</h3><p>'+esc(finding['text'])+'</p><p class="meta">证据：'+esc('；'.join(finding['evidence_labels']))+'</p>')
-        parts.append('<h3>面向设计者的建议</h3><ul>'+''.join('<li>'+esc(r)+'</li>' for r in ai['recommendations'])+'</ul><p>'+esc(ai['limitations'])+'</p><p class="meta">'+esc(str(ai['provenance']))+'</p>')
+        parts.append('<h3>面向设计者的建议</h3><ul>'+''.join('<li>'+esc(r)+'</li>' for r in ai['recommendations'])+'</ul><p>'+esc(ai['limitations'])+'</p>')
+        prov=ai['provenance'];usage=prov['usage'];cost=prov['computed_usd']
+        parts.append('<p class="meta">模型 '+esc(prov['model'])+' · '+esc(prov['time'])+' · 提示词 '+esc(prov['prompt_version'])+'<br>实际输入 / 输出 token：'+esc(str(usage['input_tokens']) if usage['input_tokens'] is not None else '未知')+' / '+esc(str(usage['output_tokens']) if usage['output_tokens'] is not None else '未知')+' · 核算费用：'+('未知' if cost is None else f'${cost:.6f}')+'<br>'+esc(prov['cost_definition'])+'</p><details><summary>发送与价格快照</summary><pre>'+esc(str(prov))+'</pre></details>')
     else:parts.append('<p>'+esc(ai_reason)+'</p><p class="meta">需要解读时，请回到控制面板点击「AI解读当前报告」，逐次预览并确认。此HTML没有网络连接能力，不含密钥。</p>')
     parts.append('<h2>数据质量与局限</h2><p class="note">'+esc(data['limitation'])+'</p>')
     parts.extend('<p class="note">'+esc(w)+'</p>' for w in data['warnings'])
-    parts.append('<footer>会话 '+esc(data['session_id'])+' · 数据版本 '+esc(data['source_version'])+' · 生成 '+esc(generated_at)+'<br>仅本机保存；移动此HTML即可离线查看。打印 / PDF使用独立样式。'+('本报告为合成数据测试，不是实测成绩。' if data['metadata'].get('synthetic') else '')+('<br>本次HTML构建 '+fmt(generation_ms,' ms')+'（不等于结束至浏览器呈现时间）' if generation_ms is not None else '')+'</footer></main></body></html>')
+    parts.append('<footer>会话 '+esc(data['session_id'])+' · 数据版本 '+esc(data['source_version'])+' · 生成 '+esc(generated_at)+'<br>报告文件保存在本机；AI发送状态见上节。移动此HTML即可离线查看。打印 / PDF使用独立样式。'+('本报告为合成数据测试，不是实测成绩。' if data['metadata'].get('synthetic') else '')+('<br>本次HTML构建 '+fmt(generation_ms,' ms')+'（不等于结束至浏览器呈现时间）' if generation_ms is not None else '')+'</footer></main></body></html>')
     return ''.join(parts)

@@ -73,3 +73,15 @@ class ReportTests(unittest.TestCase):
             # Unsafe file references, including symlinks, fail closed.
             (p/'derived-link').symlink_to(Path(root))
             with self.assertRaises(ValueError):load_session(p,derived='derived-link')
+
+    def test_optional_pdf_failure_retains_html_and_success_uses_local_profile(self):
+        from gaze_core.reporting.pdf import export_pdf
+        from types import SimpleNamespace as NS
+        with tempfile.TemporaryDirectory() as root:
+            artifact=build(load_session(session(root)));original=artifact.html.read_bytes()
+            with patch('overlay.galaxy_browser.chrome_executable',return_value=None):
+                with self.assertRaisesRegex(RuntimeError,'Chrome'):export_pdf(artifact)
+            def runner(args,**kwargs):
+                self.assertTrue(any(arg.startswith('--user-data-dir=') for arg in args));self.assertIn('--disable-background-networking',args)
+                self.assertEqual(args[-1],artifact.html.as_uri());(artifact.directory/'report.pdf').write_bytes(b'%PDF-synthetic');return NS(returncode=0)
+            self.assertTrue(export_pdf(artifact,executable='/fake/chrome',runner=runner).exists());self.assertEqual(artifact.html.read_bytes(),original)

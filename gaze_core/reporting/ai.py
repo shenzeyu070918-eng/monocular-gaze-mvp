@@ -25,6 +25,8 @@ def registry(data,selected):
         prefix='scene.'+scene['id'];add(prefix+'.valid_s',scene['stats'].get('valid_fixation_s'),'s',scene['id']+' 有效注视')
         for r in scene['stats']['regions']:
             for key,unit in [('hard_s','s'),('soft_s','s'),('hard_fraction','ratio'),('soft_fraction','ratio'),('first_fixation_s','s'),('entries','count'),('N_seen','count'),('N_valid','count')]:add(prefix+'.'+r['id']+'.'+key,r.get(key),unit,scene['id']+' / '+r['id']+' / '+key)
+    if data['kind']!='aggregate':
+        for key,unit in [('sigma_cm','cm'),('sigma_x','normalized_x'),('sigma_y','normalized_y')]:add('calibration.'+key,data['metadata'].get('kernel',{}).get(key),unit,'九点误差核尺度 '+key)
     if data['kind']=='aggregate':add('sample.N_total',data['N_total'],'count','匿名参与者总人数');add('sample.N_valid',data['N_valid'],'count','有效参与者人数')
     else:add('sample.N_total',1,'count','本次单人会话')
     return metrics
@@ -65,7 +67,7 @@ def prepare(artifact,selected,*,include_ocr=False):
         row=dict(scene_id=s['id'],regions=[dict(id=r['id'],rect=r.get('rect')) for r in s['stats']['regions']])
         if include_ocr:row['ocr_text']=[dict(id=r['id'],text=r.get('text','')) for r in s['regions']]
         local.append(row)
-    text=json.dumps(dict(precision=data['limitation'],metrics=metrics,scenes=local),ensure_ascii=False,allow_nan=False)
+    text=json.dumps(dict(precision=data['limitation'],radius_source=data['metadata'].get('kernel',{}).get('source') if data['kind']!='aggregate' else '每人独立核尺度；不可把首人的值当整体精度',metrics=metrics,scenes=local),ensure_ascii=False,allow_nan=False)
     if options.provider=='responses':
         content=[dict(type='input_text',text=text)]+[dict(type='input_image',image_url=u,detail='high') for _,u in thumbnails]
         body=dict(model=options.model,store=False,instructions=PROMPT,input=[dict(role='user',content=content)],max_output_tokens=options.ai_max_output_tokens,text=dict(format=dict(type='json_schema',name='attention_interpretation',strict=True,schema=SCHEMA)))
@@ -93,12 +95,17 @@ class ConsentGate:
     def revoke(self):self._tickets.clear()
 
 
+class MissingCredentials(RuntimeError):pass
+class InvalidInterpretation(ValueError):pass
+class ProviderFailure(RuntimeError):pass
+
+
 def read_key(options):
     key=os.environ.get(options.key_env)
     if not key and sys.platform=='darwin':
         result=subprocess.run(['security','find-generic-password','-s',options.keychain_service,'-a',options.keychain_account,'-w'],capture_output=True,text=True,timeout=3)
         if result.returncode==0:key=result.stdout.strip()
-    if not key:raise RuntimeError('未配置AI密钥，已保留离线统计报告')
+    if not key:raise MissingCredentials('未配置AI密钥')
     return key
 
 
@@ -140,7 +147,7 @@ def _http_child(pipe,prepared,key,deadline):
     finally:pipe.close()
 
 
-def bounded_transport(prepared,key,deadline,clock=time.monotonic):
+def bounded_transport(prepared,key,deadline,clock=time.monotonic,*,cancelled=lambda:False):
     """An isolated request process bounds DNS/TLS/body read as one operation.
 
     Socket timeouts alone do not bound DNS resolution. The parent terminates
@@ -152,12 +159,12 @@ def bounded_transport(prepared,key,deadline,clock=time.monotonic):
     worker=context.Process(target=_http_child,args=(send,prepared,key,deadline),daemon=True)
     try:
         worker.start();send.close()
-        while clock()<deadline:
+        while clock()<deadline and not cancelled():
             if receive.poll(min(.05,max(0,deadline-clock()))):
                 kind,value=receive.recv()
-                if kind!='ok':raise RuntimeError('AI服务请求失败')
+                if kind!='ok':raise ProviderFailure('AI服务请求失败')
                 return value
-            if not worker.is_alive():raise RuntimeError('AI服务请求失败')
+            if not worker.is_alive():raise ProviderFailure('AI服务请求失败')
         raise TimeoutError()
     finally:
         send.close();receive.close()
@@ -225,6 +232,11 @@ def usage_cost(usage,prices):
 def interpret(artifact,prepared,ticket,gate,*,transport=bounded_transport,key_reader=read_key,clock=time.monotonic,started=None,cancelled=lambda:False):
     """Only this boundary sends. Failures return safe reasons; never raw errors."""
     deadline=(clock() if started is None else started)+artifact.options.ai_timeout_s;key=''
+    def failure(reason):
+        from .build import write_ai_status
+        try:write_ai_status(artifact,reason)
+        except OSError:pass
+        return dict(ok=False,reason=reason)
     try:
         # Rebuild from the current report/selection/options. UI stale approvals,
         # changed endpoint/prices/content and replayed tickets all fail closed.
@@ -234,16 +246,22 @@ def interpret(artifact,prepared,ticket,gate,*,transport=bounded_transport,key_re
         if cancelled() or clock()>=deadline:raise TimeoutError()
         key=key_reader(artifact.options)
         if cancelled() or clock()>=deadline:raise TimeoutError()
-        raw=transport(prepared,key,deadline,clock)
-        raw=json.loads(redact(json.dumps(raw,ensure_ascii=False),key));value,usage=parse_response(raw,prepared.provider)
-        result=validate_output(value,json.loads(prepared.metrics_json));prices=json.loads(prepared.prices_json)
+        raw=(transport(prepared,key,deadline,clock,cancelled=cancelled) if transport is bounded_transport else transport(prepared,key,deadline,clock))
+        try:
+            raw=json.loads(redact(json.dumps(raw,ensure_ascii=False),key));value,usage=parse_response(raw,prepared.provider)
+            result=validate_output(value,json.loads(prepared.metrics_json));prices=json.loads(prepared.prices_json)
+        except (ValueError,TypeError,KeyError,IndexError) as exc:raise InvalidInterpretation() from None
         result['provenance']=dict(model=prepared.model,endpoint=prepared.endpoint,time=datetime.now(timezone.utc).isoformat(),prompt_version=PROMPT_VERSION,source_version=artifact.data['source_version'],selected_scenes=list(prepared.selected),ocr_json_sent=prepared.include_ocr,payload_digest=prepared.digest,usage=usage,computed_usd=usage_cost(usage,prices),price_snapshot=prices,cost_definition='按返回usage和配置单价核算，非实际账单；缺少usage/缓存明细/价格时为未知')
         if cancelled() or clock()>=deadline:raise TimeoutError()
         from .build import publish_ai
         publish_ai(artifact,result,deadline=deadline,clock=clock,cancelled=cancelled)
         return dict(ok=True,result=result,reason=None)
-    except PermissionError:return dict(ok=False,reason='未确认或内容已变化；零发送，保留统计报告')
-    except TimeoutError:return dict(ok=False,reason='AI总预算超时（含校验与报告更新），保留统计报告；没有自动重试')
+    except PermissionError:
+        gate.revoke()
+        return failure('未确认或内容已变化；零发送，保留统计报告')
+    except TimeoutError:return failure('AI总预算超时（含校验与报告更新），保留统计报告；没有自动重试')
+    except MissingCredentials:return failure('未配置AI密钥（环境变量或macOS钥匙串），保留离线统计报告')
+    except InvalidInterpretation:return failure('AI返回格式、中文或证据数字未通过本地校验，保留统计报告；没有自动重试')
     except Exception:
         # Deliberately omit service exception/body: may echo key/headers or data.
-        return dict(ok=False,reason='AI未配置、服务失败或解读未通过中文/证据校验，已保留统计报告；请检查配置后重新预览确认')
+        return failure('AI服务连接、凭据读取或请求失败，已保留统计报告；请检查配置后重新预览确认')

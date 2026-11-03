@@ -1,5 +1,5 @@
 """Read-only M9 data adapter, explicit source versions and display-only scanpaths."""
-import hashlib,json,math
+import hashlib,json,math,io
 from pathlib import Path
 import numpy as np
 from gaze_core.attention.storage import read_jsonl,numeric_json
@@ -69,8 +69,8 @@ def load_session(path,*,derived=None,options=None):
         image=s.read(event['image'])
         if hashlib.sha256(image).hexdigest()!=event['sha256']:raise ValueError('场景截图校验失败：'+name)
         heat=s.read(s.prefix+f'heatmaps/{name}.png')
-        grid=np.loadtxt(safe_file(s.root,s.prefix+f'heatmaps/{name}.csv'),delimiter=',',ndmin=2)
-        s.read(s.prefix+f'heatmaps/{name}.csv')
+        grid=np.loadtxt(io.BytesIO(s.read(s.prefix+f'heatmaps/{name}.csv')),delimiter=',',ndmin=2)
+        if not np.isfinite(grid).all() or np.any(grid<0):raise ValueError('热量网格包含无效值')
         rows=[];definitions={r['id']:r for r in defs}
         for r in stats['regions']:
             first=r.get('first_fixation_ns');rows.append(dict(r,label=definitions.get(r['id'],{}).get('text') or r['id'],rect=definitions.get(r['id'],{}).get('rect'),first_fixation_s=None if first is None else (first-event['start_ns'])/1e9))

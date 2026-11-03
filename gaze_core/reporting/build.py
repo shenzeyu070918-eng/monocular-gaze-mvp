@@ -43,15 +43,27 @@ def build(data,*,options=None,output_root=None,cancelled=lambda:False):
     return ReportArtifact(directory,data,directory/'report.html',options)
 
 
-def publish_ai(artifact,result,*,deadline,clock=time.monotonic):
-    if clock()>=deadline:raise TimeoutError('AI总预算超时，保留统计报告')
+def publish_ai(artifact,result,*,deadline,clock=time.monotonic,cancelled=lambda:False):
+    if cancelled() or clock()>=deadline:raise TimeoutError('AI总预算超时，保留统计报告')
     html=render_html(artifact.data,options=artifact.options,ai=result,generated_at=datetime.now(timezone.utc).isoformat())
-    if clock()>=deadline:raise TimeoutError('AI校验/渲染超时，保留统计报告')
+    if cancelled() or clock()>=deadline:raise TimeoutError('AI校验/渲染超时，保留统计报告')
     # Stage all bytes before replacing: no partial AI HTML on failures.
     info=json.dumps(result,ensure_ascii=False,allow_nan=False,indent=2).encode()
     if not artifact.directory.is_dir():raise InterruptedError('报告已删除')
     atomic(artifact.directory/'ai.json',info)
-    if clock()>=deadline:
+    if cancelled() or clock()>=deadline:
         (artifact.directory/'ai.json').unlink(missing_ok=True);raise TimeoutError('AI写入超时，保留统计报告')
+    original=artifact.html.read_bytes()
     atomic(artifact.html,html.encode())
+    if cancelled() or clock()>=deadline:
+        atomic(artifact.html,original);(artifact.directory/'ai.json').unlink(missing_ok=True)
+        raise TimeoutError('AI更新超时，已还原统计报告')
     return artifact.html
+
+
+def write_ai_status(artifact,reason):
+    """Worker-only fallback: keep any successful previous interpretation intact."""
+    if not artifact.directory.is_dir():return
+    atomic(artifact.directory/'ai-status.json',json.dumps(dict(reason=reason),ensure_ascii=False).encode())
+    if not (artifact.directory/'ai.json').exists():
+        atomic(artifact.html,render_html(artifact.data,options=artifact.options,ai_reason=reason).encode())

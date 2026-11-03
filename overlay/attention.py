@@ -76,6 +76,8 @@ class AttentionUI:
         for name,callback in [('attention_start',self.start_screen),('attention_stimulus',self.start_stimulus),('attention_pause',self.service.pause),('attention_end',self.end),('attention_delete',self.delete)]:actions.connect(name,callback)
         actions['attention_ring'].setChecked(not session.settings.attention.hide_ring)
         actions['attention_ring'].setEnabled(True)
+        from .reporting import ReportUI
+        self.reports=ReportUI(self)
 
     def _kernel(self):
         s=self.session;radius=s.profiles.radius
@@ -185,9 +187,12 @@ class AttentionUI:
     def delete(self):
         if self.service.path is None:return
         answer=QMessageBox.question(self.controls.panel,'删除整个注意力会话','删除本会话全部截图、OCR与数值数据？此操作不能撤销。',QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.Cancel,QMessageBox.StandardButton.Cancel)
-        if answer==QMessageBox.StandardButton.Yes:self._close_stimulus();self.service.delete()
+        if answer==QMessageBox.StandardButton.Yes:
+            if self.reports.future is not None:self.notice('报告正在处理中，请完成或退出后再删除会话',True);return
+            self.reports.artifact=None;self._close_stimulus();self.service.delete()
 
     def poll(self,*,active,screen_changed,demo_active,now_ns):
+        self.reports.poll()
         worker=self.service;s=self.session
         if self.guide is not None and self.guide.requested:
             self.guide.update_session_state(worker.user_paused,worker._effective_state=='recording' and worker.state=='recording',worker._effective_state=='excluded_app')
@@ -253,5 +258,6 @@ class AttentionUI:
             self.controls.panel.attention.setText(text+'\n整理警告：'+'；'.join(worker.summary['warnings']))
 
     def close_ui(self):
+        self.reports.close()
         self.badge.hide();self._close_stimulus();self.window.set_attention_ring_hidden(False)
         if self.guide is not None:self.guide.close();self.guide=None

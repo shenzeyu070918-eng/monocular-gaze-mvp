@@ -50,6 +50,9 @@ class AttentionSession:
             if not np.isfinite(kernel[key]) or kernel[key]<=0:raise ValueError('误差核尺度必须为有限正数')
         if mode not in ('screen','stimulus'):raise ValueError('未知注意力模式')
         if mode=='stimulus' and stimulus is None:raise ValueError('请先选择PNG/JPG刺激图片')
+        if mode=='stimulus' and participant_id is None:
+            from gaze_core.reporting.participants import next_participant_id
+            participant_id=next_participant_id(self.root)
         if participant_id is not None:
             from gaze_core.reporting.participants import participant_id as validate_id
             participant_id=validate_id(participant_id)

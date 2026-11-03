@@ -19,6 +19,9 @@ class AttentionSettings:
     queue_size: int = 256
     hide_ring: bool = True
     excluded_apps: tuple = ('1Password','微信','WeChat')
+    guide_excluded_app: str = '备忘录'
+    guide_excluded_bundle: str = 'com.apple.Notes'
+    guide_action_s: float = 4.
     output_dir: str = 'data/attention'
     manual_aoi: str | None = None
     ocr_languages: tuple = ('zh-Hans','en-US')
@@ -44,7 +47,7 @@ class AttentionSettings:
     aoi_button_height_ratio: float = 3.5
 
     def __post_init__(self):
-        for key in ('capture_hz','stable_ms','min_scene_interval_ms','max_unstable_ms','pixel_delta','scroll_max_horizontal_px','aoi_merge_gap_sigma','screenshot_timeout_s','ocr_timeout_s','aoi_title_height_ratio','aoi_button_height_ratio'):
+        for key in ('capture_hz','stable_ms','min_scene_interval_ms','max_unstable_ms','pixel_delta','scroll_max_horizontal_px','aoi_merge_gap_sigma','screenshot_timeout_s','ocr_timeout_s','aoi_title_height_ratio','aoi_button_height_ratio','guide_action_s'):
             v=getattr(self,key)
             if isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) or v<=0:raise ValueError('attention.'+key+' 必须为有限正数')
         if self.capture_hz>5:raise ValueError('attention.capture_hz 不得超过5')
@@ -59,5 +62,8 @@ class AttentionSettings:
         if self.aoi_color_bin>256 or self.aoi_edge_low>=self.aoi_edge_high:raise ValueError('AOI颜色/边缘阈值无效')
         if self.thumbnail_width>2048 or self.soft_grid_width>2048:raise ValueError('attention 网格宽度不得超过2048')
         if type(self.hide_ring) is not bool:raise ValueError('attention.hide_ring 必须为布尔值')
+        for key in ('guide_excluded_app','guide_excluded_bundle'):
+            if not isinstance(getattr(self,key),str) or not getattr(self,key).strip():raise ValueError('attention.'+key+' 必须为非空字符串')
+        if self.guide_action_s<4:raise ValueError('引导动作时间不得少于4秒')
         for key in ('excluded_apps','ocr_languages'):
             if not isinstance(getattr(self,key),(list,tuple)) or not all(isinstance(v,str) and v for v in getattr(self,key)):raise ValueError('attention.'+key+' 必须为字符串数组')

@@ -65,3 +65,32 @@ class AttentionUITests(unittest.TestCase):
             try:
                 expected=ImageOps.exif_transpose(Image.open(path));self.assertEqual((window.image.width(),window.image.height()),expected.size)
             finally:window.close();window.deleteLater()
+    def test_guide_exclusion_survives_baseline_and_completed_result_is_on_panel(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace as NS
+        from overlay.actions import OverlayActions
+        from overlay.panel import ControlPanel
+        from overlay.attention import AttentionUI
+        settings=load_settings(use_local=False);rect=ScreenRect(0,0,640,480)
+        actions=OverlayActions();panel=ControlPanel(actions);window=OverlayWindow(rect,settings.overlay,native_configure=None)
+        session=NS(settings=settings,screen=rect,latest=object(),active=False,profiles=NS(profile=None),_active_group='A')
+        controls=NS(actions=actions,panel=panel,screen=self.app.primaryScreen())
+        ui=AttentionUI(session,window,controls,lambda *a:None)
+        try:
+            # Thirty-second baseline is idle: the temporary exclusion MUST
+            # survive until backend construction, without changing settings.
+            ui.guide=NS(requested=False,armed=False,finished=False,close=lambda:None)
+            ui._guide_excluded_apps=('备忘录','com.apple.Notes')
+            ui.poll(active=True,screen_changed=False,demo_active=False,now_ns=0)
+            self.assertIn('com.apple.Notes',ui._guide_excluded_apps);self.assertNotIn('com.apple.Notes',settings.attention.excluded_apps)
+            ui.service.state='ended';ui.poll(active=True,screen_changed=False,demo_active=False,now_ns=1)
+            self.assertIn('com.apple.Notes',ui._guide_excluded_apps)
+            ui.guide.finished=True
+            ui.service.state='ended';ui.service.path=Path('/tmp/fake-guide-session')
+            ui.service.summary=dict(acceptance=dict(hard_pass=True,hard_fraction=.804,cpu_pass=True,extra_process_tree_cpu=-4.7,transition_pass=False,detected_transitions=1,self_window_zero_residue_pass=None,steps_not_executed=['pause','exclude']))
+            with patch.object(panel,'present') as present:
+                ui.poll(active=True,screen_changed=False,demo_active=False,now_ns=2);present.assert_called_once()
+            text=panel.attention.text();self.assertIn('80.4%',text);self.assertIn('1/3',text);self.assertIn('暂停并恢复',text);self.assertIn('进入排除应用',text)
+            self.assertIsNone(ui._guide_excluded_apps)
+        finally:
+            ui.service.path=None;ui.close_ui();ui.service.close();window.close();window.deleteLater();panel.hide();panel.deleteLater()

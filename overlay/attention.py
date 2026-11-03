@@ -58,11 +58,12 @@ class StimulusWindow(QWidget):
 class AttentionUI:
     def __init__(self,session,window,controls,notice):
         self.session,self.window,self.controls,self.notice=session,window,controls,notice
+        self._guide_excluded_apps=None;self._guide_instruction='';self._shown_result=None
         def backend():
             import sys
             if sys.platform!='darwin':raise RuntimeError('Windows截屏尚未实现')
             from .attention_macos import MacScreenCapture
-            return MacScreenCapture(self.service.screen,session.settings.attention.excluded_apps,request_permission=True,timeout_s=session.settings.attention.screenshot_timeout_s)
+            return MacScreenCapture(self.service.screen,self._guide_excluded_apps or session.settings.attention.excluded_apps,request_permission=True,timeout_s=session.settings.attention.screenshot_timeout_s)
         self.service=AttentionSession(session.settings,session.screen,backend_factory=backend);session.attention=self.service
         self.stimulus=None;self._pending_stimulus=False;self._last=None;self._next_ui=0;self._last_error=None;self._closing_stimulus=False;self.guide=None;self._profile_key=None;self._profile_matches=False
         flags=Qt.WindowType.Tool|Qt.WindowType.FramelessWindowHint|Qt.WindowType.WindowStaysOnTopHint|Qt.WindowType.WindowTransparentForInput|Qt.WindowType.WindowDoesNotAcceptFocus|Qt.WindowType.NoDropShadowWindowHint
@@ -104,20 +105,34 @@ class AttentionUI:
             if self.session._active_group!='B' or self.session.profiles.profile is None:raise ValueError('请先完成匹配的Python九点')
             if self.guide is not None:self.guide.close()
             from .attention_guide import AttentionGuide
+            from gaze_core.attention.guide import temporary_exclusions
             from PySide6.QtGui import QDesktopServices
             from PySide6.QtCore import QUrl
             self.service.begin_baseline()
-            self.guide=AttentionGuide(self.session.screen)
+            options=self.session.settings.attention
+            self._guide_excluded_apps,added=temporary_exclusions(options.excluded_apps,options.guide_excluded_app,options.guide_excluded_bundle)
+            if added:self.notice('仅本次引导临时加入排除名单：'+'、'.join(added),True)
+            pause_key=self.session.settings.overlay.hotkeys.get('attention_pause') or '控制面板“暂停/恢复注意力会话”按钮'
+            self._guide_instruction=''
+            self.guide=AttentionGuide(self.session.screen,action_s=options.guide_action_s,excluded_app=options.guide_excluded_app,excluded_bundle=options.guide_excluded_bundle,excluded=self._guide_excluded_apps,pause_key=pause_key)
+            guide=self.guide
             guide_started=[None]
             def message(event):
+                if self.guide is not guide:return
                 if event['kind']=='error':self.notice('引导基线失败：'+event['error'],True);return
+                if event['kind']=='instruction':self._guide_instruction=event['text'];return
                 if event['kind']=='begin':
                     try:self._start()
-                    except Exception as exc:self.notice('引导会话未开始：'+str(exc),True);return
+                    except Exception as exc:self.guide.finished=True;self.notice('引导会话未开始：'+str(exc),True);return
                     guide_started[0]=self.service.started_ns
                     self.service._put(('acceptance',dict(type='acceptance',kind='cpu_baseline',time_ns=time.perf_counter_ns(),measurement=dict(event['cpu'],latency=self.service.baseline_latency()))))
+                    from gaze_core.attention.window_check import load_evidence
+                    from gaze_core.config import ROOT
+                    evidence=load_evidence(ROOT/'data/attention-window-check/latest.json',self.session.screen)
+                    if evidence:self.service._put(('acceptance',dict(type='acceptance',kind='self_window_test',time_ns=time.perf_counter_ns(),**evidence)))
                 elif guide_started[0]!=self.service.started_ns:return
                 elif event['kind']=='end':
+                    self._guide_instruction=''
                     self.service._put(('acceptance',dict(type='acceptance',kind='cpu_recording',time_ns=event['time_ns'],measurement=event['cpu'])))
                     self.end()
                 else:self.service._put(('acceptance',event))
@@ -156,6 +171,7 @@ class AttentionUI:
             self._closing_stimulus=True;self._pending_stimulus=False;old=self.stimulus;self.stimulus=None;old.close();old.deleteLater();self._closing_stimulus=False
 
     def end(self):
+        if self.guide is not None and self.guide.requested and not self.guide.finished:self.guide.finished=True;self._guide_instruction=''
         self.service.stop();self._close_stimulus()
 
     def delete(self):
@@ -165,6 +181,7 @@ class AttentionUI:
 
     def poll(self,*,active,screen_changed,demo_active,now_ns):
         worker=self.service;s=self.session
+        if self.guide is not None and self.guide.requested and not self.guide.armed and worker.state=='recording' and worker.scene_count>0:self.guide.arm()
         if worker.active:
             profile=s.profiles.profile;key=(worker.started_ns,id(profile))
             if key!=self._profile_key:
@@ -189,6 +206,14 @@ class AttentionUI:
         if reason:text+=' · '+reasons.get(reason,reason)
         if worker.error:text+=' · '+worker.error
         if worker.path:text+='\n'+str(worker.path)
+        result=(worker.summary or {}).get('acceptance')
+        if result is not None:
+            from gaze_core.attention.acceptance import result_text
+            text+='\n'+result_text(result)
+            if worker.state=='ended' and worker.path!=self._shown_result:
+                self._shown_result=worker.path;self.controls.panel.present()
+        if self.guide is not None and self.guide.requested and worker.state=='error':self.guide.finished=True;self._guide_instruction=''
+        if not worker.active and (self.guide is None or self.guide.finished):self._guide_excluded_apps=None
         self.controls.panel.attention.setText(text)
         actions=self.controls.actions
         ready=active and s.latest is not None and not s.active and not demo_active and not worker.busy
@@ -197,6 +222,7 @@ class AttentionUI:
         actions['attention_delete'].setEnabled(worker.path is not None)
         if worker.active and not screen_changed:
             badge_text=('● 图片分析 ' if worker.mode=='stimulus' else '● 屏幕分析 ')+names.get(worker.state,worker.state)+f' {seconds}s'
+            if self._guide_instruction:badge_text+='\n'+self._guide_instruction
             self.badge.setText(badge_text);self.badge.adjustSize()
             rect=s.screen;self.badge.move(rect.x+(rect.width-self.badge.width())//2,rect.y+46)
             if not self.badge.isVisible():

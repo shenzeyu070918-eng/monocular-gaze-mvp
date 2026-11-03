@@ -110,3 +110,63 @@ class AttentionTests(unittest.TestCase):
         frames.append(dict(capture_ns=800000000,raw=[1.2,.5],valid=True,status='tracking'))
         result=list(extract_fixations(frames,FixationSettings(),ScreenGeometry(30,20,0,1,measured=True),[[1,0],[0,1],[0,0]],0))
         f=[v for k,v in result if k=='fixation'];self.assertEqual(f[0]['end_ns'],700000000)
+
+class ThirdSessionIntervalRegression(unittest.TestCase):
+    def events(self):
+        # Structure of 20261103T023921.422541Z-f409e088: persisted JSON list
+        # transitions + excluded/pause states + interrupted transition tails.
+        # Relative synthetic times, no personal frames/text/screenshots copied.
+        S=10**9
+        return [dict(type='state',time_ns=0,status='recording'),
+                dict(type='scene',scene_id='a',start_ns=S,transition=None),
+                dict(type='scene',scene_id='b',start_ns=3*S,transition=[2*S,3*S]),
+                dict(type='state',time_ns=4*S,status='excluded_app'),
+                dict(type='transition_pending',start_ns=int(3.5*S),end_ns=4*S),
+                dict(type='state',time_ns=5*S,status='recording'),
+                dict(type='scene',scene_id='c',start_ns=5*S,transition=None),
+                dict(type='state',time_ns=6*S,status='user_paused'),
+                dict(type='state',time_ns=7*S,status='recording'),
+                dict(type='scene',scene_id='d',start_ns=7*S,transition=None),
+                dict(type='state',time_ns=8*S,status='foreground_or_filter_changed'),
+                dict(type='transition_pending',start_ns=int(7.5*S),end_ns=9*S),
+                dict(type='transition_pending',start_ns=int(7.5*S),end_ns=10*S),
+                dict(type='end',time_ns=10*S,reason='error',error="'<' not supported between instances of 'tuple' and 'list'")]
+    def test_json_lists_guards_and_duplicate_pending_tails_merge(self):
+        timeline=Timeline(json.loads(json.dumps(self.events())),0,10*10**9)
+        self.assertEqual(timeline.uncertain,[[2*10**9,3*10**9],[int(3.5*10**9),4*10**9],[int(7.5*10**9),10*10**9]])
+        self.assertAlmostEqual(timeline.summary()['uncertain_s'],4.)
+        self.assertEqual(timeline.at(4*10**9),(None,'excluded_app'))
+        self.assertEqual(timeline.at(6*10**9),(None,'user_paused'))
+    def test_interval_merge_order_independent_and_does_not_mutate_source(self):
+        from gaze_core.attention.binding import merge_intervals
+        n=1249164469161333
+        rows=[[n+9,n+11],(n+1,n+5),[n+1,n+3],(n+5,n+10),(n+4,n+4)]
+        before=json.dumps(rows);self.assertEqual(merge_intervals(reversed(rows)),[[n+1,n+11]])
+        self.assertEqual(json.dumps(rows),before)
+    def test_full_derived_processing_and_cli_warning_for_error_end(self):
+        import io,contextlib
+        from dataclasses import asdict
+        from unittest.mock import patch
+        from gaze_core.attention.processing import process_session
+        from tools.attention_session import main
+        settings=load_settings(use_local=False)
+        with tempfile.TemporaryDirectory() as root:
+            metadata=dict(start_ns=0,end_ns=10*10**9,geometry=asdict(settings.geometry),fixation=asdict(settings.fixation),heatmap=asdict(settings.heatmap),
+                          kernel=dict(sigma_x=.1,sigma_y=.1),profile=dict(matrix=[[1,0],[0,1],[0,0]]),mode='screen',analysis_size=[320,200],attention=asdict(settings.attention))
+            store=SessionStore(root,metadata,10_000_000)
+            for e in self.events():
+                if e['type']=='scene':
+                    name='scenes/'+e['scene_id']+'.png';sha=store.write_image(name,np.zeros((200,320,3),np.uint8));e=dict(e,image=name,sha256=sha)
+                store.append('scenes.jsonl',e)
+            for i in range(90):store.append('gaze.jsonl',dict(capture_ns=i*100000000,raw=[.5,.5],valid=True,status='tracking'))
+            store.append('scenes.jsonl',dict(type='acceptance',kind='target',time_ns=0,rect=[0,0,1,1]))
+            store.finish(10*10**9,'error','original error')
+            original={p.relative_to(store.path).as_posix():p.read_bytes() for p in store.path.rglob('*') if p.is_file()}
+            options=replace(settings,attention=replace(settings.attention,output_dir=root))
+            stderr=io.StringIO()
+            with patch('tools.attention_session.load_settings',return_value=options),contextlib.redirect_stdout(io.StringIO()),contextlib.redirect_stderr(stderr):self.assertEqual(main([str(store.path),'--rebind']),0)
+            self.assertIn('未正常结束',stderr.getvalue())
+            result=json.loads(next((store.path/'derived').glob('*/stats/session.json')).read_text())
+            self.assertIn('acceptance',result);self.assertTrue(result['interrupted']);self.assertEqual(result['source_end_reason'],'error')
+            self.assertTrue(any((store.path/'derived').glob('*/heatmaps/*.png')))
+            for name,data in original.items():self.assertEqual((store.path/name).read_bytes(),data)

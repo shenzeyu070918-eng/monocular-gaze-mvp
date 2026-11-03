@@ -23,7 +23,8 @@ def main(argv=None):
     store=SessionStore.existing(path,settings.attention.max_disk_mb*1024*1024)
     try:
         events=list(read_jsonl(path/'scenes.jsonl'))
-        interrupted=not any(e.get('type')=='end' for e in events)
+        ending=next((e for e in reversed(events) if e.get('type')=='end'),None)
+        interrupted=ending is None or bool(ending.get('error')) or ending.get('reason')=='error'
         if interrupted:print('警告：会话未正常结束；只处理已完整写入的数据。',file=sys.stderr)
         if 'end_ns' not in store.metadata:
             store.metadata['end_ns']=max([store.metadata['start_ns']]+[r['capture_ns'] for r in read_jsonl(path/'gaze.jsonl')]+[e.get('confirmed_ns',e.get('time_ns',0)) for e in events])
@@ -33,7 +34,9 @@ def main(argv=None):
             version=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')+'-'+uuid.uuid4().hex[:8]
             prefix=f'derived/{version}/'
             summary=process_session(store,options,reocr=args.reocr,prefix=prefix)
-            summary.update(interrupted=interrupted,derived_prefix=prefix);store.write_json(prefix+'stats/session.json',summary)
+            summary.update(interrupted=interrupted,derived_prefix=prefix,source_state=store.metadata.get('state'),
+                           source_end_reason=None if ending is None else ending.get('reason'),source_error=None if ending is None else ending.get('error'))
+            store.write_json(prefix+'stats/session.json',summary)
         else:
             summary=dict(session_id=store.id,state=store.metadata.get('state'),mode=store.metadata['mode'],synthetic_input=bool(store.metadata.get('synthetic',False)),
                          scene_count=sum(e['type']=='scene' for e in events),interrupted=interrupted,

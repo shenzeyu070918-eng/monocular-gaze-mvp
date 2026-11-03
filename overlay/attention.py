@@ -59,6 +59,7 @@ class AttentionUI:
     def __init__(self,session,window,controls,notice):
         self.session,self.window,self.controls,self.notice=session,window,controls,notice
         self._guide_excluded_apps=None;self._guide_instruction='';self._shown_result=None
+        self._badge_font_px=14
         def backend():
             import sys
             if sys.platform!='darwin':raise RuntimeError('Windows截屏尚未实现')
@@ -71,6 +72,7 @@ class AttentionUI:
         self.badge.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         actions=controls.actions
         actions.connect('attention_guide',self.open_guide)
+        actions.connect('attention_guide_skip',self.skip_guide_step)
         for name,callback in [('attention_start',self.start_screen),('attention_stimulus',self.start_stimulus),('attention_pause',self.service.pause),('attention_end',self.end),('attention_delete',self.delete)]:actions.connect(name,callback)
         actions['attention_ring'].setChecked(not session.settings.attention.hide_ring)
         actions['attention_ring'].setEnabled(True)
@@ -108,17 +110,17 @@ class AttentionUI:
             from gaze_core.attention.guide import temporary_exclusions
             from PySide6.QtGui import QDesktopServices
             from PySide6.QtCore import QUrl
-            self.service.begin_baseline()
             options=self.session.settings.attention
             self._guide_excluded_apps,added=temporary_exclusions(options.excluded_apps,options.guide_excluded_app,options.guide_excluded_bundle)
             if added:self.notice('仅本次引导临时加入排除名单：'+'、'.join(added),True)
             pause_key=self.session.settings.overlay.hotkeys.get('attention_pause') or '控制面板“暂停/恢复注意力会话”按钮'
             self._guide_instruction=''
-            self.guide=AttentionGuide(self.session.screen,action_s=options.guide_action_s,excluded_app=options.guide_excluded_app,excluded_bundle=options.guide_excluded_bundle,excluded=self._guide_excluded_apps,pause_key=pause_key)
+            self.guide=AttentionGuide(self.session.screen,excluded_app=options.guide_excluded_app,excluded_bundle=options.guide_excluded_bundle,excluded=self._guide_excluded_apps,pause_key=pause_key,stable_s=options.guide_stable_s,feedback_s=options.guide_feedback_s)
             guide=self.guide
             guide_started=[None]
             def message(event):
                 if self.guide is not guide:return
+                if event['kind']=='baseline_started':self.service.begin_baseline();return
                 if event['kind']=='error':self.notice('引导基线失败：'+event['error'],True);return
                 if event['kind']=='instruction':self._guide_instruction=event['text'];return
                 if event['kind']=='begin':
@@ -133,13 +135,15 @@ class AttentionUI:
                 elif guide_started[0]!=self.service.started_ns:return
                 elif event['kind']=='end':
                     self._guide_instruction=''
-                    self.service._put(('acceptance',dict(type='acceptance',kind='cpu_recording',time_ns=event['time_ns'],measurement=event['cpu'])))
                     self.end()
                 else:self.service._put(('acceptance',event))
             self.guide.message.connect(message,Qt.ConnectionType.QueuedConnection)
             self.controls.panel.hide()
             if not QDesktopServices.openUrl(QUrl(self.guide.url)):raise RuntimeError('无法打开本地验收页')
         except Exception as exc:self.notice('无法开始引导：'+str(exc),True)
+
+    def skip_guide_step(self):
+        if self.guide is not None and not self.guide.finished:self.guide.skip(self.guide.flow.index)
 
     def start_screen(self):
         try:self._start()
@@ -181,6 +185,10 @@ class AttentionUI:
 
     def poll(self,*,active,screen_changed,demo_active,now_ns):
         worker=self.service;s=self.session
+        if self.guide is not None and self.guide.requested:
+            self.guide.update_session_state(worker.user_paused,worker._effective_state=='recording' and worker.state=='recording',worker._effective_state=='excluded_app')
+        guide_flow=None if self.guide is None else getattr(self.guide,'flow',None)
+        self.controls.actions['attention_guide_skip'].setEnabled(guide_flow is not None and guide_flow.phase is not None and guide_flow.feedback is None and not self.guide.finished)
         if self.guide is not None and self.guide.requested and not self.guide.armed and worker.state=='recording' and worker.scene_count>0:self.guide.arm()
         if worker.active:
             profile=s.profiles.profile;key=(worker.started_ns,id(profile))
@@ -223,6 +231,10 @@ class AttentionUI:
         if worker.active and not screen_changed:
             badge_text=('● 图片分析 ' if worker.mode=='stimulus' else '● 屏幕分析 ')+names.get(worker.state,worker.state)+f' {seconds}s'
             if self._guide_instruction:badge_text+='\n'+self._guide_instruction
+            font_px=26 if self._guide_instruction else 14
+            if font_px!=self._badge_font_px:
+                self._badge_font_px=font_px
+                self.badge.setStyleSheet(f'background:#9d2435;color:white;padding:8px 14px;font-size:{font_px}px;border-radius:6px;')
             self.badge.setText(badge_text);self.badge.adjustSize()
             rect=s.screen;self.badge.move(rect.x+(rect.width-self.badge.width())//2,rect.y+46)
             if not self.badge.isVisible():

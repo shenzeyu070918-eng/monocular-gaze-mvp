@@ -473,7 +473,9 @@ attention:
   excluded_apps: [1Password, 微信, WeChat]
   guide_excluded_app: 备忘录  # 仅引导期间临时加入排除名单，不改本机配置。
   guide_excluded_bundle: com.apple.Notes
-  guide_action_s: 4          # 每项动作至少4秒；不改变预注册验收门槛。
+  guide_action_s: 4          # 兼容旧配置；自定节奏版不再使用此时间限额。
+  guide_stable_s: 1.5        # 每步完成后持续稳定；无总时间限制。
+  guide_feedback_s: 1.0      # 显示✓/跳过反馈后自动进入下一步。
   output_dir: data/attention
   manual_aoi: null
   ocr_languages: [zh-Hans, en-US]

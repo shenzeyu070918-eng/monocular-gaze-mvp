@@ -22,6 +22,8 @@ class AttentionSettings:
     guide_excluded_app: str = '备忘录'
     guide_excluded_bundle: str = 'com.apple.Notes'
     guide_action_s: float = 4.
+    guide_stable_s: float = 1.5
+    guide_feedback_s: float = 1.
     output_dir: str = 'data/attention'
     manual_aoi: str | None = None
     ocr_languages: tuple = ('zh-Hans','en-US')
@@ -47,7 +49,7 @@ class AttentionSettings:
     aoi_button_height_ratio: float = 3.5
 
     def __post_init__(self):
-        for key in ('capture_hz','stable_ms','min_scene_interval_ms','max_unstable_ms','pixel_delta','scroll_max_horizontal_px','aoi_merge_gap_sigma','screenshot_timeout_s','ocr_timeout_s','aoi_title_height_ratio','aoi_button_height_ratio','guide_action_s'):
+        for key in ('capture_hz','stable_ms','min_scene_interval_ms','max_unstable_ms','pixel_delta','scroll_max_horizontal_px','aoi_merge_gap_sigma','screenshot_timeout_s','ocr_timeout_s','aoi_title_height_ratio','aoi_button_height_ratio','guide_action_s','guide_stable_s','guide_feedback_s'):
             v=getattr(self,key)
             if isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) or v<=0:raise ValueError('attention.'+key+' 必须为有限正数')
         if self.capture_hz>5:raise ValueError('attention.capture_hz 不得超过5')
@@ -65,5 +67,6 @@ class AttentionSettings:
         for key in ('guide_excluded_app','guide_excluded_bundle'):
             if not isinstance(getattr(self,key),str) or not getattr(self,key).strip():raise ValueError('attention.'+key+' 必须为非空字符串')
         if self.guide_action_s<4:raise ValueError('引导动作时间不得少于4秒')
+        if self.guide_stable_s<1.5:raise ValueError('引导稳定保持时间不得少于1.5秒')
         for key in ('excluded_apps','ocr_languages'):
             if not isinstance(getattr(self,key),(list,tuple)) or not all(isinstance(v,str) and v for v in getattr(self,key)):raise ValueError('attention.'+key+' 必须为字符串数组')

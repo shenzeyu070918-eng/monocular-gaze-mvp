@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><title>M9 右侧第二测试标签 · 彩色验证页</title>
+<style>html{background:#502347;color:#fff;font:28px system-ui}body{margin:4vh;display:grid;grid-template-columns:1fr 1fr;gap:3vh}section{padding:4vh;background:#295f83;border:8px solid #f2b84c;height:24vh}h1,#hint{grid-column:1/-1}#hint{position:fixed;bottom:0;background:#162533;padding:18px;left:0;right:0;font-size:22px}section:nth-child(even){background:#925c20}</style>
+<h1>第二测试标签 · 与左侧页面明显不同</h1><section>蓝色验证区 A</section><section>金色验证区 B</section><section>彩色验证区 C</section><section>彩色验证区 D</section><div id="hint">准备完成。现在按 ⌘⇧[ 回到左侧主测试页；切标签阶段再按 ⌘⇧] 过来。</div>
+<script type="module">
+import {phaseAt,instruction} from '/guide-logic.mjs';
+const token=location.hash.slice(1);history.replaceState(null,'','/second');let busy=false;
+async function request(path,data){const r=await fetch(path,{method:data?'POST':'GET',headers:{'X-Attention-Token':token,...(data?{'Content-Type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{})});if(!r.ok)throw Error('引导连接失败');return r.json();}
+async function poll(){if(busy)return;busy=true;try{await request('/observe',{page:'secondary',visible:document.visibilityState==='visible'});const state=await request('/clock');if(state.elapsed_s!==null){const p=phaseAt(state.elapsed_s,state.action_s);document.getElementById('hint').textContent=state.finished?'测试已结束，请回控制面板。':p.phase==='tab'?'停住至少1.5秒，然后按 ⌘⇧[ 返回左侧标签':p.phase?instruction(p.phase,state.excluded_app,state.pause_key):'按 ⌘⇧[ 返回左侧主测试页';}}catch(e){document.getElementById('hint').textContent=e.message;}finally{busy=false;}}
+setInterval(poll,300);poll();
+</script>

@@ -471,6 +471,9 @@ attention:
   queue_size: 256
   hide_ring: true
   excluded_apps: [1Password, 微信, WeChat]
+  guide_excluded_app: 备忘录  # 仅引导期间临时加入排除名单，不改本机配置。
+  guide_excluded_bundle: com.apple.Notes
+  guide_action_s: 4          # 每项动作至少4秒；不改变预注册验收门槛。
   output_dir: data/attention
   manual_aoi: null
   ocr_languages: [zh-Hans, en-US]

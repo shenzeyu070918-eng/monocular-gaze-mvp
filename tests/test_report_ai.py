@@ -24,7 +24,9 @@ def response(p,value=None):
 
 
 class AITests(unittest.TestCase):
-    def artifact(self,root,**options):return build(load_session(session(root)),options=ReportSettings(**options))
+    def artifact(self,root,**options):
+        settings=dict(provider='responses',base_url='https://api.openai.com/v1',model='gpt-6.1-terra',ai_vision_models=('gpt-6.1-terra',),pricing_scheme='flat',input_usd_per_million=1.,cached_usd_per_million=.05,output_usd_per_million=5.)
+        settings.update(options);return build(load_session(session(root)),options=ReportSettings(**settings))
     def test_no_confirmation_zero_dns_http_or_credentials(self):
         with tempfile.TemporaryDirectory() as root,patch('socket.getaddrinfo',side_effect=AssertionError('network forbidden')):
             artifact=self.artifact(root);p=prepare(artifact,['a']);gate=ConsentGate();send=Mock();key=Mock()

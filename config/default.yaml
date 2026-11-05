@@ -538,16 +538,28 @@ report:
   scanpath_gap_s: 0.5
   image_max_width: 1600
   ai_image_max_width: 960
-  provider: responses  # responses / chat（OpenAI兼容接口）
-  base_url: https://api.openai.com/v1
-  model: gpt-6.1-terra
-  key_env: OPENAI_API_KEY  # 只写环境变量名，绝不写密钥
+  provider: chat  # OpenAI兼容协议；DeepSeek仅走Chat Completions
+  base_url: https://api.deepseek.com
+  model: deepseek-flash  # 官方V4.1-Flash-1017；旧vision-exp已退役并转接
+  key_env: DEEPSEEK_API_KEY  # 只写环境变量名
   keychain_service: monocular-gaze-report
-  keychain_account: openai
-  ai_timeout_s: 30.0  # 确认→更新的总预算，含校验与写文件
+  keychain_account: deepseek
+  ai_timeout_s: 30.0  # 确认→更新总预算，含校验与写文件
   ai_max_output_tokens: 3000
-  # 官方标准价格快照；兼容服务需填其价格，未知请设null，不冒充实际账单。
-  input_usd_per_million: 1.0
-  cached_usd_per_million: 0.05
-  output_usd_per_million: 5.0
-  price_date: '2026-11-03'
+  ai_text_only: false  # 确认窗也可切换；不支持图片的模型自动纯文字
+  ai_thinking: false
+  ai_vision_models: [deepseek-flash, deepseek-v4-flash, deepseek-v4-flash-vision-exp]
+  pricing_scheme: deepseek
+  # 2026-11-05官方USD/百万token高峰价；非高峰为半价。均为估算，不是账单。
+  deepseek_prices:
+    deepseek-flash: {input: 0.3, cached: 0.006, output: 1.2}
+    deepseek-v4-pro: {input: 1.32, cached: 0.044, output: 3.96}
+  price_peak_windows_utc: [[1, 4], [6, 10]]
+  price_peak_weekdays: [0, 1, 2, 3, 4]
+  price_offpeak_multiplier: 0.5
+  price_holidays: []  # 中国法定假日；未完整核对的年份，峰时用高价上限并注明可能半价
+  price_holiday_years: []  # 只有填入的年份才表示已完整核对其假日表
+  input_usd_per_million: null  # pricing_scheme: flat时供其它兼容服务使用
+  cached_usd_per_million: null
+  output_usd_per_million: null
+  price_date: '2026-11-05'

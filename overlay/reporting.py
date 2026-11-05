@@ -7,6 +7,7 @@ from PySide6.QtCore import QUrl,Qt
 from PySide6.QtGui import QDesktopServices,QPixmap
 from PySide6.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QLabel,QCheckBox,QDialogButtonBox,QScrollArea,QWidget,QInputDialog,QFileDialog,QMessageBox,QPlainTextEdit,QProgressBar
 from gaze_core.reporting.ai import prepare,ConsentGate,interpret
+from gaze_core.reporting.pricing import image_mode
 from gaze_core.reporting.data import load_session
 from gaze_core.reporting.build import build,atomic
 
@@ -15,7 +16,10 @@ class SendPreview(QDialog):
     """The exact immutable request is prepared again after changing selections."""
     def __init__(self,artifact,parent=None):
         super().__init__(parent);self.artifact=artifact;self.prepared=None;self.setWindowTitle('AI发送前确认 · 可取消场景');self.resize(840,780)
-        layout=QVBoxLayout(self);warning=QLabel('将发送所选场景的截图+热图缩略图和下列统计JSON。截图本身可能含可读文字及敏感内容；OCR JSON默认不发。不会发送摄像头画面、参与者编号、应用名或完整时间线。每次发送需重新确认。');warning.setWordWrap(True);layout.addWidget(warning)
+        layout=QVBoxLayout(self);self.warning=QLabel('将发送所选场景的截图+热图缩略图和下列统计JSON。截图本身可能含可读文字及敏感内容；OCR JSON默认不发。不会发送摄像头画面、参与者编号、应用名或完整时间线。每次发送需重新确认。');self.warning.setWordWrap(True);layout.addWidget(self.warning)
+        supported=not image_mode(artifact.options,False)[0]
+        self.text_only=QCheckBox('纯文字模式：只发送统计JSON与区域短标签，不发送图片')
+        self.text_only.setChecked(image_mode(artifact.options)[0]);self.text_only.setEnabled(supported);layout.addWidget(self.text_only)
         self.ocr=QCheckBox('额外发送所选AOI的OCR文字（默认关闭）');layout.addWidget(self.ocr)
         scroller=QScrollArea();scroller.setWidgetResizable(True);content=QWidget();self.rows=QVBoxLayout(content);scroller.setWidget(content);layout.addWidget(scroller)
         self.checks={};self.images={}
@@ -25,12 +29,17 @@ class SendPreview(QDialog):
         self.fields=QPlainTextEdit();self.fields.setReadOnly(True);self.fields.setMinimumHeight(220);layout.addWidget(self.fields)
         self.status=QLabel();self.status.setWordWrap(True);layout.addWidget(self.status)
         self.buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel);self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText('确认并发送一次');layout.addWidget(self.buttons)
-        self.buttons.accepted.connect(self.accept);self.buttons.rejected.connect(self.reject);self.ocr.toggled.connect(self.refresh);self.refresh()
+        self.buttons.accepted.connect(self.accept);self.buttons.rejected.connect(self.reject);self.ocr.toggled.connect(self.refresh);self.text_only.toggled.connect(self.refresh);self.refresh()
     def refresh(self,*_):
         selected=[key for key,box in self.checks.items() if box.isChecked()]
-        for key,label in self.images.items():label.setVisible(key in selected)
+        pure=image_mode(self.artifact.options,self.text_only.isChecked())[0]
+        if pure:
+            self.ocr.blockSignals(True);self.ocr.setChecked(False);self.ocr.blockSignals(False)
+        self.ocr.setEnabled(not pure)
+        self.warning.setText('纯文字仅发送下列白名单统计和区域短标签（可能摘自OCR或手动名称），不发图片或完整OCR。' if pure else '发送所选场景截图+热图缩略图与统计JSON；截图内文字仍可能被读到。OCR JSON默认关闭。')
+        for key,label in self.images.items():label.setVisible(key in selected and not pure)
         try:
-            self.prepared=prepare(self.artifact,selected,include_ocr=self.ocr.isChecked());p=self.prepared
+            self.prepared=prepare(self.artifact,selected,include_ocr=self.ocr.isChecked(),text_only=self.text_only.isChecked());p=self.prepared
             for key,url in p.thumbnails:
                 pix=QPixmap();pix.loadFromData(base64.b64decode(url.split(',',1)[1]));self.images[key].setPixmap(pix.scaledToWidth(640,Qt.TransformationMode.SmoothTransformation))
             # The actual user content + prompt/schema is shown, with raster bytes
@@ -43,7 +52,7 @@ class SendPreview(QDialog):
                 return v
             self.fields.setPlainText(json.dumps(shrink(body),ensure_ascii=False,indent=2))
             estimate=json.loads(p.estimate_json);cost=estimate['estimated_budget_usd']
-            self.status.setText(f'服务：{p.endpoint}\n模型：{p.model}\n预计输入 {estimate["input_tokens_estimate"]} tokens；输出上限 {estimate["output_token_cap"]}；本地预算 '+('未知' if cost is None else f'${cost:.4f}')+'\n'+estimate['definition']+'\n'+estimate['compat_price_note']);self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
+            self.status.setText(f'Provider：{p.provider_name}\n服务地址：{p.endpoint}\n模型：{p.model}\n模式：{p.mode_reason}\n计价时段：{estimate["period"]}\n预计输入 {estimate["input_tokens_estimate"]} tokens；输出上限 {estimate["output_token_cap"]}；本地预算 '+('未知' if cost is None else f'${cost:.4f}')+'\n'+estimate['definition']+'\n'+estimate['compat_price_note']);self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
         except ValueError as exc:self.prepared=None;self.status.setText(str(exc));self.fields.clear();self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
 
 

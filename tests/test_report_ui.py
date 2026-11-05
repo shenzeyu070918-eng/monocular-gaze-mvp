@@ -41,7 +41,7 @@ class ReportUITests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             artifact=build(load_session(session(root)));window=SendPreview(artifact)
             try:
-                self.assertEqual(window.prepared.selected,('a',));self.assertFalse(window.ocr.isChecked());self.assertIn('gpt-6.1-terra',window.status.text());self.assertIn('max_output_tokens',window.fields.toPlainText())
+                self.assertEqual(window.prepared.selected,('a',));self.assertFalse(window.ocr.isChecked());self.assertIn('DeepSeek',window.status.text());self.assertIn('deepseek-flash',window.status.text());self.assertIn('max_tokens',window.fields.toPlainText())
                 window.checks['a'].setChecked(False);self.assertIsNone(window.prepared);self.assertEqual(window.fields.toPlainText(),'')
                 window.checks['a'].setChecked(True);window.ocr.setChecked(True);self.assertTrue(window.prepared.include_ocr)
             finally:window.close();window.deleteLater()
@@ -63,3 +63,15 @@ class ReportUITests(unittest.TestCase):
                 ui.editors=[editor];ui.poll();self.assertIs(ui.artifact,new);self.assertIn('新派生版本',attention.controls.panel.report_status.text())
                 ui.cancel_editors(path);editor.close.assert_called_once();self.assertEqual(ui.editors,[])
             finally:ui.close();attention.controls.panel.deleteLater()
+
+
+    def test_text_only_checkbox_and_automatic_model_fallback(self):
+        with tempfile.TemporaryDirectory() as root:
+            artifact=build(load_session(session(root)));window=SendPreview(artifact)
+            try:
+                window.text_only.setChecked(True);self.assertTrue(window.prepared.text_only);self.assertEqual(window.prepared.thumbnails,());self.assertFalse(window.ocr.isEnabled());self.assertIn('不发图片',window.warning.text());self.assertIn('DeepSeek',window.status.text())
+            finally:window.close();window.deleteLater()
+            artifact.options=replace(artifact.options,model='deepseek-v4-pro');window=SendPreview(artifact)
+            try:
+                self.assertTrue(window.text_only.isChecked());self.assertFalse(window.text_only.isEnabled());self.assertTrue(window.prepared.text_only);self.assertIn('自动',window.status.text())
+            finally:window.close();window.deleteLater()

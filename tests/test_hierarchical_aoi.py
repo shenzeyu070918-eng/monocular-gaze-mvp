@@ -35,7 +35,7 @@ class HierarchyTests(unittest.TestCase):
         for x in (.1,.6):
             for y in (.1,.16):lines.append(dict(text='内容段落',rect=[x,y,x+.25,y+.04],confidence=.9))
         for text in ('+','十','!','a'):lines.append(dict(text=text,rect=[.45,.2,.48,.24],confidence=.9))
-        mains=primary_regions(blocks(lines,image,dict(sigma_x=.1,sigma_y=.2),AttentionSettings()))
+        mains=primary_regions(blocks(lines,image,dict(sigma_x=.1,sigma_y=.05),AttentionSettings()))
         self.assertEqual(len(mains),2);self.assertTrue(all(r['rect'][2]-r['rect'][0]<.3 for r in mains))
     def test_manual_exact_empty_and_sha_templates(self):
         image,_,lines=eight_cards();manual=[dict(id='hero',name='主图',rect=[.1,.1,.2,.2])]

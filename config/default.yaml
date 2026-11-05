@@ -516,6 +516,12 @@ attention:
   aoi_ocr_min_chars: 2
   aoi_ocr_min_area: 0.00004
   aoi_ocr_min_confidence: 0.25
+  aoi_min_sigma_scale: 2.0  # 自动主AOI两边至少2σ投影；不足合并，单区域不足用整图容器
+  aoi_max_primary: 12
+  aoi_merge_center_weight: 1.0
+  aoi_merge_area_weight: 0.25
+  aoi_image_text_fraction: 0.08
+  aoi_image_visual_fraction: 0.5
   aoi_title_height_ratio: 1.35
   aoi_button_height_ratio: 3.5
   max_dynamic_extent: 0.8

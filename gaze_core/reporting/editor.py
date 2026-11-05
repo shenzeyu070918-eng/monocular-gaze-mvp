@@ -42,10 +42,13 @@ def rebuild(artifact,document,*,share_template=False,cancelled=lambda:False):
     if not known:raise ValueError('本会话没有可编辑场景')
     if 'scenes' in document and (not isinstance(document['scenes'],dict) or set(document['scenes'])!=known):raise ValueError('场景集合与当前报告不一致')
     selected_scenes={}
+    from gaze_core.attention.settings import AttentionSettings
+    maximum=AttentionSettings(**m.get('attention',{})).aoi_max_primary
     for name in known:
         original=document.get('regions') if 'regions' in document else document.get('scenes',{}).get(name)
         if not isinstance(original,list) or any(not isinstance(r,dict) or set(r)-{'id','name','rect'} for r in original):raise ValueError('AOI只接受id、name、rect，不接受图像或任意字段')
         selected=select_document(document,name,m)
+        if selected is not None and len(selected)>maximum:raise ValueError(f'每场景最多{maximum}个主AOI，请在编辑器中合并相邻区域')
         if selected is None:raise ValueError('请为每个场景提供区域列表（可为空）')
         selected_scenes[name]=[dict(id=r['id'],name=r['name'],rect=r['rect']) for r in selected]
     document=dict(schema_version=2,coordinate_space='image_normalized' if m['mode']=='stimulus' else 'full_screen_normalized',**(dict(stimulus_sha256=m['stimulus']['sha256'],regions=next(iter(selected_scenes.values()))) if m['mode']=='stimulus' else dict(scenes=selected_scenes)))

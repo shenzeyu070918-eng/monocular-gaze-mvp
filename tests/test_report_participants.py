@@ -32,7 +32,7 @@ class Participants(unittest.TestCase):
             try:
                 worker.start(profile,{},scale,mode='stimulus',participant_id='P17',stimulus=dict(path=str(path),sha256=hashlib.sha256(path.read_bytes()).hexdigest(),screen_rect=[0,0,1,1],kernel=scale))
                 end=time.monotonic()+2
-                while worker.state=='starting' and time.monotonic()<end:time.sleep(.01)
+                while (worker.state=='starting' or worker.scene_count<1) and time.monotonic()<end:time.sleep(.01)
                 self.assertEqual(worker.state,'recording',worker.error)
-                self.assertEqual(json.loads((worker.path/'session.json').read_text())['participant_id'],'P17')
+                saved=json.loads((worker.path/'session.json').read_text());self.assertEqual(saved['participant_id'],'P17');self.assertEqual(saved['stimulus']['filename'],'image.png')
             finally:worker.close()

@@ -162,7 +162,7 @@ class AttentionSession:
             if source.width*source.height>self.settings.attention.stimulus_max_pixels:raise ValueError('刺激图片像素数超过配置上限')
             pixels=np.asarray(ImageOps.exif_transpose(source).convert('RGB'))
             digest=self._store.write_image('scenes/000001.png',pixels)
-            self._store.metadata.update(stimulus=dict(sha256=hashlib.sha256(raw).hexdigest(),screen_rect=stimulus['screen_rect']),analysis_size=[pixels.shape[1],pixels.shape[0]],kernel=stimulus['kernel'])
+            self._store.metadata.update(stimulus=dict(filename=Path(stimulus['path']).name,sha256=hashlib.sha256(raw).hexdigest(),screen_rect=stimulus['screen_rect']),analysis_size=[pixels.shape[1],pixels.shape[0]],kernel=stimulus['kernel'])
             self._store.write_json('session.json',self._store.metadata)
             self._store.append('scenes.jsonl',dict(type='scene',scene_id='000001',start_ns=metadata['start_ns'],confirmed_ns=self.clock_ns(),image='scenes/000001.png',sha256=digest,app_name='本程序刺激物',dynamic=False))
             self.scene_count=1

@@ -6,6 +6,7 @@ from gaze_core.attention.aoi import primary_regions
 def region_label(region,number,chars=8):
     if region.get('source')=='manual' and region.get('name'):return region['name']
     text=re.sub(r'\s+','',region.get('text',''))
+    if region.get('image_like'):return '图片：'+text[:chars]+('…' if len(text)>chars else '') if text else f'图片区域 {number}'
     return f'区域 {number}'+('：'+text[:chars]+('…' if len(text)>chars else '') if text else '')
 
 

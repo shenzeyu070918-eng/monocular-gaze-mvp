@@ -46,7 +46,7 @@ def main(argv=None):
     out.mkdir(parents=True,exist_ok=True);image_path=out/'poster.png';lines=poster(image_path);settings=load_settings(use_local=False)
     # Simulate a short title → hero → price → CTA scan. This is NOT accuracy data.
     points=[(.3,.13),(.5,.46),(.24,.83),(.73,.83)];scale=dict(sigma_x=.045,sigma_y=.035,sigma_cm=2.,source='synthetic_example',sigma_px=None)
-    metadata=dict(synthetic=True,participant_id='SYNTHETIC',mode='stimulus',start_ns=1_000_000_000,end_ns=13_000_000_000,geometry=asdict(settings.geometry),fixation=asdict(settings.fixation),heatmap=asdict(settings.heatmap),attention=asdict(settings.attention),analysis_size=[1200,1600],kernel=scale,profile=dict(matrix=[[1,0],[0,1],[0,0]],calibration_id='synthetic-not-a-person'),stimulus=dict(sha256=hashlib.sha256(image_path.read_bytes()).hexdigest(),screen_rect=[0,0,1,1]))
+    metadata=dict(synthetic=True,participant_id='SYNTHETIC',mode='stimulus',start_ns=1_000_000_000,end_ns=13_000_000_000,geometry=asdict(settings.geometry),fixation=asdict(settings.fixation),heatmap=asdict(settings.heatmap),attention=asdict(settings.attention),analysis_size=[1200,1600],kernel=scale,profile=dict(matrix=[[1,0],[0,1],[0,0]],calibration_id='synthetic-not-a-person'),stimulus=dict(filename=image_path.name,sha256=hashlib.sha256(image_path.read_bytes()).hexdigest(),screen_rect=[0,0,1,1]))
     run_root=out/'runs'/uuid.uuid4().hex[:12]
     store=SessionStore(run_root,metadata,200*1024*1024)
     try:

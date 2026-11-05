@@ -16,7 +16,7 @@ def validate_regions(rows):
     return result
 
 
-AOI_ALGORITHM_VERSION = 'hierarchical-v2'
+AOI_ALGORITHM_VERSION = 'hierarchical-v3'
 
 
 def primary_regions(rows):
@@ -108,6 +108,50 @@ def text_blocks(lines,scale,options):
     return regions
 
 
+def union_rect(a,b):return [min(a[0],b[0]),min(a[1],b[1]),max(a[2],b[2]),max(a[3],b[3])]
+
+
+def precision_groups(mains,scale,options):
+    """Merge insufficient automatic regions; keep their exact boxes as children.
+
+    Distances use the same image-projected sigma as the heatmap. No coordinate
+    clipping, gaze filtering or kernel sharpening is introduced here.
+    """
+    originals=[dict(r) for r in mains];groups=[dict(r,members=[r['id']]) for r in mains]
+    sx,sy=float(scale['sigma_x']),float(scale['sigma_y']);minimum=(min(1.,sx*options.aoi_min_sigma_scale),min(1.,sy*options.aoi_min_sigma_scale));serial=0
+    def small(r):return r['rect'][2]-r['rect'][0]+1e-12<minimum[0] or r['rect'][3]-r['rect'][1]+1e-12<minimum[1]
+    def score(a,b):
+        x,y,c,d=a['rect'];u,v,z,w=b['rect'];gap=math.hypot(max(u-c,x-z,0)/sx,max(v-d,y-w,0)/sy)
+        center=math.hypot((x+c-u-z)/(2*sx),(y+d-v-w)/(2*sy));union=union_rect(a['rect'],b['rect']);inflation=max(0.,area(union)-area(a['rect'])-area(b['rect']))/max(1e-12,area(a['rect'])+area(b['rect']))
+        contains=b.get('kind')=='visual_container' and intersection(a['rect'],b['rect'])>=area(a['rect'])*(1-1e-9)
+        return (not contains,gap+options.aoi_merge_center_weight*center+options.aoi_merge_area_weight*inflation,a['id'],b['id'])
+    def merge(a,b):
+        nonlocal serial
+        serial+=1;members=a['members']+b['members'];groups.remove(a);groups.remove(b)
+        groups.append(dict(id='group-'+str(serial),rect=union_rect(a['rect'],b['rect']),role='primary',ranked=True,kind='merged_container',source='auto_merge',members=members,merged_ids=members))
+    while len(groups)>1 and any(small(r) for r in groups):
+        source=min((r for r in groups if small(r)),key=lambda r:(area(r['rect']),r['id']));merge(source,min((r for r in groups if r is not source),key=lambda r:score(source,r)))
+    while len(groups)>options.aoi_max_primary:
+        a,b=min(((a,b) for i,a in enumerate(groups) for b in groups[i+1:]),key=lambda pair:score(*pair));merge(a,b)
+    if len(groups)==1 and small(groups[0]):
+        r=groups[0];serial+=1;groups=[dict(r,id='group-'+str(serial),rect=[0.,0.,1.,1.],kind='image_container',source='image_extent',merged_ids=r['members'])]
+    mapping={member:r['id'] for r in groups for member in r['members']}
+    absorbed=[dict(r,role='child',ranked=False,parent_id=mapping[r['id']],original_primary=True) for r in originals if mapping[r['id']]!=r['id']]
+    for r in groups:r['minimum_size']=[*minimum];r['precision_limited']=sx*options.aoi_min_sigma_scale>1 or sy*options.aoi_min_sigma_scale>1
+    return groups,absorbed,mapping,originals
+
+
+def rectangle_union_area(rects):
+    xs=sorted({x for r in rects for x in (r[0],r[2])});total=0.
+    for left,right in zip(xs,xs[1:]):
+        intervals=sorted((r[1],r[3]) for r in rects if r[0]<right and r[2]>left);end=None;length=0.
+        for a,b in intervals:
+            if end is None or a>end:length+=b-a;end=b
+            elif b>end:length+=b-end;end=b
+        total+=(right-left)*length
+    return total
+
+
 def blocks(lines,pixels,scale,options,manual=None):
     """Primary visual/manual blocks with contained OCR as unranked children.
 
@@ -131,10 +175,21 @@ def blocks(lines,pixels,scale,options,manual=None):
         # Their text cannot reliably be assigned to one card; keep the cards.
     if not manual_mode:
         for r in text_blocks(outside,scale,options):mains.append(dict(r,role='primary',ranked=True))
+    if not manual_mode and not mains:
+        mains=[dict(id='image',rect=[0.,0.,1.,1.],kind='image_container',source='image_extent',role='primary',ranked=True)]
+    originals=[dict(r) for r in mains]
+    if not manual_mode:
+        mains,absorbed,mapping,originals=precision_groups(mains,scale,options)
+        for child in children:
+            child['original_parent_id']=child['parent_id'];child['parent_id']=mapping[child['parent_id']]
+        children+=absorbed
     mains.sort(key=lambda r:(round(r['rect'][1]/options.aoi_reading_row_tolerance),r['rect'][0]))
     for r in mains:
-        contained=[c['text'] for c in children if c['parent_id']==r['id']]
-        if contained:r['text']='\n'.join(contained)
+        contained=[line for line in lines if intersection(r['rect'],line['rect'])>=area(line['rect'])*options.aoi_containment]
+        if contained:r['text']='\n'.join(dict.fromkeys(line['text'] for line in contained))
+        r['ocr_area_fraction']=min(1.,rectangle_union_area([line['rect'] for line in contained])/max(1e-12,area(r['rect'])))
+        visual=sum(area(v['rect']) for v in originals if v['id'] in r.get('members',[r['id']]) and v.get('kind')=='visual_container')
+        r['image_like']=not manual_mode and (r.get('kind')=='image_container' or visual>=area(r['rect'])*options.aoi_image_visual_fraction) and r['ocr_area_fraction']<options.aoi_image_text_fraction
         r['algorithm_version']=AOI_ALGORITHM_VERSION
     return validate_regions(mains+children)
 

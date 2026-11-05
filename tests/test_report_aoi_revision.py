@@ -44,7 +44,7 @@ class AOIRevisionTests(unittest.TestCase):
             page=render_editor(artifact.data,options=artifact.options);self.assertIn('data:image/png;base64,',page);self.assertNotIn('<img src=x>',page);self.assertNotIn('type="module"',page);self.assertNotIn('src="http',page)
             doc=dict(schema_version=2,coordinate_space='full_screen_normalized',scenes={'a':[dict(id='body',name='正文与图片',rect=[0,0,1,1])]})
             new=rebuild(artifact,doc);self.assertNotEqual(new.html,artifact.html);self.assertEqual(new.data['scenes'][0]['stats']['regions'][0]['label'],'正文与图片')
-            self.assertTrue(new.data['source_version'].startswith('derived/'));self.assertIn('手动',new.html.read_text());self.assertIn('hierarchical-v2',new.html.read_text())
+            self.assertTrue(new.data['source_version'].startswith('derived/'));self.assertIn('手动',new.html.read_text());self.assertIn('hierarchical-v3',new.html.read_text())
             for name,raw in before.items():self.assertEqual((path/name).read_bytes(),raw)
             deleted=rebuild(new,dict(doc,scenes={'a':[]}));self.assertEqual(deleted.data['scenes'][0]['stats']['regions'],[])
     def test_loopback_auth_origins_and_save_regenerate(self):
@@ -85,3 +85,9 @@ class AOIRevisionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             data=load_session(session(root));data['scenes']=[]
             artifact=build(data);self.assertIn('关键结论',artifact.html.read_text());self.assertIn('暂无可编辑', (artifact.directory/'aoi-editor.html').read_text())
+
+
+    def test_stimulus_filename_and_single_image_description(self):
+        with tempfile.TemporaryDirectory() as root:
+            path=session(root);m=json.loads((path/'session.json').read_text());m['stimulus']['filename']='海报示意.png';(path/'session.json').write_text(json.dumps(m));data=load_session(path);body=render_html(data)
+            self.assertTrue('<h2>海报示意.png</h2>' in body);self.assertFalse('画面切换、滚动' in body);self.assertTrue('同一张图片' in body);self.assertEqual(data['scenes'][0]['filename'],'海报示意.png')

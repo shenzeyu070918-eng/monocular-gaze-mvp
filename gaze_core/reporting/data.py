@@ -78,14 +78,14 @@ def load_session(path,*,derived=None,options=None):
         version=aoi[name].get('algorithm_version',aoi_document.get('algorithm_version','legacy-flat-v1'))
         if template is not None and not (aoi[name].get('manual_source')=='manual_document' and aoi[name].get('manual_scope','session')=='session'):
             template_applied=True
-            defs=select_document(template,name,m);aoi_source='manual';version='hierarchical-v2/template'
+            defs=select_document(template,name,m);aoi_source='manual';version=AOI_ALGORITHM_VERSION+'/template'
             reassigned=AOIStatistics(defs,m['kernel'],m.get('attention',{}).get('soft_grid_width',320),m['analysis_size'][0]/m['analysis_size'][1])
             for row in fixations:
                 if row.get('scene_id')==name and not row.get('excluded_reason'):reassigned.add(row)
             stats=dict(reassigned.snapshot(),scene_id=name,kernel=m['kernel'])
         image=s.read(event['image'])
         if hashlib.sha256(image).hexdigest()!=event['sha256']:raise ValueError('场景截图校验失败：'+name)
-        if version=='legacy-flat-v1':
+        if version in ('legacy-flat-v1','hierarchical-v2'):
             from gaze_core.attention.settings import AttentionSettings
             from gaze_core.attention.manual_aoi import manual_regions
             old_manual=[r for r in primary_regions(defs) if r.get('source')=='manual']
@@ -103,7 +103,7 @@ def load_session(path,*,derived=None,options=None):
             first=r.get('first_fixation_ns');r['first_fixation_s']=None if first is None else (first-event['start_ns'])/1e9
         relevant=[r for r in fixations if r.get('scene_id')==name or r.get('excluded_reason')]
         nodes,total=scanpath(relevant,m['kernel'],options,timeline=timeline)
-        scenes.append(dict(id=name,start_s=(event['start_ns']-start)/1e9,app=event.get('app_name') or event.get('app') or event.get('application'),aoi_source=aoi_source,aoi_algorithm_version=version,dynamic=bool(event.get('dynamic')),stats=dict(stats,regions=rows),regions=defs,image=image,heat=heat,grid=grid,scanpath=nodes,scanpath_total=total,segments=[r for r in fixations if r.get('scene_id')==name and not r.get('excluded_reason')],scene_start_ns=event['start_ns']))
+        scenes.append(dict(id=name,filename=(aoi_document.get('stimulus_filename') or m.get('stimulus',{}).get('filename')) if m['mode']=='stimulus' else None,start_s=(event['start_ns']-start)/1e9,app=event.get('app_name') or event.get('app') or event.get('application'),aoi_source=aoi_source,aoi_algorithm_version=version,dynamic=bool(event.get('dynamic')),stats=dict(stats,regions=rows),regions=defs,image=image,heat=heat,grid=grid,scanpath=nodes,scanpath_total=total,segments=[r for r in fixations if r.get('scene_id')==name and not r.get('excluded_reason')],scene_start_ns=event['start_ns']))
     duration=float(summary.get('duration_s',(end-start)/1e9));valid=float(summary.get('valid_bound_fixation_s',0))
     state_intervals=[]
     for i,e in enumerate(timeline.states):
@@ -124,7 +124,7 @@ def load_session(path,*,derived=None,options=None):
             if interval['end_s']>interval['start_s']:state_intervals.append(interval)
     for a,b in timeline.uncertain:state_intervals.append(dict(kind='transition_uncertain',start_s=max(0,(a-start)/1e9),end_s=min(duration,(b-start)/1e9)))
     warnings=list(summary.get('warnings',[]))+s.warnings
-    if migrated:warnings.append('旧版平面AOI已用缓存OCR与已绑定注视在本报告中重建为hierarchical-v2；源文件未改。可用attention_session.py --rebind保存完整派生版本。')
+    if migrated:warnings.append('旧版AOI已用缓存OCR与已绑定注视在本报告中重建为'+AOI_ALGORITHM_VERSION+'；源文件未改。可用attention_session.py --rebind保存完整派生版本。')
     if m.get('state')=='error':warnings.append('原会话异常结束：'+str(m.get('error') or m.get('reason')))
     if derived:warnings.append('明确选用离线恢复版本：'+str(derived)+'；未改写原会话及M9验收')
     if not scenes:warnings.append('会话没有可分析场景；无数据不等于零注意')

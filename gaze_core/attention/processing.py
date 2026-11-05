@@ -96,7 +96,7 @@ def process_session(store,options,*,reocr=True,prefix='',ocr_function=None,cance
         store.write_bytes(prefix+f'heatmaps/{name}.csv',('\n'.join(','.join(format(v,'.12g') for v in row) for row in grid)+'\n').encode())
         rgba=render_heatmap(grid,size,max_opacity=heat.max_opacity,alpha_threshold=heat.alpha_threshold,render_scale=heat.render_scale,dither_strength=heat.dither_strength)
         store.write_image(prefix+f'heatmaps/{name}.png',rgba);results[name]=result
-    store.write_json(prefix+'aoi.json',dict(schema_version=2,algorithm_version=AOI_ALGORITHM_VERSION,scenes=aoi))
+    store.write_json(prefix+'aoi.json',dict(schema_version=2,algorithm_version=AOI_ALGORITHM_VERSION,stimulus_filename=metadata.get('stimulus',{}).get('filename'),filename_source=metadata.get('stimulus',{}).get('filename_source','recorded'),scenes=aoi))
     summary=dict(timeline.summary(),aoi_algorithm_version=AOI_ALGORITHM_VERSION,synthetic_input=bool(metadata.get('synthetic',False)),scene_count=len(scenes),bound_fixation_parts=bound_count,
                  valid_bound_fixation_s=sum(s['valid_fixation_s'] for s in results.values()),excluded_fixation_s=excluded,
                  frame_interval_state_s=state_durations,ocr_ms=ocr_times,warnings=warnings,

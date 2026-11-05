@@ -71,9 +71,10 @@ def render_html(data,*,options=None,ai=None,ai_reason='尚未请求AI解读；�
     options=options or ReportSettings();aggregate=data['kind']=='aggregate'
     title='刺激物注意力汇总' if aggregate else '刺激物注意力报告' if data['mode']=='stimulus' else '屏幕注意力报告'
     ordered_scenes=sorted(data['scenes'],key=lambda s:(-s['stats'].get('valid_fixation_s',0),s['id'])) if data['mode']=='screen' else data['scenes']
+    deck=('记录的是这张图片上的块级注意力分配；热图和区域统计对应同一张图片。停留不代表理解或偏好。' if data['mode']=='stimulus' else '记录的是屏幕区域上的注意力分配。画面切换、滚动会让同一位置对应不同内容；停留不代表理解或偏好。')
     parts=['<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">',
            '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; font-src \'none\'; connect-src \'none\'; base-uri \'none\'; form-action \'none\'">',f'<title>{title}</title><style>{STYLE}</style></head><body><main>',f'<div class="eyebrow">屏幕注意力分析助手 · 本地统计'+(' · 合成示例，非实测' if data['metadata'].get('synthetic') else '')+f'</div><h1>{title}</h1>',
-           '<p class="deck">记录的是屏幕区域上的注意力分配。画面切换、滚动会让同一位置对应不同内容；停留不代表理解或偏好。</p>',
+           '<p class="deck">'+esc(deck)+'</p>',
            (scene_overview(ordered_scenes,options) if data['mode']=='screen' else '')+'<h2>关键结论</h2><section class="key">'+''.join(f'<div class="fact"><b>{esc(v)}</b><span>{esc(k)}</span></div>' for k,v in cards(data))+'</section>']
     if aggregate:parts.append(f'<p>匿名参与者 N_total = {data["N_total"]}；有效参与者 N_valid = {data["N_valid"]}。'+('仅一人数据，不作群体推断。' if data['N_total']==1 else '每人等权，不按会话数或注视时长加权。')+'</p>')
     else:parts.append(f'<p>模式：{("图片刺激物" if data["mode"]=="stimulus" else "屏幕")} · 匿名编号：{esc(data.get("participant_id") or "旧会话未记录")}<br>不确定区间占比：{pct(data["summary"].get("uncertain_fraction"))}。有效注视覆盖率 = 已绑定有效注视时长 ÷ 会话墙钟时长。</p>')
@@ -87,7 +88,8 @@ def render_html(data,*,options=None,ai=None,ai_reason='尚未请求AI解读；�
         name=esc(s['id']);app=s.get('app') or ('应用名未记录' if screen else '图片刺激物')
         if screen:
             parts.append('<details class="scene-detail" id="scene-'+name+'"'+(' open' if expanded<options.scene_expand_count else '')+'><summary>场景 '+name+' · '+fmt(s['stats'].get('valid_fixation_s'),' 秒有效注视')+' · '+esc(app)+'</summary>');expanded+=1
-        parts.append(f'<section><h2>场景 {name}</h2><p class="meta">起点 {fmt(s.get("start_s")," 秒")} · {esc(app)}'+(' · 动态场景' if s.get('dynamic') else '')+'</p>')
+        scene_title='场景 '+name if screen else esc(s.get('filename') or data['metadata'].get('stimulus',{}).get('filename') or '刺激图片（原文件名未记录）')
+        parts.append(f'<section><h2>{scene_title}</h2><p class="meta">起点 {fmt(s.get("start_s")," 秒")} · {esc(app)}'+(' · 动态场景' if s.get('dynamic') else '')+'</p>')
         parts.append('<p class="meta">AOI 来源：'+('手动' if s.get('aoi_source')=='manual' else '自动')+' · 版本 '+esc(s.get('aoi_algorithm_version','legacy-flat-v1'))+'；只对主 AOI 排名，文字子 AOI 不重复计时。</p>')
         image_size=Image.open(io.BytesIO(s['image'])).size
         parts.append('<div class="scene-analysis'+(' portrait' if image_size[1]>image_size[0] else '')+'">')

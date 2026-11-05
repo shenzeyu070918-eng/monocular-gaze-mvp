@@ -37,13 +37,12 @@ python tools/attention_report.py data/attention/<会话1> data/attention/<会话
 
 统计报告和 CLI 完全不需要网络或密钥。AI 仅从运行中的控制面板「AI解读当前报告」进入；离线 HTML 没有联网能力，也不含密钥。备份报告双击即可看统计。
 
-配置在 `report`，可用 `config/local.yaml` 覆盖：`provider: responses / chat`、`base_url`、`model`。默认 `gpt-6.1-terra`：依据 [官方模型页](https://developers.openai.com/api/docs/models/gpt-6.1-terra) 支持图像与结构化输出；[标准价格快照](https://developers.openai.com/api/docs/pricing)（2026-11-03）为输入 $1、缓存输入 $0.05、输出 $5 / 百万 token。兼容服务须填写自身单价；不确定就将三个单价设为 null，不能把 OpenAI 单价当作其它服务账单。
+配置在 `report`，可用 `config/local.yaml` 覆盖。当前默认第一方DeepSeek：`provider: chat`、`base_url: https://api.deepseek.com`、正式图片模型`deepseek-flash`，默认关闭思考；不支持图片的模型自动纯文字。查证日期2026-11-05，模型、JSON、纯文字、当前单价与高峰/非高峰规则见 [DeepSeek接入说明](deepseek-provider.md)。
 
-密钥只从 `report.key_env` 指定的环境变量（默认 `OPENAI_API_KEY`）或 Mac 钥匙串通用密码项读取，服务/账户默认 `monocular-gaze-report` / `openai`。不要把密钥写在 YAML、命令参数、JSON、报告或仓库；本程序不创建含密钥的 `.env` 文件，不打印请求头或完整服务错误。
-
+密钥只从默认环境变量 `DEEPSEEK_API_KEY` 或 Mac钥匙串通用密码项读取，服务/账户为 `monocular-gaze-report` / `deepseek`。不读取旧OpenAI密钥，不把密钥写入YAML、JSON、日志、命令参数或报告。
 确认窗列出服务地址、模型、实际缩略图、完整请求字段及本地 token/费用预算，可取消个别场景。OCR JSON 默认关闭；**截图内的文字仍可能被读到**，请逐图检查。取消场景同时移除其图片、AOI及数值；不发送匿名编号、应用名、完整时间线或其它未选场景汇总。预算采用文本字节和显式图像预算的本地保守算法，不是官方精确计数，也不是费用保证。
 
-确认绑定确切内容、地址、模型、单价和提示词版本，只能使用一次。改内容或重试需新确认，不自动探测模型、不自动重试、不跟随服务重定向。请求 `store:false`，并不据此承诺兼容服务的数据保留政策。
+确认绑定确切内容、地址、模型、单价和提示词版本，只能使用一次。改内容或重试需新确认，不自动探测模型、不自动重试、不跟随服务重定向。DeepSeek不传`store`；本项目不据此推定服务端存储策略。
 
 AI 用中文给设计者建议。每条总结、发现、建议带 `metric_id/value/unit`，正文用证据占位符，由本地数字填入；拒绝数值、单位、人数或场景不一致、无引用、单人泛化和格式错误。它仍可能在语义上误读，不能替代设计者判断。报告记录模型、时间、提示词版本、数据版本、usage、价格快照及核算费用；usage、缓存明细或价格缺失时费用为未知，不能填零或冒充实际账单。
 
@@ -67,9 +66,9 @@ Windows 截屏仍未实现；在已有M9目录上的离线报告/PDF、Windows�
 
 ## 2026-11-05 预审修正：层级 AOI 与本地编辑
 
-自动AOI算法版本为 `hierarchical-v2`，AOI JSON schema为2。先用OpenCV识别矩形卡片、图片/色块容器，再把内部OCR文字归为 `role: child, ranked: false` 子区域；统计与排名只使用主区域，避免父子双计时。检测保留细边框，去重嵌套边缘；圆形产品零件不直接当矩形，宽主图内少量小矩形也不会把主图误当页面包装层。容器外文字按列合并，过滤纯符号、过短、低置信度和过小OCR结果。参数均在 `attention.aoi_*`。
+当前自动AOI算法版本为 `hierarchical-v3`（包含下述v2层级及新增精度尺寸合并），AOI JSON schema为2。先用OpenCV识别矩形卡片、图片/色块容器，再把内部OCR文字归为 `role: child, ranked: false` 子区域；统计与排名只使用主区域，避免父子双计时。检测保留细边框，去重嵌套边缘；圆形产品零件不直接当矩形，宽主图内少量小矩形也不会把主图误当页面包装层。容器外文字按列合并，过滤纯符号、过短、低置信度和过小OCR结果。参数均在 `attention.aoi_*`。
 
-旧平面AOI报告会用原截图、缓存OCR和已绑定注视只读重建，并在报告中标注 `hierarchical-v2/report-view`；不改原会话。要落一套可检查的完整派生AOI/统计/热图版本，运行：
+旧平面AOI报告会用原截图、缓存OCR和已绑定注视只读重建，并在报告中标注 `hierarchical-v3/report-view`；不改原会话。要落一套可检查的完整派生AOI/统计/热图版本，运行：
 
 ```sh
 python tools/attention_session.py data/attention/<会话id> --rebind
@@ -125,3 +124,20 @@ python tools/render_attention_check.py
 审阅资源位于 `data/report-preview/poster-check/`：`poster-report-summary.png`、`poster-report-scene.png`、`poster-editor.png`、`poster-editor-saved.png`、`browser-check.json`、`latest.json`（最新合成会话与报告路径）。截图有“合成示例·非实测”标记；不得把其中时长、占比当作真人精度。所有生成图、报告、模板和录制均不进git。
 
 预注册门槛保持不变；这次内容与合成检查不代替新的30秒实机时限、真实AI或大屏验收。
+
+
+## 2026-11-05 实机后修正：误差尺度与单图说明
+
+自动主AOI两边默认至少达到 `2 × sigma_x / sigma_y` 的图片归一化投影（`attention.aoi_min_sigma_scale: 2.0`）。不足的合并到包含它的容器或空间邻近区域；超过 `attention.aoi_max_primary: 12` 后继续按邻近合并。原区域作为不重复计时的子区域留痕；孤立小区域只剩一项时使用真实整图容器，不凭空造一个精确小热点。若误差大到超过半张图，只能退到整图尺度。手动矩形仍按用户给定范围保留，新编辑保存同样受主区域数量上限检查。
+
+视觉容器占主导且OCR面积占比低（默认8%）时，以“图片：文字”或“图片区域N”命名，不再把图内小字直接当作内容主名；手动名称优先。相关阈值为 `aoi_image_text_fraction` / `aoi_image_visual_fraction`。自动合并会改变AOI粒度和排名，不代表原注视变准，也不重算校准或改变热图核尺度。
+
+刺激物副标题只说明同一张图片的注意力分配，场景标题显示原图片文件名；新会话只记录文件名，不记录完整路径。旧会话缺失名称时显示未记录；用户可仅为派生结果补录，例如本次用户给定名称：
+
+```sh
+python tools/attention_session.py data/attention/20261105T084115.519756Z-369de32f --rebind --stimulus-name poster-report-scene.png
+```
+
+原会话不写回。该会话是误选旧报告截图后的密集表格用例，不是新海报精度实验；新版37个自动主AOI合并为3个，两边达到当前2σ，未记录注视的主区域从用户所报34个变为0个。有效注视时长和原始文件校验不变，证据 `data/report-preview/369de32f-v3-validation.json`。这只说明粗分区下有注视记录，不能解释为逐个单元格都看过。
+
+用户本次实机报告打开时限/PDF/断网确认取消已记录；新DeepSeek真实调用仍待用户逐次确认后验证，预注册门槛不变。

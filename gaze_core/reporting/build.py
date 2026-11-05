@@ -35,7 +35,11 @@ def build(data,*,options=None,output_root=None,cancelled=lambda:False):
         body=render_html(data,options=options,generated_at=stamp)
         if cancelled():raise InterruptedError('报告已取消')
         atomic(directory/'data.json',(json.dumps(local,ensure_ascii=False,allow_nan=False,indent=2)+'\n').encode())
-        atomic(directory/'report.html',body.encode());manifest['generation_ms']=(time.perf_counter()-began)*1000
+        atomic(directory/'report.html',body.encode())
+        if data['kind']=='session':
+            from .editor import render_editor
+            atomic(directory/'aoi-editor.html',render_editor(data,options=options).encode())
+        manifest['generation_ms']=(time.perf_counter()-began)*1000
         atomic(directory/'manifest.json',json.dumps(manifest,ensure_ascii=False,allow_nan=False,indent=2).encode())
     except BaseException:
         import shutil

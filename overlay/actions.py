@@ -12,6 +12,7 @@ class OverlayActions:
         'demo_practice': '重新练习修正',
         'attention_guide': '注意力引导验收（动作自定节奏）…', 'attention_guide_skip': '跳过当前引导动作（记未执行）', 'attention_start': '开始屏幕注意力会话', 'attention_stimulus': '开始图片刺激物会话…',
         'attention_pause': '暂停/恢复注意力会话', 'attention_end': '结束注意力会话',
+        'report_edit': '编辑 AOI 并重新生成报告…',
         'report_generate': '生成/打开注意力报告', 'report_open': '打开当前离线报告', 'report_ai': 'AI解读当前报告（发送前确认）…',
         'report_pdf': '导出当前报告PDF', 'report_aggregate': '刺激物多人汇总…',
         'attention_ring': '注意力会话显示圆环', 'attention_delete': '删除整个注意力会话…',

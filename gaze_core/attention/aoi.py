@@ -44,6 +44,11 @@ def visual_containers(pixels,options):
         fraction=bw*bh/(w*h)
         if not options.aoi_container_min_area<=fraction<=options.aoi_container_max_area:return
         if max(bw/bh,bh/bw)>options.aoi_container_max_aspect or fill<options.aoi_container_fill:return
+        if source=='opencv_color' and fill<options.aoi_color_rectangular_fill:return
+        if source=='opencv_border':
+            band=max(2,options.aoi_close_px+1);patch=edges[y:y+bh,x:x+bw]>0
+            support=[patch[:band,:].any(axis=0).mean(),patch[-band:,:].any(axis=0).mean(),patch[:,:band].any(axis=1).mean(),patch[:,-band:].any(axis=1).mean()]
+            if sum(v>=options.aoi_border_support for v in support)<options.aoi_border_sides:return
         candidates.append(dict(rect=[x/w,y/h,(x+bw)/w,(y+bh)/h],source=source,kind='visual_container'))
     for contour in contours:
         x,y,bw,bh=cv2.boundingRect(contour)
@@ -62,7 +67,8 @@ def visual_containers(pixels,options):
     kept=[]
     for r in distinct:
         children=[v for v in distinct if v is not r and area(v['rect'])<area(r['rect'])*options.aoi_nested_ratio and intersection(r['rect'],v['rect'])>=area(v['rect'])*options.aoi_containment]
-        if r['rect'][2]-r['rect'][0]>=options.aoi_wrapper_width and len(children)>=2:continue
+        if (r['rect'][2]-r['rect'][0]>=options.aoi_wrapper_width and len(children)>=2
+                and sum(area(v['rect']) for v in children)/area(r['rect'])>=options.aoi_wrapper_child_coverage):continue
         kept.append(r)
     mains=[]
     for r in kept:
@@ -113,16 +119,19 @@ def blocks(lines,pixels,scale,options,manual=None):
         mains=[dict(r,source='manual',role='primary',ranked=True,original_rect=list(r['rect'])) for r in validate_regions(manual)]
     else:
         mains=[dict(r,id='region-'+str(i),role='primary',ranked=True,confidence=None) for i,r in enumerate(visual_containers(pixels,options),1)]
-    children=[];outside=[]
+    children=[];outside=[];used_ids={r['id'] for r in mains}
     for line in lines:
         matches=[r for r in mains if intersection(r['rect'],line['rect'])/area(line['rect'])>=options.aoi_containment]
         if matches:
-            parent=min(matches,key=lambda r:area(r['rect']));child=dict(line,id='child-'+str(len(children)+1),kind='text_child',source='ocr',role='child',ranked=False,parent_id=parent['id']);children.append(child)
+            parent=min(matches,key=lambda r:area(r['rect']));child_id='child-'+str(len(children)+1)
+            while child_id in used_ids:child_id+='-'
+            used_ids.add(child_id);child=dict(line,id=child_id,kind='text_child',source='ocr',role='child',ranked=False,parent_id=parent['id']);children.append(child)
         elif not any(intersection(r['rect'],line['rect'])>0 for r in mains):outside.append(line)
         # OCR boxes crossing multiple containers are not merged across columns.
         # Their text cannot reliably be assigned to one card; keep the cards.
     if not manual_mode:
         for r in text_blocks(outside,scale,options):mains.append(dict(r,role='primary',ranked=True))
+    mains.sort(key=lambda r:(round(r['rect'][1]/options.aoi_reading_row_tolerance),r['rect'][0]))
     for r in mains:
         contained=[c['text'] for c in children if c['parent_id']==r['id']]
         if contained:r['text']='\n'.join(contained)

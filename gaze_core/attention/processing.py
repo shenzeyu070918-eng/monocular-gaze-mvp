@@ -54,7 +54,7 @@ def process_session(store,options,*,reocr=True,prefix='',ocr_function=None,cance
                 ocr_times.append((time.perf_counter_ns()-began)/1e6);check()
             selected,manual_source=resolve_manual(metadata,name,manual,cached.get(name,{}),store.root)
             regions=blocks(lines,pixels,scale,options,selected)
-            aoi[name]=dict(regions=regions,ocr_lines=lines,algorithm_version=AOI_ALGORITHM_VERSION,aoi_source='manual' if selected is not None else 'auto',manual_source=manual_source,
+            aoi[name]=dict(regions=regions,ocr_lines=lines,algorithm_version=AOI_ALGORITHM_VERSION,aoi_source='manual' if selected is not None else 'auto',manual_source=manual_source,manual_scope=(manual.get('template_scope','session') if isinstance(manual,dict) else 'session') if manual_source=='manual_document' else cached.get(name,{}).get('manual_scope','shared'),
                            coordinate_space='image_normalized' if mode=='stimulus' else 'full_screen_normalized',image_sha256=scene['sha256'])
             stats[name]=AOIStatistics(regions,scale,options.soft_grid_width,size[0]/size[1])
             maps[name]=HeatmapAccumulator(heat,size,decay=False,start_s=0.)

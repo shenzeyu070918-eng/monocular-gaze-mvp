@@ -52,3 +52,14 @@ class ReportUITests(unittest.TestCase):
                 ui.artifact=build(load_session(session(root)));__import__('gaze_core.reporting.build',fromlist=['write_ai_status']).write_ai_status(ui.artifact,'AI超时，保留统计报告')
                 self.assertIn('AI超时',ui.artifact.html.read_text());self.assertTrue((ui.artifact.directory/'ai-status.json').exists())
             finally:ui.close();attention.controls.panel.deleteLater()
+
+    def test_editor_rebuild_updates_current_report_and_deletion_closes_helper(self):
+        with tempfile.TemporaryDirectory() as root:
+            attention,ui=self.controls(root)
+            try:
+                path=session(root);old=build(load_session(path));new=build(load_session(path));ui.artifact=old
+                class Editor:pass
+                editor=Editor();editor.revision=1;editor.artifact=new;editor.lock=Mock();editor.lock.locked.return_value=False;editor.close=Mock()
+                ui.editors=[editor];ui.poll();self.assertIs(ui.artifact,new);self.assertIn('新派生版本',attention.controls.panel.report_status.text())
+                ui.cancel_editors(path);editor.close.assert_called_once();self.assertEqual(ui.editors,[])
+            finally:ui.close();attention.controls.panel.deleteLater()

@@ -9,6 +9,10 @@ class ReportSettings:
     scanpath_max_points: int = 80
     scanpath_merge_sigma: float = 0.0
     scanpath_gap_s: float = 0.5
+    scene_expand_count: int = 3
+    scene_min_valid_s: float = 0.5
+    short_label_chars: int = 8
+    editor_idle_s: float = 1800.0
     image_max_width: int = 1600
     ai_image_max_width: int = 960
     provider: str = 'responses'
@@ -29,10 +33,10 @@ class ReportSettings:
             value=getattr(self,name)
             if not isinstance(value,str) or not value.strip() or any(c in value for c in ('\r','\n','\0')):raise ValueError('report.'+name+' 必须为非空单行字符串')
         if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',self.key_env) is None:raise ValueError('key_env只填写环境变量名，不是密钥')
-        for name in ('scanpath_max_points','image_max_width','ai_image_max_width','ai_max_output_tokens'):
+        for name in ('scene_expand_count','short_label_chars','scanpath_max_points','image_max_width','ai_image_max_width','ai_max_output_tokens'):
             value=getattr(self,name)
             if type(value) is not int or value<=0:raise ValueError('report.'+name+' 必须为正整数')
-        for name in ('scanpath_gap_s','ai_timeout_s','scanpath_merge_sigma'):
+        for name in ('scene_min_valid_s','editor_idle_s','scanpath_gap_s','ai_timeout_s','scanpath_merge_sigma'):
             value=getattr(self,name)
             if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or value<0:raise ValueError('report.'+name+' 无效')
         if not 0<self.ai_timeout_s<=30:raise ValueError('AI总预算必须在(0,30]秒内')

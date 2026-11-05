@@ -29,7 +29,7 @@ class ControlPanel(QWidget):
             label.setWordWrap(True); layout.addWidget(label)
         self.buttons = {}
         for name in ('demo','demo_practice','presentation','calibrate','check','load_web','reset','record','clicks','click_session','abort_click_session','autocal',
-                     'heatmap_toggle','heatmap_view','heatmap_clear','heatmap_export','attention_guide','attention_guide_skip','attention_start','attention_stimulus','attention_pause','attention_end','attention_ring','attention_delete','report_generate','report_open','report_ai','report_pdf','report_aggregate','toggle','pause','web','quit'):
+                     'heatmap_toggle','heatmap_view','heatmap_clear','heatmap_export','attention_guide','attention_guide_skip','attention_start','attention_stimulus','attention_pause','attention_end','attention_ring','attention_delete','report_generate','report_edit','report_open','report_ai','report_pdf','report_aggregate','toggle','pause','web','quit'):
             button = QToolButton(self); button.setDefaultAction(actions[name])
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             self.buttons[name] = button; layout.addWidget(button)

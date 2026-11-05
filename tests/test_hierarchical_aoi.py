@@ -59,3 +59,12 @@ class HierarchyTests(unittest.TestCase):
                 self.assertEqual(summary['aoi_algorithm_version'],AOI_ALGORITHM_VERSION)
                 data=json.loads((path/'derived/v2/aoi.json').read_text());self.assertEqual(data['schema_version'],2);self.assertEqual(data['algorithm_version'],AOI_ALGORITHM_VERSION)
             finally:store.close()
+
+    def test_illustration_ellipses_are_not_containers_inside_wide_hero(self):
+        image=np.full((800,1200,3),245,np.uint8);cv2.rectangle(image,(60,100),(1140,700),(160,185,205),3)
+        cv2.ellipse(image,(600,380),(180,180),0,0,360,(30,60,90),18)
+        cv2.ellipse(image,(400,500),(50,100),0,0,360,(30,60,90),-1)
+        cv2.rectangle(image,(210,300),(295,450),(30,60,90),3);cv2.rectangle(image,(910,300),(995,450),(30,60,90),3)
+        from gaze_core.attention.aoi import visual_containers
+        found=visual_containers(image,AttentionSettings())
+        self.assertEqual(len(found),1);self.assertGreater(found[0]['rect'][2]-found[0]['rect'][0],.89)

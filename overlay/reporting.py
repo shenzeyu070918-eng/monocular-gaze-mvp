@@ -50,8 +50,8 @@ class SendPreview(QDialog):
 class ReportUI:
     def __init__(self,attention):
         self.attention=attention;self.controls=attention.controls;self.notice=attention.notice;self.options=attention.session.settings.report
-        self.pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='attention-report');self.future=None;self.cancel=threading.Event();self.artifact=None;self.auto_seen=None;self.closed=False;self.gate=ConsentGate();self.kind=None;self.started=None;self._second=None;self._last_actions=None
-        for name,callback in [('report_generate',self.generate),('report_open',self.open),('report_ai',self.ai),('report_pdf',self.pdf),('report_aggregate',self.aggregate)]:self.controls.actions.connect(name,callback)
+        self.pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='attention-report');self.future=None;self.cancel=threading.Event();self.artifact=None;self.auto_seen=None;self.closed=False;self.gate=ConsentGate();self.kind=None;self.started=None;self._second=None;self._last_actions=None;self.editors=[];self.editor_revisions={}
+        for name,callback in [('report_generate',self.generate),('report_edit',self.edit),('report_open',self.open),('report_ai',self.ai),('report_pdf',self.pdf),('report_aggregate',self.aggregate)]:self.controls.actions.connect(name,callback)
     def _status(self,text):self.controls.panel.report_status.setText(text)
     def _submit(self,kind,callback):
         if self.future is not None:return False
@@ -108,6 +108,11 @@ class ReportUI:
                 value=json.loads(manifest_path.read_text(encoding='utf-8'));value['browser_open_requested_ns']=time.perf_counter_ns();atomic(manifest_path,json.dumps(value,ensure_ascii=False).encode())
             except OSError:pass
         else:self._status('浏览器未能打开；可手动双击 '+str(self.artifact.html))
+    def edit(self):
+        if self.artifact is None or self.future is not None:return
+        if self.artifact.data['kind']=='aggregate':self._status('请先编辑单个会话；同图模板会在再次汇总时复用');return
+        from gaze_core.reporting.editor import EditorBridge
+        self._submit('准备AOI编辑器',lambda:EditorBridge(self.artifact))
     def pdf(self):
         if self.artifact is None:return
         from gaze_core.reporting.pdf import export_pdf
@@ -122,6 +127,9 @@ class ReportUI:
     def poll(self):
         if self.closed:return
         service=self.attention.service
+        for editor in self.editors:
+            if editor.revision!=self.editor_revisions.get(editor,0):
+                self.editor_revisions[editor]=editor.revision;self.artifact=editor.artifact;self._status('AOI已保存，当前报告已切换到新派生版本')
         if service.state=='ended' and service.mode=='stimulus' and service.path is not None and service.path!=self.auto_seen:
             if not self.options.auto_stimulus:self.auto_seen=service.path
             elif self.future is None:
@@ -141,6 +149,8 @@ class ReportUI:
                     if self.kind=='AI解读':
                         if result['ok']:self._status('AI中文解读已校验并更新；未自动重试');self.open()
                         else:self._status(result['reason'])
+                    elif self.kind=='准备AOI编辑器':
+                        self.editors.append(result);QDesktopServices.openUrl(QUrl(result.url));self._status('AOI编辑器已打开；保存可一键重新生成报告')
                     elif self.kind=='导出PDF':self._status('PDF已导出：'+str(result))
                     else:self.artifact=result;self._status('离线报告已生成：'+str(result.html));self.open()
                 except Exception as exc:self._status('报告操作失败：'+('AI服务失败，统计报告保留' if self.kind=='AI解读' else str(exc)))
@@ -148,6 +158,12 @@ class ReportUI:
         if key!=self._last_actions:
             self._last_actions=key
             for name in ('report_generate','report_aggregate'):self.controls.actions[name].setEnabled(key[0] and not key[2])
-            for name in ('report_open','report_pdf','report_ai'):self.controls.actions[name].setEnabled(key[0] and key[1])
+            for name in ('report_edit','report_open','report_pdf','report_ai'):self.controls.actions[name].setEnabled(key[0] and key[1])
+    @property
+    def busy_editing(self):return any(editor.lock.locked() for editor in self.editors)
+    def cancel_editors(self,path):
+        for editor in list(self.editors):
+            if Path(editor.artifact.data['source_root'])==Path(path).resolve():editor.close();self.editors.remove(editor);self.editor_revisions.pop(editor,None)
     def close(self):
+        for editor in self.editors:editor.close()
         self.closed=True;self.cancel.set();self.gate.revoke();self.pool.shutdown(wait=False,cancel_futures=True)

@@ -502,11 +502,15 @@ attention:
   aoi_container_min_area: 0.006
   aoi_container_max_area: 0.85
   aoi_container_fill: 0.75
+  aoi_border_support: 0.6
+  aoi_border_sides: 3
+  aoi_color_rectangular_fill: 0.85
   aoi_container_iou: 0.85
   aoi_container_max_aspect: 12.0
   aoi_nested_ratio: 0.9
   aoi_containment: 0.9
   aoi_wrapper_width: 0.85
+  aoi_wrapper_child_coverage: 0.5
   aoi_reading_row_tolerance: 0.02
   aoi_column_width_ratio: 1.35
   aoi_ocr_min_chars: 2
@@ -519,6 +523,10 @@ attention:
 # M10：统计报告完全离线；AI只在每次预览确认后发送，无自动重试。
 report:
   auto_stimulus: true
+  scene_expand_count: 3
+  scene_min_valid_s: 0.5
+  short_label_chars: 8
+  editor_idle_s: 1800.0  # 本机编辑辅助服务空闲后关闭；单文件仍可编辑/导出JSON
   scanpath_max_points: 80
   scanpath_merge_sigma: 0.0  # 0不合并；仅影响路径图，不影响统计
   scanpath_gap_s: 0.5

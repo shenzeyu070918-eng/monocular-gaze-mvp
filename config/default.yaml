@@ -497,6 +497,21 @@ attention:
   ocr_timeout_s: 120
   stimulus_max_pixels: 32000000
   stimulus_max_mb: 64
+  # hierarchical-v2：保留细边框，先视觉容器、后OCR子区域；子区域不重复排名。
+  aoi_detection_width: 1280
+  aoi_container_min_area: 0.006
+  aoi_container_max_area: 0.85
+  aoi_container_fill: 0.75
+  aoi_container_iou: 0.85
+  aoi_container_max_aspect: 12.0
+  aoi_nested_ratio: 0.9
+  aoi_containment: 0.9
+  aoi_wrapper_width: 0.85
+  aoi_reading_row_tolerance: 0.02
+  aoi_column_width_ratio: 1.35
+  aoi_ocr_min_chars: 2
+  aoi_ocr_min_area: 0.00004
+  aoi_ocr_min_confidence: 0.25
   aoi_title_height_ratio: 1.35
   aoi_button_height_ratio: 3.5
   max_dynamic_extent: 0.8

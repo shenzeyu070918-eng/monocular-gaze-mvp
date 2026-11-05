@@ -74,7 +74,7 @@ class AttentionTests(unittest.TestCase):
         regions=blocks(lines,np.zeros((200,320,3),np.uint8),dict(sigma_x=.1,sigma_y=.1),AttentionSettings())
         self.assertEqual(len(regions),1);self.assertEqual(regions[0]['kind'],'paragraph_candidate')
         merged=blocks(lines,np.zeros((200,320,3),np.uint8),dict(sigma_x=.1,sigma_y=.1),AttentionSettings(),[dict(id='manual',rect=[.41,.15,.43,.18])])
-        self.assertEqual(len(merged),1);self.assertEqual(merged[0]['source'],'manual');self.assertIn('merged_ids',merged[0])
+        self.assertEqual(len(merged),1);self.assertEqual(merged[0]['source'],'manual');self.assertEqual(merged[0]['rect'],[.41,.15,.43,.18])
     def test_gaussian_edge_mass_is_not_renormalized_into_regions(self):
         stats=AOIStatistics([dict(id='all',rect=[0,0,1,1])],dict(sigma_x=.1,sigma_y=.1),80)
         stats.add(dict(start_ns=0,end_ns=1000000000,center=[0,0]));s=stats.snapshot()

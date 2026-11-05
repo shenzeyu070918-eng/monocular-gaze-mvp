@@ -3,8 +3,10 @@ name: 同学测试反馈
 about: 安装、运行、精度或稳定性问题
 title: '[测试反馈] '
 labels: ''
-assignees: ''
+assignees: shenzeyu070918-eng
 ---
+
+负责人：@shenzeyu070918-eng。
 
 请使用代号，不提交真实姓名、人脸照片或原始个人测试 CSV。
 

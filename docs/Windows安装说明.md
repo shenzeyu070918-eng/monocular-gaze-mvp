@@ -10,7 +10,7 @@
 py -3.12 setup_mvp.py --overlay
 ```
 
-仅使用网页时可省略`--overlay`。RTX 5070沿用README的`--torch-build cu130`选项。更新本修复后也要重新执行安装命令，让`vendor/ptgaze`中的修复重新安装到项目环境；不要手动修改`.venv`中的源码，重装时会被覆盖。
+仅使用网页时可省略`--overlay`。RTX 5070使用`py -3.12 setup_mvp.py --overlay --torch-build cu130`，详见[使用手册](使用手册.md)。更新本修复后也要重新执行安装命令，让`vendor/ptgaze`中的修复重新安装到项目环境；不要手动修改`.venv`中的源码，重装时会被覆盖。
 
 如果已安装Python，但`py -3.12`找不到它，使用实际安装位置的完整路径。以下路径只是示例，必须替换为本机Python 3.12的路径：
 

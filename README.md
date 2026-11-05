@@ -12,7 +12,7 @@
 | --- | --- |
 | `python3.12 setup_mvp.py --overlay` | `py -3.12 setup_mvp.py --overlay` |
 
-首次下载依赖和模型不保证 30 秒完成。[安装与完整用法](docs/使用手册.md) · [Windows 排错](docs/Windows安装说明.md) · [现有 Release](https://github.com/shenzeyu070918-eng/monocular-gaze-mvp/releases)（目前仅 v0.1.0 历史基线，不含后续功能）。Pages 尚未发布；无摄像头预览见下方验收路径。
+首次下载依赖和模型不保证 30 秒完成。[安装与完整用法](docs/使用手册.md) · [Windows 排错](docs/Windows安装说明.md) · [现有 Release](https://github.com/shenzeyu070918-eng/monocular-gaze-mvp/releases)（v1.0.0 已发布，含 M0–M9，不含 M10）。[在线星系预览](https://shenzeyu070918-eng.github.io/monocular-gaze-mvp/galaxy/?preview) · [合成海报报告（非实测）](https://shenzeyu070918-eng.github.io/monocular-gaze-mvp/report.html)。无需摄像头，M10报告仅样式示例。
 
 ## 3 分钟验收路径
 

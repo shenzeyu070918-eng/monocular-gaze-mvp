@@ -64,3 +64,64 @@ Windows 截屏仍未实现；在已有M9目录上的离线报告/PDF、Windows�
 色板：背景 `#F2F7FC`、文字 `#102F50`、重点 `#215E93`、提示 `#D78220`、纸面 `#FFFFFF`、次级文字 `#4E657A`。中文使用本机苹方/微软雅黑等，不下载字体。左对齐、五个结论为主层次；投影标题48px、关键值42px、正文22px，表格18px；A4独立10.5pt打印样式。没有装饰动画。
 
 `gaze_core/reporting`：只读数据适配、路径显示、汇总、HTML/PDF、证据白名单/确认/凭据/provider；`overlay/reporting.py`：原生预览、后台任务、轻量结果轮询；`tools/attention_report.py`：只离线。所有AI自动测试用模拟transport，不调用真实服务，不用真实模型耗时替代预注册实测。
+
+## 2026-11-05 预审修正：层级 AOI 与本地编辑
+
+自动AOI算法版本为 `hierarchical-v2`，AOI JSON schema为2。先用OpenCV识别矩形卡片、图片/色块容器，再把内部OCR文字归为 `role: child, ranked: false` 子区域；统计与排名只使用主区域，避免父子双计时。检测保留细边框，去重嵌套边缘；圆形产品零件不直接当矩形，宽主图内少量小矩形也不会把主图误当页面包装层。容器外文字按列合并，过滤纯符号、过短、低置信度和过小OCR结果。参数均在 `attention.aoi_*`。
+
+旧平面AOI报告会用原截图、缓存OCR和已绑定注视只读重建，并在报告中标注 `hierarchical-v2/report-view`；不改原会话。要落一套可检查的完整派生AOI/统计/热图版本，运行：
+
+```sh
+python tools/attention_session.py data/attention/<会话id> --rebind
+python tools/attention_report.py data/attention/<会话id> --derived derived/<上一步版本> --open
+```
+
+`--rebind`复用本地缓存OCR，不需重新识别或联网；缺OCR时保留警告，可另用 `--reocr` 补跑本地Vision。旧 `aoi.json`、原统计、原录制及预注册判定保持原样。
+
+### 手动编辑
+
+在控制面板生成/选择报告后，点击 **「编辑 AOI 并重新生成报告」**，或：
+
+```sh
+python tools/attention_report.py data/attention/<会话id> --edit
+```
+
+浏览器打开本机编辑页：空白拖框新建、已有框可拖动、四角可缩放、右侧改名/删除；Delete仅在本页面且不在输入框中时删除所选区域，没有全局键盘监听。**「保存手动 AOI JSON」** 导出只有名称和归一化矩形的JSON；**「保存并重新生成报告」** 直接写新派生版本、重新归属并打开新报告，原文件保留。修改后核对面板的当前报告也会指向新版本；旧AI解读不直接套到新统计上。
+
+每份单会话报告旁都有 `aoi-editor.html`，图片、脚本全部内嵌，是可独立打开的离线单文件。单独复制/辅助服务已关闭时仍能编辑、导入和导出JSON；一键调用Python重生成须从项目的编辑入口打开。本机辅助服务只绑定127.0.0.1，随机令牌、来源及字段白名单校验，无外部资源或API请求；退出时关闭，默认空闲30分钟关闭（`report.editor_idle_s`）。没有任何图片随保存请求发送，只有当前场景的id/name/rect。
+
+也可将下载的JSON用于离线命令：
+
+```sh
+python tools/attention_session.py data/attention/<会话id> --rebind --manual-aoi data/manual-aoi.json
+```
+
+手动矩形是完整替换，**空列表表示有意删除全部AOI**，不会被自动检测复活，也不会为吞并文字而改动手画范围。名称原样作为短标签，报告标注手动来源。
+
+### 海报模板与多人
+
+刺激物编辑器默认勾选「按图片SHA256复用」。模板只存矩形与名称，位于 `data/attention/aoi-templates/<原图片SHA256>.json`。以后整理同图刺激物、打开旧会话重新生成报告、多人汇总时自动使用；多人仍把每个人的原始已绑定注视按同一个模板重新归属，人数与等权分母不变。原来已生成的静态HTML不会追溯改写。
+
+取消共享只影响该会话的派生版本；明确的会话专用手动范围优先于共享模板。多人汇总默认仍使用共享模板，或使用 `--aoi-template` 明确给定的统一矩形。要改汇总区域，先编辑任一单会话并共享，再重新汇总。共享模板独立于某个会话，删除单个会话不会自动删除共享模板；不再需要可删除该模板JSON。
+
+新版手动JSON标明 `schema_version: 2` 与坐标空间：屏幕为 `full_screen_normalized`、按场景存 `scenes`；刺激物为 `image_normalized`，附 `stimulus_sha256` 和 `regions`。编辑器自动填写，不需手写SHA256。旧矩形列表/场景映射仍可由M9离线工具读取。
+
+### 展示口径与审阅图
+
+- 图上只编号主区域，自动短标签为「区域N：前8字…」，手动用所命名标签；图、表与关键结论保持一致，来源自动/手动明确。
+- 屏幕模式的“未记录硬归属注视的区域数”仅统计有效注视停留最多的一个场景，并写明场景id，不跨场景相加。
+- 屏幕模式顶部缩略图按有效注视时长排序；默认展开前三个，其他可点标题展开；不足0.5秒只保留总览。`report.scene_expand_count` / `scene_min_valid_s` / `short_label_chars` 可调。应用名读M9的 `app_name`，缺失显示“应用名未记录”，不再显示成图片刺激物。
+- 竖版海报的场景图与AOI表并排。打印/PDF另设样式，折叠场景在打印时展开。
+
+可重复的**合成检查**（不含摄像头、屏幕截图或AI请求）：
+
+```sh
+python tools/check_attention_report.py --vision
+python tools/render_attention_check.py
+```
+
+第一条自绘含标题、耳机主图、价格、按钮的示意海报，Mac可用本地Vision读取文字，注视序列始终是合成数据；每次隔离模板目录以免测试互相污染。第二条仅接受标记synthetic的会话，用独立Chrome生成截图并实测浏览器拖框/改名/下载JSON/一键重生成，拒绝渲染个人真实截图。
+
+审阅资源位于 `data/report-preview/poster-check/`：`poster-report-summary.png`、`poster-report-scene.png`、`poster-editor.png`、`poster-editor-saved.png`、`browser-check.json`、`latest.json`（最新合成会话与报告路径）。截图有“合成示例·非实测”标记；不得把其中时长、占比当作真人精度。所有生成图、报告、模板和录制均不进git。
+
+预注册门槛保持不变；这次内容与合成检查不代替新的30秒实机时限、真实AI或大屏验收。

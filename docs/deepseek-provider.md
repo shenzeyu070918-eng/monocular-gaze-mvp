@@ -1,6 +1,6 @@
 # M10 DeepSeek 接入与价格查证
 
-查证日期：**2026-11-05**。仅查阅DeepSeek第一方公开文档；未调用模型、余额或模型列表API，未发送任何会话数据。
+查证日期：**2026-11-06**。仅查阅DeepSeek第一方公开文档；未调用模型、余额或模型列表API，未发送任何会话数据。
 
 ## 正式模型与地址
 
@@ -28,6 +28,14 @@ report:
 
 环境变量和钥匙串账户独立于旧OpenAI配置，不回退读取旧密钥。更新代码后重新启动悬浮层以载入默认值；`config/local.yaml`中的同名项仍优先。密钥不写入YAML、JSON、日志或报告。
 
+## 在 macOS 钥匙串保存 API key
+
+1. 用 Spotlight 打开「钥匙串访问」，选左栏的「登录」钥匙串。
+2. 按 `⌘N` 新建密码项目。项目名称填 `monocular-gaze-report`，账户名称填 `deepseek`，将 API key 粘贴到密码栏，再点「添加」。已有同名同账户项目时，编辑其密码即可。
+3. 重新启动 `m10-report` 分支的悬浮层。如果 macOS 询问是否允许 `security` 读取该项目，核对名称后选择「允许」。
+
+把 key 只粘贴到钥匙串的密码栏。配置文件只需保存服务和账户名称。这样 key 留在加密钥匙串中，终端历史也只有你正常使用的启动命令。启动环境若已有 `DEEPSEEK_API_KEY`，应用会优先使用该变量。 [Apple 钥匙串快捷键](https://support.apple.com/en-ca/guide/keychain-access/kyca699a9058/mac) · [Apple 钥匙串访问授权](https://support.apple.com/en-gb/guide/mac-help/kychn002/26/mac/26)
+
 ## 请求格式与本地校验
 
 按[Chat Completions参考](https://api-docs.deepseek.com/api/create-chat-completion/)与[JSON Output指南](https://api-docs.deepseek.com/guides/json_mode/)，DeepSeek请求使用：
@@ -51,7 +59,7 @@ JSON模式只保证语法倾向，不替代本地验证。中文、结构/键、
 
 ## 当前单价与时段
 
-以下均为**USD / 百万token**，来源：[官方模型/价格页](https://api-docs.deepseek.com/quick_start/pricing/)，快照2026-11-05。
+以下均为**USD / 百万token**，来源：[官方模型/价格页](https://api-docs.deepseek.com/quick_start/pricing/)，配置价格快照2026-11-05，2026-11-06复核一致。
 
 | 模型 | 高峰输入（未命中） | 高峰输入（命中） | 高峰输出 | 非高峰输入（未命中） | 非高峰输入（命中） | 非高峰输出 |
 |---|---:|---:|---:|---:|---:|---:|

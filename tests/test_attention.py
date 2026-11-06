@@ -72,9 +72,10 @@ class AttentionTests(unittest.TestCase):
     def test_aoi_lines_merge_and_small_manual_regions_keep_trace(self):
         lines=[dict(text='标题',rect=[.1,.1,.4,.15],confidence=.9),dict(text='正文',rect=[.1,.18,.4,.23],confidence=.9)]
         regions=blocks(lines,np.zeros((200,320,3),np.uint8),dict(sigma_x=.1,sigma_y=.1),AttentionSettings())
-        self.assertEqual(len(regions),1);self.assertEqual(regions[0]['kind'],'paragraph_candidate')
+        from gaze_core.attention.aoi import primary_regions
+        self.assertEqual(len(primary_regions(regions)),1);self.assertGreaterEqual(primary_regions(regions)[0]['rect'][3]-primary_regions(regions)[0]['rect'][1],.2)
         merged=blocks(lines,np.zeros((200,320,3),np.uint8),dict(sigma_x=.1,sigma_y=.1),AttentionSettings(),[dict(id='manual',rect=[.41,.15,.43,.18])])
-        self.assertEqual(len(merged),1);self.assertEqual(merged[0]['source'],'manual');self.assertIn('merged_ids',merged[0])
+        self.assertEqual(len(merged),1);self.assertEqual(merged[0]['source'],'manual');self.assertEqual(merged[0]['rect'],[.41,.15,.43,.18])
     def test_gaussian_edge_mass_is_not_renormalized_into_regions(self):
         stats=AOIStatistics([dict(id='all',rect=[0,0,1,1])],dict(sigma_x=.1,sigma_y=.1),80)
         stats.add(dict(start_ns=0,end_ns=1000000000,center=[0,0]));s=stats.snapshot()

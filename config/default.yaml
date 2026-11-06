@@ -497,6 +497,69 @@ attention:
   ocr_timeout_s: 120
   stimulus_max_pixels: 32000000
   stimulus_max_mb: 64
+  # hierarchical-v2：保留细边框，先视觉容器、后OCR子区域；子区域不重复排名。
+  aoi_detection_width: 1280
+  aoi_container_min_area: 0.006
+  aoi_container_max_area: 0.85
+  aoi_container_fill: 0.75
+  aoi_border_support: 0.6
+  aoi_border_sides: 3
+  aoi_color_rectangular_fill: 0.85
+  aoi_container_iou: 0.85
+  aoi_container_max_aspect: 12.0
+  aoi_nested_ratio: 0.9
+  aoi_containment: 0.9
+  aoi_wrapper_width: 0.85
+  aoi_wrapper_child_coverage: 0.5
+  aoi_reading_row_tolerance: 0.02
+  aoi_column_width_ratio: 1.35
+  aoi_ocr_min_chars: 2
+  aoi_ocr_min_area: 0.00004
+  aoi_ocr_min_confidence: 0.25
+  aoi_min_sigma_scale: 2.0  # 自动主AOI两边至少2σ投影；不足合并，单区域不足用整图容器
+  aoi_max_primary: 12
+  aoi_merge_center_weight: 1.0
+  aoi_merge_area_weight: 0.25
+  aoi_image_text_fraction: 0.08
+  aoi_image_visual_fraction: 0.5
   aoi_title_height_ratio: 1.35
   aoi_button_height_ratio: 3.5
   max_dynamic_extent: 0.8
+
+# M10：统计报告完全离线；AI只在每次预览确认后发送，无自动重试。
+report:
+  auto_stimulus: true
+  scene_expand_count: 3
+  scene_min_valid_s: 0.5
+  short_label_chars: 8
+  editor_idle_s: 1800.0  # 本机编辑辅助服务空闲后关闭；单文件仍可编辑/导出JSON
+  scanpath_max_points: 80
+  scanpath_merge_sigma: 0.0  # 0不合并；仅影响路径图，不影响统计
+  scanpath_gap_s: 0.5
+  image_max_width: 1600
+  ai_image_max_width: 960
+  provider: chat  # OpenAI兼容协议；DeepSeek仅走Chat Completions
+  base_url: https://api.deepseek.com
+  model: deepseek-flash  # 官方V4.1-Flash-1017；旧vision-exp已退役并转接
+  key_env: DEEPSEEK_API_KEY  # 只写环境变量名
+  keychain_service: monocular-gaze-report
+  keychain_account: deepseek
+  ai_timeout_s: 30.0  # 确认→更新总预算，含校验与写文件
+  ai_max_output_tokens: 3000
+  ai_text_only: false  # 确认窗也可切换；不支持图片的模型自动纯文字
+  ai_thinking: false
+  ai_vision_models: [deepseek-flash, deepseek-v4-flash, deepseek-v4-flash-vision-exp]
+  pricing_scheme: deepseek
+  # 2026-11-05官方USD/百万token高峰价；非高峰为半价。均为估算，不是账单。
+  deepseek_prices:
+    deepseek-flash: {input: 0.3, cached: 0.006, output: 1.2}
+    deepseek-v4-pro: {input: 1.32, cached: 0.044, output: 3.96}
+  price_peak_windows_utc: [[1, 4], [6, 10]]
+  price_peak_weekdays: [0, 1, 2, 3, 4]
+  price_offpeak_multiplier: 0.5
+  price_holidays: []  # 中国法定假日；未完整核对的年份，峰时用高价上限并注明可能半价
+  price_holiday_years: []  # 只有填入的年份才表示已完整核对其假日表
+  input_usd_per_million: null  # pricing_scheme: flat时供其它兼容服务使用
+  cached_usd_per_million: null
+  output_usd_per_million: null
+  price_date: '2026-11-05'

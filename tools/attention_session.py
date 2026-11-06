@@ -13,6 +13,7 @@ from gaze_core.attention.processing import process_session
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('session',type=Path)
     parser.add_argument('--rebind',action='store_true');parser.add_argument('--reocr',action='store_true')
+    parser.add_argument('--stimulus-name',type=str,help='旧刺激物缺文件名时用户补录，只写派生结果')
     parser.add_argument('--manual-aoi',type=str);parser.add_argument('--delete',action='store_true',help='删除这个会话整个目录，不能撤销')
     args=parser.parse_args(argv);settings=load_settings();root=Path(settings.attention.output_dir)
     if not root.is_absolute():root=ROOT/root
@@ -28,6 +29,9 @@ def main(argv=None):
         if interrupted:print('警告：会话未正常结束；只处理已完整写入的数据。',file=sys.stderr)
         if 'end_ns' not in store.metadata:
             store.metadata['end_ns']=max([store.metadata['start_ns']]+[r['capture_ns'] for r in read_jsonl(path/'gaze.jsonl')]+[e.get('confirmed_ns',e.get('time_ns',0)) for e in events])
+        if args.stimulus_name:
+            if store.metadata['mode']!='stimulus' or Path(args.stimulus_name).name!=args.stimulus_name:parser.error('stimulus-name只能填写刺激图片文件名，不能含路径')
+            store.metadata['stimulus']=dict(store.metadata['stimulus'],filename=args.stimulus_name,filename_source='user_supplied')
         if args.rebind or args.reocr:
             original=AttentionSettings(**store.metadata.get('attention',{}))
             options=replace(original,manual_aoi=args.manual_aoi or original.manual_aoi)

@@ -3,7 +3,7 @@ from pathlib import Path
 import time
 from PySide6.QtCore import Qt,QTimer,Signal,QPoint,QRectF,QBuffer,QByteArray,QIODevice
 from PySide6.QtGui import QPainter,QImage,QImageReader
-from PySide6.QtWidgets import QLabel,QWidget,QFileDialog,QMessageBox
+from PySide6.QtWidgets import QLabel,QWidget,QFileDialog,QMessageBox,QInputDialog
 from gaze_core.attention.session import AttentionSession
 from gaze_core.attention.stimulus import StimulusMapping
 from gaze_core.demo_coordinates import DemoCoordinates
@@ -76,6 +76,8 @@ class AttentionUI:
         for name,callback in [('attention_start',self.start_screen),('attention_stimulus',self.start_stimulus),('attention_pause',self.service.pause),('attention_end',self.end),('attention_delete',self.delete)]:actions.connect(name,callback)
         actions['attention_ring'].setChecked(not session.settings.attention.hide_ring)
         actions['attention_ring'].setEnabled(True)
+        from .reporting import ReportUI
+        self.reports=ReportUI(self)
 
     def _kernel(self):
         s=self.session;radius=s.profiles.radius
@@ -155,7 +157,11 @@ class AttentionUI:
         except Exception as exc:self.notice(str(exc),True);return
         path,_=QFileDialog.getOpenFileName(self.controls.panel,'选择本地刺激图片（不截屏）','','图片 (*.png *.jpg *.jpeg)')
         if not path:return
+        from gaze_core.reporting.participants import next_participant_id,participant_id
+        identifier,ok=QInputDialog.getText(self.controls.panel,'匿名参与者编号','请勿填写姓名；同一个人请使用同一编号：',text=next_participant_id(self.service.root))
+        if not ok:return
         try:
+            identifier=participant_id(identifier)
             self.controls.panel.hide()
             self._pending_stimulus=True
             self.stimulus=StimulusWindow(path,self.controls.screen,self.session.screen,self.session.settings.attention)
@@ -164,7 +170,7 @@ class AttentionUI:
                 if self.stimulus is not opened:return
                 self._pending_stimulus=False
                 if isinstance(mapping,Exception):self.notice(str(mapping),True);self._close_stimulus();return
-                try:self._start(mode='stimulus',stimulus=dict(path=path,sha256=self.stimulus.source_sha,screen_rect=mapping.normalized_rect(),kernel=mapping.kernel(self._kernel())))
+                try:self._start(mode='stimulus',participant_id=identifier,stimulus=dict(path=path,sha256=self.stimulus.source_sha,screen_rect=mapping.normalized_rect(),kernel=mapping.kernel(self._kernel())))
                 except Exception as exc:self._close_stimulus();self.notice('刺激物会话未开始：'+str(exc),True)
             self.stimulus.ready.connect(ready);self.stimulus.cancelled.connect(self.end)
         except Exception as exc:
@@ -181,9 +187,13 @@ class AttentionUI:
     def delete(self):
         if self.service.path is None:return
         answer=QMessageBox.question(self.controls.panel,'删除整个注意力会话','删除本会话全部截图、OCR与数值数据？此操作不能撤销。',QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.Cancel,QMessageBox.StandardButton.Cancel)
-        if answer==QMessageBox.StandardButton.Yes:self._close_stimulus();self.service.delete()
+        if answer==QMessageBox.StandardButton.Yes:
+            if self.reports.future is not None or self.reports.busy_editing:self.notice('报告正在处理中，请完成或退出后再删除会话',True);return
+            self.reports.cancel_editors(self.service.path)
+            self.reports.artifact=None;self._close_stimulus();self.service.delete()
 
     def poll(self,*,active,screen_changed,demo_active,now_ns):
+        self.reports.poll()
         worker=self.service;s=self.session
         if self.guide is not None and self.guide.requested:
             self.guide.update_session_state(worker.user_paused,worker._effective_state=='recording' and worker.state=='recording',worker._effective_state=='excluded_app')
@@ -249,5 +259,6 @@ class AttentionUI:
             self.controls.panel.attention.setText(text+'\n整理警告：'+'；'.join(worker.summary['warnings']))
 
     def close_ui(self):
+        self.reports.close()
         self.badge.hide();self._close_stimulus();self.window.set_attention_ring_hidden(False)
         if self.guide is not None:self.guide.close();self.guide=None

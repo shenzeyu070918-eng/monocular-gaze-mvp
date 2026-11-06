@@ -4,7 +4,7 @@
 
 ## 目标与当前状态
 
-继续[PR #17](https://github.com/shenzeyu070918-eng/monocular-gaze-mvp/pull/17)的分析报告与DeepSeek接入。该PR目前暂停、未合并，待仓库整理/身份修正/发布优先事项结束后恢复。
+继续[PR #17](https://github.com/shenzeyu070918-eng/monocular-gaze-mvp/pull/17)的分析报告与DeepSeek接入。仓库整理已完成，PR #17 已恢复。通过最终实机复核后再决定合并。
 
 ## 事项与验收
 

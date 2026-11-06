@@ -28,7 +28,7 @@
 | 热力图 | 后台累加、按需查看及本地导出，不表示看了什么内容 |
 | 眼手星系 | 浏览器 WebGL 粒子；预览不访问摄像头，实时链路数值本地传递 |
 | 屏幕注意力记录 | M9 Mac 单用户验收通过；主动记录、AOI、绑定及本地统计 |
-| 分析报告 | M10 [PR #17](https://github.com/shenzeyu070918-eng/monocular-gaze-mvp/pull/17) 暂停、未合并，不属于当前 main 交付功能 |
+| 分析报告 | M10 [PR #17](https://github.com/shenzeyu070918-eng/monocular-gaze-mvp/pull/17) 已恢复开发。验收与钥匙串设置见 [M10 使用说明](docs/m10-report.md) |
 
 ## 精度与已知限制
 

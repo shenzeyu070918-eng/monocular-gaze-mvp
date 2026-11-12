@@ -18,7 +18,7 @@ def render_editor(data,*,options,endpoint=None,token=None):
     scenes=[]
     for scene in data['scenes']:
         labels={r['id']:r['label'] for r in scene['stats']['regions']}
-        rows=[dict(id=r['id'],rect=r['rect'],name=r.get('name') or labels.get(r['id'],'区域 '+str(i))) for i,r in enumerate(primary_regions(scene['regions']),1)]
+        rows=[dict(id=r['id'],rect=r['rect'],automatic=r.get('source')!='manual',name=r.get('name') or labels.get(r['id'],'区域 '+str(i))) for i,r in enumerate(primary_regions(scene['regions']),1)]
         scenes.append(dict(id=scene['id'],image=data_uri(scene['image']),regions=rows))
     bootstrap=dict(meta=dict(mode=data['mode'],session_id=data['session_id'],stimulus_sha256=data['metadata'].get('stimulus',{}).get('sha256')),scenes=scenes,endpoint=endpoint,token=token)
     raw=json.dumps(bootstrap,ensure_ascii=False,allow_nan=False).replace('&','\\u0026').replace('<','\\u003c').replace('>','\\u003e')

@@ -153,7 +153,7 @@ def _usage(raw):
     return usage
 
 
-def save_rejected(artifact, raw, provider, key, *, prepared_body):
+def save_rejected(artifact, raw, provider, key, *, prepared_body, removed=None):
     """Persist scrubbed model content and usage without the provider envelope."""
     value = _content(raw, provider)
     if isinstance(value, str):
@@ -161,6 +161,8 @@ def save_rejected(artifact, raw, provider, key, *, prepared_body):
             value = json.loads(value)
         except (ValueError, RecursionError):
             pass
+    if removed is not None:
+        value = [dict(item, original=value[item['section']][item['index']]) for item in removed]
     forms = {key, json.dumps(key, ensure_ascii=True)[1:-1], json.dumps(key, ensure_ascii=False)[1:-1]} if key else set()
     echoes = _request_echoes(prepared_body)
     structured_echoes = []

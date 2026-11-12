@@ -168,8 +168,14 @@ def render_html(data,*,options=None,ai=None,ai_reason=None,generated_at='',gener
     if ai:
         if ai_reason:parts.append('<p class="note">最近一次AI请求：'+esc(ai_reason)+'</p>')
         parts.append('<p>'+esc(ai['summary'])+'</p>')
+        removed=ai.get('removed',[])
+        if removed:
+            reasons='、'.join(dict.fromkeys(item['reason'] for item in removed))
+            parts.append(f'<p class="note">已移除 {len(removed)} 条未通过本地校验的内容。原因：'+esc(reasons)+'。'+esc(ai.get('diagnostic_error',''))+'</p>')
         for finding in ai['findings']:parts.append('<h3>'+esc(finding['title'])+'</h3><p>'+esc(finding['text'])+'</p><p class="meta">证据：'+esc('；'.join(finding['evidence_labels']))+'</p>')
-        parts.append('<h3>面向设计者的建议</h3><ul>'+''.join('<li>'+esc(r)+'</li>' for r in ai['recommendations'])+'</ul><p>'+esc(ai['limitations'])+'</p>')
+        if ai['recommendations']:
+            parts.append('<h3>面向设计者的建议</h3><ul>'+''.join('<li>'+esc(r)+'</li>' for r in ai['recommendations'])+'</ul>')
+        parts.append('<p>'+esc(ai['limitations'])+'</p>')
         prov=ai['provenance'];usage=prov['usage'];cost=prov['computed_usd']
         parts.append('<p class="meta">模型 '+esc(prov['model'])+' · '+esc(prov['time'])+' · 提示词 '+esc(prov['prompt_version'])+'<br>实际输入 / 输出 token：'+esc(str(usage['input_tokens']) if usage['input_tokens'] is not None else '未知')+' / '+esc(str(usage['output_tokens']) if usage['output_tokens'] is not None else '未知')+' · 费用估算（USD，非账单）：'+('未知' if cost is None else f'${cost:.6f}')+'<br>'+esc(prov['cost_definition'])+'</p><details><summary>发送与价格快照</summary><pre>'+esc(str(prov))+'</pre></details>')
     else:parts.append('<p>'+esc(ai_reason or '尚未请求AI解读。统计报告可完全离线使用。')+'</p><p class="meta">需要解读时，请回到控制面板点击「AI解读当前报告」，逐次预览并确认。此HTML没有网络连接能力，不含密钥。</p>')

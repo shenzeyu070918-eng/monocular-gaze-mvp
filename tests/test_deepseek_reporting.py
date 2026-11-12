@@ -86,6 +86,8 @@ class DeepSeekTests(unittest.TestCase):
             example = json.loads(request['messages'][0]['content'].split('勿照抄结论）: ', 1)[1])
             self.assertIn('合成标题区', example['findings'][0]['title'])
             self.assertIn('{{', example['summary']['text'])
+            self.assertNotIn('limitations', example)
+            self.assertNotIn('limitations',request['messages'][0]['content'])
             raw = self.response(prepared)
             raw['choices'][0]['message']['content'] = json.dumps(value, ensure_ascii=False)
             send = Mock(return_value=raw)
@@ -93,7 +95,7 @@ class DeepSeekTests(unittest.TestCase):
             result = interpret(artifact, prepared, gate.approve(prepared), gate, transport=send,
                                key_reader=lambda _: KEY, utc_clock=lambda: NOW)
             self.assertTrue(result['ok'], result)
-            self.assertEqual(result['result']['limitations'], sent['precision'])
+            self.assertTrue(result['result']['limitations'].endswith(sent['precision']))
             self.assertFalse((artifact.directory / 'ai-rejected.json').exists())
 
     def test_rejected_response_explains_reason_and_only_saves_scrubbed_diagnostic(self):
@@ -130,3 +132,25 @@ class DeepSeekTests(unittest.TestCase):
             self.assertNotIn(KEY, diagnostic_path.read_text())
             self.assertNotIn('Authorization', diagnostic_path.read_text())
             self.assertNotIn(prepared.body, diagnostic_path.read_text())
+
+    def test_partial_interpretation_publishes_only_valid_items_and_saves_removals(self):
+        with tempfile.TemporaryDirectory() as root:
+            artifact=self.artifact(root)
+            prepared=prepare(artifact,['a'],now_utc=NOW)
+            value=answer(prepared)
+            value['findings'][0]['text']+='停留了5.3秒。'+KEY
+            raw=self.response(prepared)
+            raw['choices'][0]['message']['content']=json.dumps(value,ensure_ascii=False)
+            gate=ConsentGate()
+            result=interpret(artifact,prepared,gate.approve(prepared),gate,transport=Mock(return_value=raw),
+                             key_reader=lambda _:KEY,utc_clock=lambda:NOW)
+            self.assertTrue(result['ok'],result)
+            self.assertEqual(result['result']['findings'],[])
+            html=artifact.html.read_text()
+            self.assertIn('已移除 1 条未通过本地校验的内容',html)
+            self.assertIn('AI包含无证据数字',html)
+            self.assertNotIn('5.3秒',html)
+            diagnostic=(artifact.directory/'ai-rejected.json').read_text()
+            self.assertIn('5.3秒',diagnostic)
+            self.assertNotIn(KEY,diagnostic)
+            self.assertEqual(len(json.loads(diagnostic)['output']),1)

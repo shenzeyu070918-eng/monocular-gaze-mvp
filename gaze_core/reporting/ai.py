@@ -412,6 +412,39 @@ def _generalizes(text):
     return False
 
 
+_GREATER = ('高于','多于','大于','长于','晚于','超过')
+_LESS = ('低于','少于','小于','短于','早于','不及')
+_DIRECT_COMPARISON = re.compile(r'(?<![不未非])(?:'+'|'.join((*_GREATER,*_LESS))+r')')
+_COMPARE_TO = re.compile(r'(?<![对相占])比(?![较对例率])')
+_COMPARE_ADJECTIVE = re.compile(r'^\s*(?:要|还|明显|显著|略微|略|稍)?\s*更([高多大长晚低少小短早])')
+
+
+def _wrong_comparison(text,evidence):
+    for sentence in re.split(r'[。！？；!?;\n]',text):
+        values=[match for match in _PLACEHOLDER.finditer(sentence) if match[1] in evidence]
+        for index,(left,right) in enumerate(zip(values,values[1:])):
+            a,b=evidence[left[1]],evidence[right[1]]
+            if a['unit']!=b['unit']:
+                continue
+            between=_PLACEHOLDER.sub(' ',sentence[left.end():right.start()])
+            directions={1 if word in _GREATER else -1 for word in _DIRECT_COMPARISON.findall(between)}
+            comparison=_COMPARE_TO.search(between)
+            if comparison and not directions:
+                # “数值 A 比数值 B 更早” and “数值 A 比另一项更早（数值 B）”.
+                end=values[index+2].start() if index+2<len(values) else len(sentence)
+                adjective=_COMPARE_ADJECTIVE.match(sentence[right.end():end])
+                if not adjective:
+                    after_aoi=between[comparison.end():]
+                    adjective=re.search(r'(?<![不未非])更([高多大长晚低少小短早])',after_aoi)
+                if adjective:
+                    directions.add(1 if adjective[1] in '高多大长晚' else -1)
+            if len(directions)==1:
+                difference=a['value']-b['value']
+                if difference*next(iter(directions))<=0:
+                    return True
+    return False
+
+
 def validate_output(value,metrics,*,allowed_literals=(),aois=None,fixed_limitation=LIMITATION):
     if not isinstance(value,dict):
         raise InvalidInterpretation('AI结构不符')
@@ -469,6 +502,8 @@ def validate_output(value,metrics,*,allowed_literals=(),aois=None,fixed_limitati
         matches=set(_PLACEHOLDER.findall(t))-references.keys()
         if not matches or not set(matches)<=evidence.keys():
             raise InvalidInterpretation('AI正文未引用给定证据')
+        if _wrong_comparison(t,evidence):
+            raise InvalidInterpretation('比较方向与统计不符')
         result=dict(text=t,evidence=list(evidence.values()))
         if title:result['title']=text(item['title'],check_group=True)
         return result

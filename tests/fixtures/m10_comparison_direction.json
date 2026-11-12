@@ -1,0 +1,204 @@
+{
+  "output": {
+    "summary": {
+      "text": "本次单人会话有效注视为{{scene.fixture.valid_s}}，其中{{aoi:hero}}的硬归属停留时长为{{scene.fixture.hero.hard_s}}，高于{{aoi:details}}的{{scene.fixture.details.hard_s}}；这些数据只描述本场景的注视分布，不代表群体结论。",
+      "evidence": [
+        {
+          "metric_id": "scene.fixture.valid_s",
+          "value": 8.997,
+          "unit": "s"
+        },
+        {
+          "metric_id": "scene.fixture.hero.hard_s",
+          "value": 5.344,
+          "unit": "s"
+        },
+        {
+          "metric_id": "scene.fixture.details.hard_s",
+          "value": 2.548,
+          "unit": "s"
+        }
+      ]
+    },
+    "findings": [
+      {
+        "text": "{{aoi:hero}}的硬归属停留时长为{{scene.fixture.hero.hard_s}}，软归属停留时长为{{scene.fixture.hero.soft_s}}，首次注视出现于{{scene.fixture.hero.first_fixation_s}}，进入次数为{{scene.fixture.hero.entries}}；这些指标只反映本段注视记录。",
+        "evidence": [
+          {
+            "metric_id": "scene.fixture.hero.hard_s",
+            "value": 5.344,
+            "unit": "s"
+          },
+          {
+            "metric_id": "scene.fixture.hero.soft_s",
+            "value": 5.613,
+            "unit": "s"
+          },
+          {
+            "metric_id": "scene.fixture.hero.first_fixation_s",
+            "value": 0.93,
+            "unit": "s"
+          },
+          {
+            "metric_id": "scene.fixture.hero.entries",
+            "value": 3.0,
+            "unit": "count"
+          }
+        ],
+        "title": "{{aoi:hero}}的停留与首次注视"
+      },
+      {
+        "text": "{{aoi:details}}的硬归属停留时长为{{scene.fixture.details.hard_s}}，软归属停留时长为{{scene.fixture.details.soft_s}}，首次注视出现于{{scene.fixture.details.first_fixation_s}}，进入次数为{{scene.fixture.details.entries}}。",
+        "evidence": [
+          {
+            "metric_id": "scene.fixture.details.hard_s",
+            "value": 2.548,
+            "unit": "s"
+          },
+          {
+            "metric_id": "scene.fixture.details.soft_s",
+            "value": 2.179,
+            "unit": "s"
+          },
+          {
+            "metric_id": "scene.fixture.details.first_fixation_s",
+            "value": 0.286,
+            "unit": "s"
+          },
+          {
+            "metric_id": "scene.fixture.details.entries",
+            "value": 3.0,
+            "unit": "count"
+          }
+        ],
+        "title": "{{aoi:details}}的停留与首次注视"
+      },
+      {
+        "text": "{{aoi:hero}}的硬归属占比为{{scene.fixture.hero.hard_fraction}}，{{aoi:details}}的硬归属占比为{{scene.fixture.details.hard_fraction}}；这一对照基于单人记录，不能外推为群体偏好。",
+        "evidence": [
+          {
+            "metric_id": "scene.fixture.hero.hard_fraction",
+            "value": 0.594004,
+            "unit": "ratio"
+          },
+          {
+            "metric_id": "scene.fixture.details.hard_fraction",
+            "value": 0.283187,
+            "unit": "ratio"
+          }
+        ],
+        "title": "两区域的占比对照"
+      }
+    ],
+    "recommendations": [
+      {
+        "text": "{{aoi:hero}}的首次注视为{{scene.fixture.hero.first_fixation_s}}，早于{{aoi:details}}的{{scene.fixture.details.first_fixation_s}}；可保持主视觉区块的位置，同时在{{aoi:details}}上层级更清楚地呈现价格与行动按钮，再做对照测试。",
+        "evidence": [
+          {
+            "metric_id": "scene.fixture.hero.first_fixation_s",
+            "value": 0.93,
+            "unit": "s"
+          },
+          {
+            "metric_id": "scene.fixture.details.first_fixation_s",
+            "value": 0.286,
+            "unit": "s"
+          }
+        ]
+      },
+      {
+        "text": "{{aoi:details}}的硬归属停留为{{scene.fixture.details.hard_s}}，少于{{aoi:hero}}的{{scene.fixture.hero.hard_s}}；建议扩大{{aoi:details}}内的行动入口并减少次要文字干扰，随后用多轮对照测试验证变化。",
+        "evidence": [
+          {
+            "metric_id": "scene.fixture.details.hard_s",
+            "value": 2.548,
+            "unit": "s"
+          },
+          {
+            "metric_id": "scene.fixture.hero.hard_s",
+            "value": 5.344,
+            "unit": "s"
+          }
+        ]
+      }
+    ]
+  },
+  "metrics": {
+    "sample.N_total": {
+      "value": 1.0,
+      "unit": "count",
+      "label": "本次单人会话",
+      "decimal_places": 0
+    },
+    "scene.fixture.details.entries": {
+      "value": 3.0,
+      "unit": "count",
+      "label": "fixture / details / entries",
+      "decimal_places": 0
+    },
+    "scene.fixture.details.first_fixation_s": {
+      "value": 0.286,
+      "unit": "s",
+      "label": "fixture / details / first_fixation_s",
+      "decimal_places": 3
+    },
+    "scene.fixture.details.hard_fraction": {
+      "value": 0.283187,
+      "unit": "ratio",
+      "label": "fixture / details / hard_fraction",
+      "decimal_places": 6
+    },
+    "scene.fixture.details.hard_s": {
+      "value": 2.548,
+      "unit": "s",
+      "label": "fixture / details / hard_s",
+      "decimal_places": 3
+    },
+    "scene.fixture.details.soft_s": {
+      "value": 2.179,
+      "unit": "s",
+      "label": "fixture / details / soft_s",
+      "decimal_places": 3
+    },
+    "scene.fixture.hero.entries": {
+      "value": 3.0,
+      "unit": "count",
+      "label": "fixture / hero / entries",
+      "decimal_places": 0
+    },
+    "scene.fixture.hero.first_fixation_s": {
+      "value": 0.93,
+      "unit": "s",
+      "label": "fixture / hero / first_fixation_s",
+      "decimal_places": 3
+    },
+    "scene.fixture.hero.hard_fraction": {
+      "value": 0.594004,
+      "unit": "ratio",
+      "label": "fixture / hero / hard_fraction",
+      "decimal_places": 6
+    },
+    "scene.fixture.hero.hard_s": {
+      "value": 5.344,
+      "unit": "s",
+      "label": "fixture / hero / hard_s",
+      "decimal_places": 3
+    },
+    "scene.fixture.hero.soft_s": {
+      "value": 5.613,
+      "unit": "s",
+      "label": "fixture / hero / soft_s",
+      "decimal_places": 3
+    },
+    "scene.fixture.valid_s": {
+      "value": 8.997,
+      "unit": "s",
+      "label": "fixture 有效注视",
+      "decimal_places": 3
+    }
+  },
+  "aois": {
+    "hero": "产品示意区",
+    "details": "信息区"
+  }
+}

@@ -37,7 +37,7 @@ class ValidationLiteralTests(unittest.TestCase):
             limitations='精度约 1.3–2.5 cm，仅供块级对照。',
         ))
         for label in LITERALS[1:]:
-            self.assertIn(label, result['summary'])
+            self.assertIn(label, result['summary']['text'])
         self.assertEqual(result['findings'][0]['title'], '区域 3 的证据')
         self.assertIn('经验精度约1.3–2.5 cm', result['limitations'])
         self.assertIn('1 名参与者', result['limitations'])
@@ -85,7 +85,7 @@ class ValidationLiteralTests(unittest.TestCase):
     def test_evidence_uses_declared_decimal_precision(self):
         for value in (1.2345, 1.2354):
             with self.subTest(value=value):
-                self.assertIn('1.235', self.validate(output(value=value))['summary'])
+                self.assertEqual(self.validate(output(value=value))['summary']['evidence'][0]['value'],1.235)
         for value in (1.2344, 1.2356, True, float('nan')):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.validate(output(value=value))
@@ -126,7 +126,7 @@ class SinglePersonDisclaimerTests(unittest.TestCase):
         self.assertEqual(len(result['findings']), 3)
         self.assertEqual(len(result['recommendations']), 2)
         self.assertIn('单人数据不能用于推断群体规律', result['limitations'])
-        self.assertIn('8.997 s', result['summary'])
+        self.assertEqual(result['summary']['evidence'][0]['value'],8.997)
 
     def test_negated_group_inference_in_claims_is_allowed(self):
         self.answer['summary']['text'] += '不能据此作群体结论，无法推广到多数用户，也不代表群体偏好。'

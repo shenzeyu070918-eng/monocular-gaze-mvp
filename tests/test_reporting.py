@@ -120,3 +120,45 @@ class AOIDisplaySizeTests(unittest.TestCase):
             self.assertIn('自动合并：候选区域低于误差尺度对应的最小尺寸', build(data).html.read_text())
             scene['regions'][-1]['rect'] = [0, 0, .1, .4]
             self.assertIn('自动合并：主区域数量上限', build(data).html.read_text())
+
+
+class AIDisplayTests(unittest.TestCase):
+    def test_report_renders_readable_units_labels_and_evidence(self):
+        from gaze_core.reporting.render import cards, render_html
+        with tempfile.TemporaryDirectory() as root:
+            data=load_session(session(root))
+            data['coverage']=.594004
+            data['summary']['duration_s']=5.344
+            data['scenes'][0]['stats']['regions'][0]['label']='区域 2：产品图'
+            evidence=[
+                dict(metric_id='scene.a.left.hard_s',value=5.344,unit='s'),
+                dict(metric_id='scene.a.left.hard_fraction',value=.594004,unit='ratio'),
+                dict(metric_id='scene.a.left.first_fixation_s',value=.93,unit='s'),
+                dict(metric_id='scene.a.left.entries',value=3,unit='count'),
+                dict(metric_id='calibration.sigma_cm',value=1.35,unit='cm'),
+            ]
+            claim=dict(text='区域「区域 2：产品图」停留{{scene.a.left.hard_s}}，占比{{scene.a.left.hard_fraction}}，首次{{scene.a.left.first_fixation_s}}，进入{{scene.a.left.entries}}次，误差核{{calibration.sigma_cm}}。',evidence=evidence)
+            ai=dict(summary=claim,findings=[dict(claim,title='区域「区域 2：产品图」')],recommendations=[claim],
+                    limitations='本地局限',provenance=dict(model='模拟',time='本地',prompt_version='测试',
+                    usage=dict(input_tokens=None,output_tokens=None),computed_usd=None,cost_definition=''))
+            html=render_html(data,ai=ai).split('<h2>可选 AI 解读</h2>')[1]
+            self.assertIn('「区域 2：产品图」停留5.3 秒，占比59.4%，首次0.9 秒，进入3 次，误差核1.4 cm。</p>',html)
+            self.assertIn('title="scene.a.left.hard_s">区域 2：产品图 · 硬归属停留 5.3 秒</span>',html)
+            self.assertEqual(html.count('依据：'),3)
+            self.assertNotIn('区域「区域',html)
+            self.assertNotIn('scene.a.left',re.sub(r' title="[^"]*"', '', html))
+            self.assertEqual(dict(cards(data))['有效注视覆盖'],'59.4%')
+            self.assertEqual(dict(cards(data))['会话时长'],'5.3 秒')
+
+
+    def test_legacy_summary_and_findings_keep_readable_evidence(self):
+        from gaze_core.reporting.render import render_html
+        with tempfile.TemporaryDirectory() as root:
+            data=load_session(session(root))
+            label='a / left / hard_s = 1.9 s'
+            ai=dict(summary='这里有停留。（'+label+'）',findings=[dict(title='区域停留',text='这里有停留。',evidence_labels=[label])],
+                    recommendations=['建议提高对比度。'],limitations='本地局限',provenance=dict(model='模拟',time='本地',prompt_version='测试',
+                    usage=dict(input_tokens=None,output_tokens=None),computed_usd=None,cost_definition=''))
+            html=render_html(data,ai=ai)
+            self.assertEqual(html.count('合成标题区 · 硬归属停留'),2)
+            self.assertNotIn(label,html)

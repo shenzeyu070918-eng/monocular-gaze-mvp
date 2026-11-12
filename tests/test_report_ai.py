@@ -126,4 +126,4 @@ class AITests(unittest.TestCase):
                 if Path(path)==artifact.html:now[0]=31.
             with patch.object(module,'atomic',side_effect=expire):
                 result=interpret(artifact,p,gate.approve(p),gate,transport=lambda *a:response(p),key_reader=lambda _:KEY,clock=lambda:now[0],started=0)
-            self.assertFalse(result['ok']);self.assertIn(first['result']['summary'],artifact.html.read_text());self.assertIn('最近一次AI请求',artifact.html.read_text());self.assertEqual((artifact.directory/'ai.json').read_bytes(),before_ai)
+            self.assertFalse(result['ok']);self.assertIn('有效注视时长为',artifact.html.read_text());self.assertIn('依据：',artifact.html.read_text());self.assertIn('最近一次AI请求',artifact.html.read_text());self.assertEqual((artifact.directory/'ai.json').read_bytes(),before_ai)

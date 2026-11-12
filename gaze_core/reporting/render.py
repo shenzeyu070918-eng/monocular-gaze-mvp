@@ -1,6 +1,7 @@
 """Self-contained Chinese report, projection-first layout and separate print styles."""
-import base64,html,io,math
+import base64,html,io,math,re
 from PIL import Image,ImageDraw,ImageFont
+from decimal import Decimal, ROUND_HALF_UP
 from .data import public_data, display_size_cm
 from .settings import ReportSettings
 from gaze_core.attention.aoi import primary_regions
@@ -17,6 +18,88 @@ def esc(value):return html.escape(str(value),quote=True)
 def fmt(value,suffix='',digits=2):return '未记录' if value is None else f'{float(value):.{digits}f}'+suffix
 def pct(value):return fmt(None if value is None else value*100,'% ',1).strip()
 def data_uri(raw,mime='image/png'):return f'data:{mime};base64,'+base64.b64encode(raw).decode('ascii')
+
+
+def format_measure(value, unit):
+    if value is None:
+        return '未记录'
+    number=Decimal(str(value))
+    if unit=='ratio':
+        return f"{(number*100).quantize(Decimal('0.1'),rounding=ROUND_HALF_UP)}%"
+    suffix={'s':' 秒','count':' 次','cm':' cm','people':' 名','regions':' 个'}.get(unit,'')
+    step='0.1' if unit=='cm' or (unit=='s' and abs(number)<10) else '1'
+    if not suffix:
+        return format(number.normalize(),'f')
+    return str(number.quantize(Decimal(step),rounding=ROUND_HALF_UP))+suffix
+
+
+_EVIDENCE_NAMES = {
+    'hard_s':'硬归属停留', 'soft_s':'软归属停留',
+    'hard_fraction':'硬归属占比', 'soft_fraction':'软归属占比',
+    'first_fixation_s':'首次注视', 'entries':'进入次数',
+    'N_seen':'看过人数', 'N_valid':'有效人数',
+}
+_DISPLAY_PLACEHOLDER = re.compile(r'\{\{([^{}]+)\}\}(\s*(?:次|秒钟?|厘米|cm|%|名))?')
+
+
+def _evidence_names(data):
+    names={
+        'calibration.sigma_cm':('校准','误差核半径'),
+        'calibration.sigma_x':('校准','水平归一化误差核'),
+        'calibration.sigma_y':('校准','垂直归一化误差核'),
+        'sample.N_total':('会话','参与人数'),
+        'sample.N_valid':('会话','有效参与人数'),
+    }
+    for index,scene in enumerate(data['scenes'],1):
+        prefix='scene.'+scene['id']
+        names[prefix+'.valid_s']=(f'场景 {index}' if data['mode']=='screen' else '本图','有效注视')
+        for region in scene['stats']['regions']:
+            for field,label in _EVIDENCE_NAMES.items():
+                names[f"{prefix}.{region['id']}.{field}"]=(region['label'],label)
+    return names
+
+
+def _short_references(text):
+    return re.sub(r'区域\s*(「[^」]+」)',r'\1',text)
+
+
+def _claim_html(claim,names,legacy=None):
+    # Older ai.json files store evidence as display strings.
+    if isinstance(claim,str):
+        text,separator,tail=claim.rpartition('（')
+        labels=tail[:-1].split('；')
+        if separator and tail.endswith('）') and all(' = ' in part for part in labels):
+            claim=dict(text=text,evidence_labels=labels)
+        else:
+            claim=dict(text=claim)
+    refs=claim.get('evidence',[])
+    if legacy is not None:
+        refs=[legacy[label] for line in claim.get('evidence_labels',[])
+              if (label:=line.rpartition(' = ')[0]) in legacy]
+    evidence={ref['metric_id']:ref for ref in refs}
+    units={key:('people' if key.rsplit('.',1)[-1] in ('N_total','N_valid','N_seen') else ref['unit'])
+           for key,ref in evidence.items()}
+    values={key:format_measure(ref['value'],units[key]) for key,ref in evidence.items()}
+    redundant={'s':('秒','秒钟'),'count':('次',),'cm':('cm','厘米'),'ratio':('%',),'people':('名',)}
+
+    def replace(match):
+        key,suffix=match.groups()
+        if key not in values:
+            return match[0]
+        return values[key]+(suffix if suffix and suffix.strip() not in redundant.get(units[key],()) else '')
+
+    body=_DISPLAY_PLACEHOLDER.sub(replace,_short_references(claim['text']))
+    parts=['<p>'+esc(body)+'</p>']
+    if evidence:
+        labels=[]
+        previous=None
+        for key in evidence:
+            group,name=names.get(key,('','统计值'))
+            label=(group+' · ' if group and group!=previous else '')+name+' '+values[key]
+            labels.append(f'<span title="{esc(key)}">{esc(label)}</span>')
+            previous=group
+        parts.append('<p class="meta">依据：'+'；'.join(labels)+'</p>')
+    return ''.join(parts)
 
 
 def _rect_size(rect):
@@ -85,15 +168,15 @@ def cards(data):
     scenes=data['scenes'];rows=[(s,r) for s in scenes for r in s['stats']['regions']]
     first=min(((s,r) for s,r in rows if r.get('first_fixation_s') is not None),key=lambda p:p[0].get('start_s',0)+p[1]['first_fixation_s'],default=None)
     top=max(rows,key=lambda p:p[1].get('hard_s') or 0,default=None)
-    facts=[('有效注视覆盖',pct(data['coverage']))]
-    if data['kind']=='aggregate':facts.append(('匿名参与者',f'N = {data["N_total"]}（有效 {data["N_valid"]}）'))
-    else:facts.append(('会话时长',fmt(data['summary']['duration_s'],' 秒',1)))
-    facts.append((('平均首次注视最早的区域' if data['kind']=='aggregate' else '最先记录到注视的区域'),'无记录' if first is None else str(first[1].get('label',first[1]['id']))+' · '+fmt(first[0].get('start_s',0)+first[1]['first_fixation_s'],' 秒',1)))
-    facts.append(('停留最久的区域','无记录' if top is None or not top[1].get('hard_s') else str(top[1].get('label',top[1]['id']))+' · '+fmt(top[1]['hard_s'],' 秒',1)))
+    facts=[('有效注视覆盖',format_measure(data['coverage'],'ratio'))]
+    if data['kind']=='aggregate':facts.append(('匿名参与者',format_measure(data["N_total"],"people")+f'（有效 {format_measure(data["N_valid"],"people")}）'))
+    else:facts.append(('会话时长',format_measure(data['summary']['duration_s'],'s')))
+    facts.append((('平均首次注视最早的区域' if data['kind']=='aggregate' else '最先记录到注视的区域'),'无记录' if first is None else str(first[1].get('label',first[1]['id']))+' · '+format_measure(first[0].get('start_s',0)+first[1]['first_fixation_s'],'s')))
+    facts.append(('停留最久的区域','无记录' if top is None or not top[1].get('hard_s') else str(top[1].get('label',top[1]['id']))+' · '+format_measure(top[1]['hard_s'],'s')))
     count_scene=max(scenes,key=lambda s:s['stats'].get('valid_fixation_s',0),default=None) if data['mode']=='screen' else None
     count_rows=count_scene['stats']['regions'] if count_scene is not None else [r for _,r in rows]
     label='未记录硬归属注视的主区域'+('（停留最久场景 '+count_scene['id']+'）' if count_scene is not None else '')
-    facts.append((label,str(sum(not r.get('hard_s') for r in count_rows))+' 个'))
+    facts.append((label,format_measure(sum(not r.get('hard_s') for r in count_rows),'regions')))
     return facts
 
 
@@ -167,14 +250,21 @@ def render_html(data,*,options=None,ai=None,ai_reason=None,generated_at='',gener
     parts.append('<h2>可选 AI 解读</h2>')
     if ai:
         if ai_reason:parts.append('<p class="note">最近一次AI请求：'+esc(ai_reason)+'</p>')
-        parts.append('<p>'+esc(ai['summary'])+'</p>')
+        evidence_names=_evidence_names(data)
+        legacy=None
+        if isinstance(ai['summary'],str):
+            from .ai import registry
+            metrics=registry(data,tuple(scene['id'] for scene in data['scenes']))
+            legacy={m['label']:dict(metric_id=key,value=m['value'],unit=m['unit']) for key,m in metrics.items()}
+        parts.append(_claim_html(ai['summary'],evidence_names,legacy))
         removed=ai.get('removed',[])
         if removed:
             reasons='、'.join(dict.fromkeys(item['reason'] for item in removed))
             parts.append(f'<p class="note">已移除 {len(removed)} 条未通过本地校验的内容。原因：'+esc(reasons)+'。'+esc(ai.get('diagnostic_error',''))+'</p>')
-        for finding in ai['findings']:parts.append('<h3>'+esc(finding['title'])+'</h3><p>'+esc(finding['text'])+'</p><p class="meta">证据：'+esc('；'.join(finding['evidence_labels']))+'</p>')
+        for finding in ai['findings']:
+            parts.append('<h3>'+esc(_short_references(finding['title']))+'</h3>'+_claim_html(finding,evidence_names,legacy))
         if ai['recommendations']:
-            parts.append('<h3>面向设计者的建议</h3><ul>'+''.join('<li>'+esc(r)+'</li>' for r in ai['recommendations'])+'</ul>')
+            parts.append('<h3>面向设计者的建议</h3><ul>'+''.join('<li>'+_claim_html(r,evidence_names,legacy)+'</li>' for r in ai['recommendations'])+'</ul>')
         parts.append('<p>'+esc(ai['limitations'])+'</p>')
         prov=ai['provenance'];usage=prov['usage'];cost=prov['computed_usd']
         parts.append('<p class="meta">模型 '+esc(prov['model'])+' · '+esc(prov['time'])+' · 提示词 '+esc(prov['prompt_version'])+'<br>实际输入 / 输出 token：'+esc(str(usage['input_tokens']) if usage['input_tokens'] is not None else '未知')+' / '+esc(str(usage['output_tokens']) if usage['output_tokens'] is not None else '未知')+' · 费用估算（USD，非账单）：'+('未知' if cost is None else f'${cost:.6f}')+'<br>'+esc(prov['cost_definition'])+'</p><details><summary>发送与价格快照</summary><pre>'+esc(str(prov))+'</pre></details>')

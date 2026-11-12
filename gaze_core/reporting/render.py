@@ -1,9 +1,10 @@
 """Self-contained Chinese report, projection-first layout and separate print styles."""
 import base64,html,io,math
 from PIL import Image,ImageDraw,ImageFont
-from .data import public_data
+from .data import public_data, display_size_cm
 from .settings import ReportSettings
 from gaze_core.attention.aoi import primary_regions
+from gaze_core.attention.settings import AttentionSettings
 
 PALETTE=dict(background='#f2f7fc',ink='#102f50',accent='#215e93',warning='#d78220',surface='#ffffff',muted='#4e657a')
 STYLE='''
@@ -16,6 +17,43 @@ def esc(value):return html.escape(str(value),quote=True)
 def fmt(value,suffix='',digits=2):return '未记录' if value is None else f'{float(value):.{digits}f}'+suffix
 def pct(value):return fmt(None if value is None else value*100,'% ',1).strip()
 def data_uri(raw,mime='image/png'):return f'data:{mime};base64,'+base64.b64encode(raw).decode('ascii')
+
+
+def _rect_size(rect):
+    x0,y0,x1,y1 = rect
+    return x1-x0,y1-y0
+
+
+def _aoi_size_note(region, definitions, metadata):
+    width,height = _rect_size(region['rect'])
+    sizes = metadata.get('aggregate_display_sizes_cm', [display_size_cm(metadata)])
+    known = [(width * w, height * h) for w,h in filter(None, sizes)]
+    if not known:
+        notes = ['物理尺寸未记录']
+    else:
+        axes = [fmt(min(axis)) if min(axis)==max(axis) else fmt(min(axis))+'–'+fmt(max(axis)) for axis in zip(*known)]
+        notes = [' × '.join(axes)+' cm（宽 × 高）']
+        if len(known)!=len(sizes):
+            notes.append(f'{len(known)}/{len(sizes)} 份有实测尺寸')
+    scale = metadata.get('attention', {}).get('aoi_min_sigma_scale', AttentionSettings.aoi_min_sigma_scale)
+    kernels = metadata.get('aggregate_kernels', [metadata.get('kernel', {})])
+    scales = metadata.get('aggregate_aoi_min_scales', [scale]*len(kernels))
+    if any(width+1e-12 < k.get('sigma_x',0)*m or height+1e-12 < k.get('sigma_y',0)*m for k,m in zip(kernels, scales)):
+        notes.append('小于误差尺度，区域结论不可靠')
+    merged = region.get('merged_ids', [])
+    if merged:
+        if region.get('source')=='image_extent':
+            notes.append('候选区域不足最小尺寸，扩展至整图')
+        else:
+            minimum = region.get('minimum_size')
+            members = [definitions[k] for k in merged if k in definitions]
+            if minimum and any(any(length+1e-12 < limit for length,limit in zip(_rect_size(r['rect']),minimum)) for r in members):
+                notes.append('自动合并：候选区域低于误差尺度对应的最小尺寸')
+            elif minimum and len(members)==len(merged):
+                notes.append('自动合并：主区域数量上限')
+            else:
+                notes.append('自动合并：受最小尺寸或主区域数量上限约束')
+    return ' · '.join(notes)
 
 
 def scene_image(scene,options=None):
@@ -94,12 +132,14 @@ def render_html(data,*,options=None,ai=None,ai_reason=None,generated_at='',gener
         image_size=Image.open(io.BytesIO(s['image'])).size
         parts.append('<div class="scene-analysis'+(' portrait' if image_size[1]>image_size[0] else '')+'">')
         parts.append(f'<figure class="visual"><img alt="场景{ name }叠加热力图" src="{data_uri(scene_image(s,options))}"><figcaption>热量按注视时长累加，尺度沿用误差半径；细框编号对应下方AOI表，不表示逐行阅读。</figcaption></figure>')
+        definitions={r['id']:r for r in s['regions']}
         region_numbers={r['id']:i for i,r in enumerate(primary_regions(s['regions']),1)}
         regions=sorted(s['stats']['regions'],key=lambda r:-(r.get('hard_s') or 0))
         parts.append('<div class="aoi-analysis"><h3>AOI 排名 · 硬归属与软归属</h3><div class="tablewrap"><table><thead><tr><th>区域</th><th>硬时长 / 占比</th><th>软时长 / 占比</th><th>首次注视</th><th>进入次数</th>'+('<th>看过人数 / 有效人数</th>' if aggregate else '')+'</tr></thead><tbody>')
         for r in regions:
             number=region_numbers.get(r['id'],'?');label=r.get('label',r['id']);display_label=label if label.startswith('区域 '+str(number)) else str(number)+' · '+label
-            parts.append('<tr><td>'+esc(display_label)+'<small class="provenance">'+('手动' if r.get('source')=='manual' else '自动')+'</small></td><td>'+fmt(r.get('hard_s'),' s')+' / '+pct(r.get('hard_fraction'))+'</td><td>'+fmt(r.get('soft_s'),' s')+' / '+pct(r.get('soft_fraction'))+'</td><td>'+fmt(r.get('first_fixation_s'),' s')+'</td><td>'+fmt(r.get('entries'),digits=1 if aggregate else 0)+'</td>'+('<td>'+f'{r["N_seen"]} / {r["N_valid"]}（{pct(r["seen_fraction"])}）'+'</td>' if aggregate else '')+'</tr>')
+            size_note=_aoi_size_note(definitions.get(r['id'],r),definitions,data['metadata'])
+            parts.append('<tr><td>'+esc(display_label)+'<small class="provenance">'+('手动' if r.get('source')=='manual' else '自动')+'</small><small class="provenance">'+esc(size_note)+'</small></td><td>'+fmt(r.get('hard_s'),' s')+' / '+pct(r.get('hard_fraction'))+'</td><td>'+fmt(r.get('soft_s'),' s')+' / '+pct(r.get('soft_fraction'))+'</td><td>'+fmt(r.get('first_fixation_s'),' s')+'</td><td>'+fmt(r.get('entries'),digits=1 if aggregate else 0)+'</td>'+('<td>'+f'{r["N_seen"]} / {r["N_valid"]}（{pct(r["seen_fraction"])}）'+'</td>' if aggregate else '')+'</tr>')
         parts.append('</tbody></table></div><p class="meta">占比分母为有效注视时间，保留背景和屏外概率，不将AOI重新归一为100%。首次与进入次数来自硬归属；软归属是概率分摊。'+('多人列为每人平均；首次只对看过者求平均。' if aggregate else '')+'</p>')
         missing=[r.get('label',r['id']) for r in regions if not r.get('hard_s')]
         parts.append('<p>未记录硬归属注视的 AOI：'+esc('、'.join(missing) or '无')+'。</p>')

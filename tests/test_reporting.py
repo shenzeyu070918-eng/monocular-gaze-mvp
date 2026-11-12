@@ -92,3 +92,31 @@ class ReportTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'未生成PDF'):
                 export_pdf(artifact,executable='/fake/chrome',runner=lambda *a,**kw:NS(returncode=0))
             self.assertEqual(pdf.read_bytes(),b'%PDF-synthetic')
+
+
+class AOIDisplaySizeTests(unittest.TestCase):
+    def test_render_uses_displayed_image_size_and_keeps_small_manual_aoi(self):
+        with tempfile.TemporaryDirectory() as root:
+            data = load_session(session(root))
+            metadata = data['metadata']
+            metadata['geometry'] = dict(measured=True, width_cm=30, height_cm=20)
+            metadata['stimulus']['screen_rect'] = [.25, .1, .75, .9]
+            scene = data['scenes'][0]
+            region = scene['regions'][0]
+            region['rect'] = [0, 0, .05, .5]
+            content = build(data).html.read_text()
+            self.assertIn('0.75 × 8.00 cm（宽 × 高）', content)
+            self.assertIn('手动</small><small class="provenance">0.75 × 8.00 cm（宽 × 高） · 小于误差尺度，区域结论不可靠', content)
+            metadata['geometry']['measured'] = False
+            self.assertIn('物理尺寸未记录', build(data).html.read_text())
+
+    def test_render_explains_automatic_merge_using_original_boxes(self):
+        with tempfile.TemporaryDirectory() as root:
+            data = load_session(session(root))
+            scene = data['scenes'][0]
+            region = scene['regions'][0]
+            region.update(source='auto_merge', merged_ids=['old'], minimum_size=[.08, .12])
+            scene['regions'].append(dict(id='old', role='child', rect=[0, 0, .03, .4]))
+            self.assertIn('自动合并：候选区域低于误差尺度对应的最小尺寸', build(data).html.read_text())
+            scene['regions'][-1]['rect'] = [0, 0, .1, .4]
+            self.assertIn('自动合并：主区域数量上限', build(data).html.read_text())

@@ -61,6 +61,23 @@ def scanpath(segments,scale,options,*,timeline=None):
     return nodes[:options.scanpath_max_points],len(nodes)
 
 
+def display_size_cm(metadata):
+    """Displayed extent of normalized scene coordinates on the measured screen."""
+    geometry = metadata.get('geometry', {})
+    size = (geometry.get('width_cm'), geometry.get('height_cm'))
+    if geometry.get('measured') is not True or not all(type(v) in (int, float) and math.isfinite(v) and v > 0 for v in size):
+        return None
+    if metadata.get('mode') == 'stimulus':
+        rect = metadata.get('stimulus', {}).get('screen_rect')
+        if not isinstance(rect, (tuple, list)) or len(rect) != 4 or not all(type(v) in (int, float) and math.isfinite(v) for v in rect):
+            return None
+        x0, y0, x1, y1 = rect
+        if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
+            return None
+        return size[0] * (x1 - x0), size[1] * (y1 - y0)
+    return size
+
+
 def load_session(path,*,derived=None,options=None):
     options=options or ReportSettings();s=Source(path,derived);m=s.json('session.json')
     if m.get('state') not in ('ended','error'):raise ValueError('请先结束并整理会话，再生成报告')

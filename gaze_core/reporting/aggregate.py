@@ -2,7 +2,8 @@
 import numpy as np
 from gaze_core.attention.aoi import AOIStatistics,validate_regions,primary_regions
 from gaze_core.heatmap_render import render_heatmap
-from .data import LIMITATION
+from gaze_core.attention.settings import AttentionSettings
+from .data import LIMITATION, display_size_cm
 from .labels import region_label
 from gaze_core.attention.manual_aoi import read_template,select_document
 from pathlib import Path
@@ -15,7 +16,8 @@ def aggregate(sessions,*,participant_map=None,canonical_regions=None):
     if len(first['scenes'])!=1:raise ValueError('刺激物必须有且只有一个场景')
     shared=read_template(Path(first['source_root']).parent,first['metadata'].get('stimulus',{}).get('sha256'))
     definitions=canonical_regions if canonical_regions is not None else select_document(shared,first['scenes'][0]['id'],first['metadata']) if shared is not None else first['scenes'][0]['regions']
-    template=primary_regions(validate_regions(definitions))
+    definitions=validate_regions(definitions)
+    template=primary_regions(definitions)
     snapshots=[];grids=[]
     for data in sessions:
         m=data['metadata']
@@ -49,7 +51,7 @@ def aggregate(sessions,*,participant_map=None,canonical_regions=None):
     import io
     output=io.BytesIO();Image.fromarray(render_heatmap(grid,size)).save(output,format='PNG')
     background={key:float(np.mean([s[key] for s in valid])) if valid else None for key in ('background_hard_s','background_soft_s','outside_probability_s')}
-    scene=dict(first['scenes'][0],aoi_source='manual' if shared is not None else first['scenes'][0].get('aoi_source','auto'),stats=dict(background,regions=rows,valid_fixation_s=sum(s['valid_fixation_s'] for s in valid)/len(valid) if valid else 0),regions=template,heat=output.getvalue(),grid=grid,scanpath=[],scanpath_total=0,segments=[])
+    scene=dict(first['scenes'][0],aoi_source='manual' if shared is not None else first['scenes'][0].get('aoi_source','auto'),stats=dict(background,regions=rows,valid_fixation_s=sum(s['valid_fixation_s'] for s in valid)/len(valid) if valid else 0),regions=definitions,heat=output.getvalue(),grid=grid,scanpath=[],scanpath_total=0,segments=[])
     durations=[s['summary']['duration_s'] for s in sessions]
-    return dict(schema_version=1,kind='aggregate',mode='stimulus',session_id='aggregate',participant_id=None,metadata=dict(first['metadata'],profile=first['metadata'].get('profile'),aggregate_kernels=[s['metadata']['kernel'] for s in sessions]),summary=dict(duration_s=float(np.mean(durations)),valid_bound_fixation_s=scene['stats']['valid_fixation_s'],uncertain_fraction=None),coverage=float(np.mean([s['coverage'] for s in sessions if s['coverage'] is not None])) if any(s['coverage'] is not None for s in sessions) else None,
+    return dict(schema_version=1,kind='aggregate',mode='stimulus',session_id='aggregate',participant_id=None,metadata=dict(first['metadata'],profile=first['metadata'].get('profile'),aggregate_kernels=[s['metadata']['kernel'] for s in sessions],aggregate_display_sizes_cm=[display_size_cm(s['metadata']) for s in sessions],aggregate_aoi_min_scales=[s['metadata'].get('attention',{}).get('aoi_min_sigma_scale',AttentionSettings.aoi_min_sigma_scale) for s in sessions]),summary=dict(duration_s=float(np.mean(durations)),valid_bound_fixation_s=scene['stats']['valid_fixation_s'],uncertain_fraction=None),coverage=float(np.mean([s['coverage'] for s in sessions if s['coverage'] is not None])) if any(s['coverage'] is not None for s in sessions) else None,
                 participant_statistics=snapshots,participants=people,N_total=len(snapshots),N_valid=len(valid),scenes=[scene],timeline=[],warnings=['每人先按有效注视热量归一化，再等权平均；汇总AOI使用首份会话模板，逐人重新归属。','首次注视时间只对看过者求平均；比例分母为有有效注视者N_valid。'],limitation=LIMITATION,source_version='aggregate',source_hashes={s['session_id']:s['source_hashes'] for s in sessions},source_root=first['source_root'],canonical_aoi_source='sha256_template:'+first['metadata']['stimulus']['sha256'] if shared is not None else first['session_id'])

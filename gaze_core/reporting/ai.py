@@ -1,7 +1,7 @@
 """Opt-in provider boundary. Preparation/preview are purely local, approvals single-use."""
 from dataclasses import dataclass,asdict
 from datetime import datetime,timezone
-import hashlib,hmac,http.client,json,math,os,re,secrets,subprocess,sys,time
+import hashlib,hmac,http.client,json,math,os,re,secrets,socket,ssl,subprocess,sys,time
 from urllib.parse import urlsplit
 from .render import scene_image,data_uri
 from .pricing import snapshot,image_mode,provider_name,is_deepseek,utc_now,crosses_period
@@ -112,15 +112,41 @@ class ConsentGate:
 
 class MissingCredentials(RuntimeError):pass
 class InvalidInterpretation(ValueError):pass
-class ProviderFailure(RuntimeError):pass
+class ProviderFailure(RuntimeError):
+    """Only the safe category, HTTP status and scrubbed detail cross the pipe."""
+    def __init__(self,kind,status=None,detail=''):
+        self.kind,self.status,self.detail=kind,status,detail
+        super().__init__(kind)
+
+    def display(self):
+        if self.kind=='http':
+            reasons={400:'请求参数错误',401:'密钥无效',402:'余额不足',422:'请求参数错误',429:'请求受限，请稍后再试'}
+            reason=reasons.get(self.status,'服务端错误' if 500<=self.status<600 else '服务拒绝请求')
+            return f'AI 请求失败（HTTP {self.status}，{reason}）'+(f'。{self.detail}' if self.detail else '')
+        return {
+            'key_format':'AI 密钥格式异常，长度或字符明显不对',
+            'tls':'AI 证书或 TLS 验证失败',
+            'dns':'AI DNS 解析失败',
+            'network':'AI 网络不可达或连接中断',
+            'response':'AI 服务响应无效或过大',
+        }.get(self.kind,'AI 服务请求失败')
 
 
 def read_key(options):
     key=os.environ.get(options.key_env)
     if not key and sys.platform=='darwin':
-        result=subprocess.run(['security','find-generic-password','-s',options.keychain_service,'-a',options.keychain_account,'-w'],capture_output=True,text=True,timeout=3)
+        try:
+            result=subprocess.run(['security','find-generic-password','-s',options.keychain_service,'-a',options.keychain_account,'-w'],capture_output=True,text=True,timeout=3)
+        except (OSError,subprocess.TimeoutExpired):
+            raise MissingCredentials() from None
         if result.returncode==0:key=result.stdout.strip()
+    return validate_key(key,options)
+
+
+def validate_key(key,options):
     if not key:raise MissingCredentials('未配置AI密钥')
+    if not isinstance(key,str) or not re.fullmatch(r'[!-~]+',key) or (is_deepseek(options) and not 20<=len(key)<=512):
+        raise ProviderFailure('key_format')
     return key
 
 
@@ -132,15 +158,69 @@ def redact(text,key):
     return result
 
 
-def http_transport(prepared,key,deadline,clock=time.monotonic):
-    p=urlsplit(prepared.endpoint);remaining=deadline-clock()
-    if remaining<=0:raise TimeoutError()
-    cls=http.client.HTTPSConnection if p.scheme=='https' else http.client.HTTPConnection
-    conn=cls(p.hostname,p.port,timeout=remaining)
+def _safe_parameter_message(raw,key,body):
     try:
-        conn.request('POST',p.path or '/',body=prepared.body.encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+key})
+        message=json.loads(raw)['error']['message']
+    except (ValueError,TypeError,KeyError):
+        return ''
+    if not isinstance(message,str):return ''
+    # Structured echoes and request dumps are never copied to the report.
+    if re.search(r'authorization|content-type|x-api-key|cookie|bearer|request[ _-]*(body|headers)|data:image|[{}\r\n]|https?://',message,re.I):
+        return '服务端详情含请求内容，已隐藏'
+    message=redact(message,key)
+    message=re.sub(r'(?i)\bsk-[a-z0-9_-]+','[密钥已移除]',message)
+    # Scrub quoted values and report-derived text, including plain echoes of OCR/labels.
+    if body:
+        for item in json.loads(body).get('messages',[]):
+            if item.get('role')!='user':continue
+            blocks=item['content'] if isinstance(item['content'],list) else [{'text':item['content']}]
+            for block in blocks:
+                if 'text' not in block:continue
+                for scene in json.loads(block['text']).get('scenes',[]):
+                    for field,attr in [('regions','label'),('ocr_text','text')]:
+                        for row in scene.get(field,[]):
+                            value=row.get(attr)
+                            if value:message=message.replace(value,'[内容已移除]')
+    message=re.sub(r"([\"'`])[^\"'`]*\1", '[值已移除]',message)
+    return ' '.join(message.split())[:240]
+
+
+def request_json(url,key,deadline,clock=time.monotonic,*,body=None):
+    """Return a JSON response. Retry certificate validation only before sending HTTP."""
+    p=urlsplit(url)
+    cls=http.client.HTTPSConnection if p.scheme=='https' else http.client.HTTPConnection
+    remaining=deadline-clock()
+    if remaining<=0:raise TimeoutError()
+    conn=cls(p.hostname,p.port,timeout=remaining)
+    ca='system'
+    try:
+        try:
+            conn.connect()
+        except ssl.SSLCertVerificationError:
+            conn.close()
+            remaining=deadline-clock()
+            if remaining<=0:raise TimeoutError() from None
+            import certifi
+            try:
+                context=ssl.create_default_context(cafile=certifi.where())
+            except OSError:
+                raise ProviderFailure('tls') from None
+            conn=cls(p.hostname,p.port,timeout=remaining,context=context)
+            ca='certifi'
+            conn.connect()
+        remaining=deadline-clock()
+        if remaining<=0:raise TimeoutError()
+        if conn.sock is not None:conn.sock.settimeout(remaining)
+        headers={'Authorization':'Bearer '+key}
+        if body is not None:headers['Content-Type']='application/json'
+        conn.request('POST' if body is not None else 'GET',p.path or '/',body=body.encode() if body is not None else None,headers=headers)
         response=conn.getresponse()
-        if not 200<=response.status<300:raise RuntimeError('AI服务请求失败（HTTP '+str(response.status)+'），未重试')
+        status=response.status
+        if not 200<=status<300:
+            detail=''
+            if status in (400,422) and p.hostname=='api.deepseek.com':
+                detail=_safe_parameter_message(response.read(8192),key,body)
+            raise ProviderFailure('http',status,detail)
         chunks=[];size=0
         while True:
             remaining=deadline-clock()
@@ -149,37 +229,44 @@ def http_transport(prepared,key,deadline,clock=time.monotonic):
             chunk=response.read1(65536)
             if not chunk:break
             size+=len(chunk)
-            if size>2*1024*1024:raise ValueError('AI响应超出安全大小')
+            if size>2*1024*1024:raise ProviderFailure('response',status)
             chunks.append(chunk)
-        return json.loads(b''.join(chunks))
+        try:return status,json.loads(b''.join(chunks)),ca
+        except ValueError:raise ProviderFailure('response',status) from None
+    except ssl.SSLError:raise ProviderFailure('tls') from None
+    except socket.gaierror:raise ProviderFailure('dns') from None
+    except TimeoutError:raise
+    except (OSError,http.client.HTTPException):raise ProviderFailure('network') from None
     finally:conn.close()
 
 
+def http_transport(prepared,key,deadline,clock=time.monotonic):
+    return request_json(prepared.endpoint,key,deadline,clock,body=prepared.body)[1]
 
-def _http_child(pipe,prepared,key,deadline):
-    try:pipe.send(('ok',http_transport(prepared,key,deadline)))
-    except BaseException:pipe.send(('error',None))
+
+def _http_child(pipe,url,body,key,deadline):
+    try:pipe.send(('ok',request_json(url,key,deadline,body=body)))
+    except TimeoutError:pipe.send(('timeout',None))
+    except ProviderFailure as exc:pipe.send(('error',(exc.kind,exc.status,exc.detail)))
+    except Exception:pipe.send(('error',('unknown',None,'')))
     finally:pipe.close()
 
 
-def bounded_transport(prepared,key,deadline,clock=time.monotonic,*,cancelled=lambda:False):
-    """An isolated request process bounds DNS/TLS/body read as one operation.
-
-    Socket timeouts alone do not bound DNS resolution. The parent terminates
-    this process at the same total deadline, with no retries or late writes.
-    Credentials stay in memory, never in command arguments or disk files.
-    """
+def bounded_request(url,key,deadline,clock=time.monotonic,*,body=None,cancelled=lambda:False):
+    """Bound DNS, TLS and body read within the same total deadline."""
     import multiprocessing
     context=multiprocessing.get_context('spawn');receive,send=context.Pipe(duplex=False)
-    worker=context.Process(target=_http_child,args=(send,prepared,key,deadline),daemon=True)
+    worker=context.Process(target=_http_child,args=(send,url,body,key,deadline),daemon=True)
     try:
         worker.start();send.close()
         while clock()<deadline and not cancelled():
             if receive.poll(min(.05,max(0,deadline-clock()))):
-                kind,value=receive.recv()
-                if kind!='ok':raise ProviderFailure('AI服务请求失败')
+                try:kind,value=receive.recv()
+                except EOFError:raise ProviderFailure('unknown') from None
+                if kind=='timeout':raise TimeoutError()
+                if kind=='error':raise ProviderFailure(*value)
                 return value
-            if not worker.is_alive():raise ProviderFailure('AI服务请求失败')
+            if not worker.is_alive():raise ProviderFailure('unknown')
         raise TimeoutError()
     finally:
         send.close();receive.close()
@@ -187,6 +274,10 @@ def bounded_transport(prepared,key,deadline,clock=time.monotonic,*,cancelled=lam
             if worker.is_alive():worker.terminate()
             worker.join(timeout=.2)
             if worker.is_alive():worker.kill();worker.join(timeout=.2)
+
+
+def bounded_transport(prepared,key,deadline,clock=time.monotonic,*,cancelled=lambda:False):
+    return bounded_request(prepared.endpoint,key,deadline,clock,body=prepared.body,cancelled=cancelled)[1]
 
 
 def parse_response(raw,provider):
@@ -258,7 +349,7 @@ def interpret(artifact,prepared,ticket,gate,*,transport=bounded_transport,key_re
     def failure(reason):
         from .build import write_ai_status
         try:write_ai_status(artifact,reason)
-        except OSError:pass
+        except (OSError,ValueError,KeyError,TypeError):pass
         return dict(ok=False,reason=reason)
     try:
         # Rebuild from the current report/selection/options. UI stale approvals,
@@ -267,7 +358,7 @@ def interpret(artifact,prepared,ticket,gate,*,transport=bounded_transport,key_re
         if current!=prepared:raise PermissionError('报告或设置变化，请重新确认')
         gate.consume(ticket,prepared)
         if cancelled() or clock()>=deadline:raise TimeoutError()
-        key=key_reader(artifact.options)
+        key=validate_key(key_reader(artifact.options),artifact.options)
         if cancelled() or clock()>=deadline:raise TimeoutError()
         submitted=utc_clock()
         if json.dumps(snapshot(artifact.options,submitted),sort_keys=True)!=prepared.prices_json:raise PermissionError('计价时段变化，请重新确认')
@@ -289,7 +380,8 @@ def interpret(artifact,prepared,ticket,gate,*,transport=bounded_transport,key_re
         gate.revoke()
         return failure('未确认或内容已变化；零发送，保留统计报告')
     except TimeoutError:return failure('AI总预算超时（含校验与报告更新），保留统计报告；没有自动重试')
-    except MissingCredentials:return failure('未配置AI密钥（环境变量或macOS钥匙串），保留离线统计报告')
+    except MissingCredentials:return failure('未配置AI密钥（未从环境变量或macOS钥匙串读到），保留离线统计报告')
+    except ProviderFailure as exc:return failure(redact(exc.display(),key)+'。已保留统计报告')
     except InvalidInterpretation:return failure('AI返回格式、中文或证据数字未通过本地校验，保留统计报告；没有自动重试')
     except Exception:
         # Deliberately omit service exception/body: may echo key/headers or data.

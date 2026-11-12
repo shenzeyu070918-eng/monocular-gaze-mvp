@@ -67,7 +67,7 @@ def scene_overview(scenes,options):
     return ''.join(parts)+'</nav>'
 
 
-def render_html(data,*,options=None,ai=None,ai_reason='尚未请求AI解读；统计报告可完全离线使用。',generated_at='',generation_ms=None):
+def render_html(data,*,options=None,ai=None,ai_reason=None,generated_at='',generation_ms=None):
     options=options or ReportSettings();aggregate=data['kind']=='aggregate'
     title='刺激物注意力汇总' if aggregate else '刺激物注意力报告' if data['mode']=='stimulus' else '屏幕注意力报告'
     ordered_scenes=sorted(data['scenes'],key=lambda s:(-s['stats'].get('valid_fixation_s',0),s['id'])) if data['mode']=='screen' else data['scenes']
@@ -126,12 +126,13 @@ def render_html(data,*,options=None,ai=None,ai_reason='尚未请求AI解读；�
         parts.append('</table></div><details><summary>M9状态时长原值</summary><pre>'+esc(str(data['summary'].get('frame_interval_state_s',{})))+'</pre></details>')
     parts.append('<h2>可选 AI 解读</h2>')
     if ai:
+        if ai_reason:parts.append('<p class="note">最近一次AI请求：'+esc(ai_reason)+'</p>')
         parts.append('<p>'+esc(ai['summary'])+'</p>')
         for finding in ai['findings']:parts.append('<h3>'+esc(finding['title'])+'</h3><p>'+esc(finding['text'])+'</p><p class="meta">证据：'+esc('；'.join(finding['evidence_labels']))+'</p>')
         parts.append('<h3>面向设计者的建议</h3><ul>'+''.join('<li>'+esc(r)+'</li>' for r in ai['recommendations'])+'</ul><p>'+esc(ai['limitations'])+'</p>')
         prov=ai['provenance'];usage=prov['usage'];cost=prov['computed_usd']
         parts.append('<p class="meta">模型 '+esc(prov['model'])+' · '+esc(prov['time'])+' · 提示词 '+esc(prov['prompt_version'])+'<br>实际输入 / 输出 token：'+esc(str(usage['input_tokens']) if usage['input_tokens'] is not None else '未知')+' / '+esc(str(usage['output_tokens']) if usage['output_tokens'] is not None else '未知')+' · 费用估算（USD，非账单）：'+('未知' if cost is None else f'${cost:.6f}')+'<br>'+esc(prov['cost_definition'])+'</p><details><summary>发送与价格快照</summary><pre>'+esc(str(prov))+'</pre></details>')
-    else:parts.append('<p>'+esc(ai_reason)+'</p><p class="meta">需要解读时，请回到控制面板点击「AI解读当前报告」，逐次预览并确认。此HTML没有网络连接能力，不含密钥。</p>')
+    else:parts.append('<p>'+esc(ai_reason or '尚未请求AI解读。统计报告可完全离线使用。')+'</p><p class="meta">需要解读时，请回到控制面板点击「AI解读当前报告」，逐次预览并确认。此HTML没有网络连接能力，不含密钥。</p>')
     parts.append('<h2>数据质量与局限</h2><p class="note">'+esc(data['limitation'])+'</p>')
     parts.extend('<p class="note">'+esc(w)+'</p>' for w in data['warnings'])
     parts.append('<footer>会话 '+esc(data['session_id'])+' · 数据版本 '+esc(data['source_version'])+' · 生成 '+esc(generated_at)+'<br>报告文件保存在本机；AI发送状态见上节。移动此HTML即可离线查看。打印 / PDF使用独立样式。'+('本报告为合成数据测试，不是实测成绩。' if data['metadata'].get('synthetic') else '')+('<br>本次HTML构建 '+fmt(generation_ms,' ms')+'（不等于结束至浏览器呈现时间）' if generation_ms is not None else '')+'</footer></main></body></html>')

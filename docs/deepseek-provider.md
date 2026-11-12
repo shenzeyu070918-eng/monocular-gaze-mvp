@@ -84,3 +84,15 @@ DeepSeek的`prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`用于核对缓
 已验证：全部使用模拟provider，覆盖图片请求字段、显式关闭思考、JSON模式、本地证据校验、纯文字无图片、模型不支持图片时自动降级、缓存usage、UTC边界、周末/模拟假日、跨时段估算、时段变化再确认、未确认零请求及密钥不落盘。
 
 未验证：真实DeepSeek请求的延迟、输出质量、真实usage与账单。需用户配置自己的密钥，在确认窗亲自选择数据并确认后才可实测；模拟测试不当作真实30秒或费用验收。
+
+## 检查 AI 服务
+
+在项目根目录运行：
+
+```sh
+.venv/bin/python tools/check_ai_provider.py
+```
+
+诊断沿用当前报告设置和密钥读取方式，只向 DeepSeek 第一方发出两个只读 GET 请求。`/models` 检查配置模型 ID，`/user/balance` 检查 `is_available`。输出各请求的 TLS 和 HTTP 状态、模型是否存在与余额是否可用。诊断不发起生成请求，也不输出密钥或余额明细。 [模型列表](https://api-docs.deepseek.com/api/list-models/) · [余额查询](https://api-docs.deepseek.com/api/get-user-balance/)
+
+系统证书验证失败时，连接在发出 HTTP 请求前改用 certifi 的 CA 包验证，继续检查证书与主机名。DeepSeek 凭据明显过短、过长或含空白及控制字符会在本地提示格式异常。正常格式仍以服务端 HTTP 401 等结果为准。 [DeepSeek 错误码](https://api-docs.deepseek.com/quick_start/error_codes/)

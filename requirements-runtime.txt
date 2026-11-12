@@ -10,3 +10,4 @@ timm==1.0.30
 safetensors==0.8.0
 huggingface-hub==2.1.1
 PyYAML==6.0.3
+certifi==2026.7.22  # AI HTTPS CA fallback after system certificate verification fails.

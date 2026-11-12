@@ -74,5 +74,6 @@ def write_ai_status(artifact,reason):
     """Worker-only fallback: keep any successful previous interpretation intact."""
     if not artifact.directory.is_dir():return
     atomic(artifact.directory/'ai-status.json',json.dumps(dict(reason=reason),ensure_ascii=False).encode())
-    if not (artifact.directory/'ai.json').exists():
-        atomic(artifact.html,render_html(artifact.data,options=artifact.options,ai_reason=reason).encode())
+    previous=artifact.directory/'ai.json'
+    ai=json.loads(previous.read_text(encoding='utf-8')) if previous.exists() else None
+    atomic(artifact.html,render_html(artifact.data,options=artifact.options,ai=ai,ai_reason=reason).encode())

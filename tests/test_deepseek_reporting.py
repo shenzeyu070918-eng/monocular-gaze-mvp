@@ -82,9 +82,12 @@ class DeepSeekTests(unittest.TestCase):
             request = json.loads(prepared.body)
             sent = json.loads(request['messages'][1]['content'])
             value = answer(prepared)
-            value['limitations'] = sent['precision']
+            value['limitations'] = artifact.data['limitation']
             example = json.loads(request['messages'][0]['content'].split('勿照抄结论）: ', 1)[1])
-            self.assertIn('合成标题区', example['findings'][0]['title'])
+            self.assertIn('{{aoi:left}}', example['findings'][0]['title'])
+            self.assertEqual(sent['aoi_labels']['left'],'合成标题区')
+            self.assertIn('const.m9_hard_range',sent['constants'])
+            self.assertNotIn('66.7%–85.3%', request['messages'][0]['content'])
             self.assertIn('{{', example['summary']['text'])
             self.assertNotIn('limitations', example)
             self.assertNotIn('limitations',request['messages'][0]['content'])
@@ -95,15 +98,15 @@ class DeepSeekTests(unittest.TestCase):
             result = interpret(artifact, prepared, gate.approve(prepared), gate, transport=send,
                                key_reader=lambda _: KEY, utc_clock=lambda: NOW)
             self.assertTrue(result['ok'], result)
-            self.assertTrue(result['result']['limitations'].endswith(sent['precision']))
+            self.assertTrue(result['result']['limitations'].endswith(artifact.data['limitation']))
             self.assertFalse((artifact.directory / 'ai-rejected.json').exists())
 
-    def test_rejected_response_explains_reason_and_only_saves_scrubbed_diagnostic(self):
+    def test_invalid_summary_falls_back_and_saves_scrubbed_diagnostic(self):
         with tempfile.TemporaryDirectory() as root:
             artifact = self.artifact(root, ai_text_only=True)
             prepared = prepare(artifact, ['a'], now_utc=NOW)
             value = answer(prepared)
-            value['summary']['text'] += '提高了99%。'
+            value['summary']=dict(value['summary'],text=value['summary']['text']+'提高了99%。'+KEY)
             value['limitations'] += ' ' + KEY
             raw = self.response(prepared)
             raw['choices'][0]['message']['content'] = json.dumps(value, ensure_ascii=False)
@@ -120,14 +123,15 @@ class DeepSeekTests(unittest.TestCase):
             result = interpret(artifact, prepared, gate.approve(prepared), gate, transport=send,
                                key_reader=lambda _: KEY, utc_clock=lambda: NOW)
             send.assert_called_once()
-            self.assertFalse(result['ok'])
-            reason = result['reason']
-            self.assertIn('AI包含无证据数字', reason)
-            self.assertEqual(json.loads((artifact.directory / 'ai-status.json').read_text())['reason'], reason)
-            self.assertIn(reason, (artifact.directory / 'report.html').read_text())
+            self.assertTrue(result['ok'],result)
+            self.assertEqual(result['result']['summary_rejection'],'AI包含无证据数字')
+            html=(artifact.directory/'report.html').read_text()
+            self.assertIn('AI 摘要未通过校验，已替换为统计摘要',html)
+            self.assertNotIn('提高了99%',html)
             diagnostic = json.loads(diagnostic_path.read_text())
             self.assertEqual(set(diagnostic), {'output', 'usage'})
-            self.assertEqual(diagnostic['output']['summary'], value['summary'])
+            self.assertEqual(diagnostic['output'][0]['section'], 'summary')
+            self.assertIn('提高了99%',diagnostic['output'][0]['original']['text'])
             self.assertEqual(diagnostic['usage'], raw['usage'])
             self.assertNotIn(KEY, diagnostic_path.read_text())
             self.assertNotIn('Authorization', diagnostic_path.read_text())

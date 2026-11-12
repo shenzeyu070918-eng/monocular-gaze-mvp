@@ -1,0 +1,237 @@
+{
+  "output": {
+    "summary": {
+      "text": "本场景有效注视为{{scene.000001.valid_s}}；其中「图片：产品示意…」的硬归属停留时长为{{scene.000001.group-5.hard_s}}，软归属停留时长为{{scene.000001.group-5.soft_s}}；「区域 2：产品规格/40…」的硬归属停留时长为{{scene.000001.group-4.hard_s}}。精度参考九点误差核尺度{{calibration.sigma_cm}}，结论仅限块级。",
+      "evidence": [
+        {
+          "metric_id": "scene.000001.valid_s",
+          "value": 8.997,
+          "unit": "s"
+        },
+        {
+          "metric_id": "scene.000001.group-5.hard_s",
+          "value": 5.344,
+          "unit": "s"
+        },
+        {
+          "metric_id": "scene.000001.group-5.soft_s",
+          "value": 5.613,
+          "unit": "s"
+        },
+        {
+          "metric_id": "scene.000001.group-4.hard_s",
+          "value": 2.548,
+          "unit": "s"
+        },
+        {
+          "metric_id": "calibration.sigma_cm",
+          "value": 2.0,
+          "unit": "cm"
+        }
+      ]
+    },
+    "findings": [
+      {
+        "title": "主视觉区块获得主要停留",
+        "text": "「图片：产品示意…」硬归属停留时长为{{scene.000001.group-5.hard_s}}，硬归属占比为{{scene.000001.group-5.hard_fraction}}；首次注视出现在{{scene.000001.group-5.first_fixation_s}}，进入次数为{{scene.000001.group-5.entries}}。",
+        "evidence": [
+          {
+            "metric_id": "scene.000001.group-5.hard_s",
+            "value": 5.344,
+            "unit": "s"
+          },
+          {
+            "metric_id": "scene.000001.group-5.hard_fraction",
+            "value": 0.594004,
+            "unit": "ratio"
+          },
+          {
+            "metric_id": "scene.000001.group-5.first_fixation_s",
+            "value": 0.93,
+            "unit": "s"
+          },
+          {
+            "metric_id": "scene.000001.group-5.entries",
+            "value": 3.0,
+            "unit": "count"
+          }
+        ]
+      },
+      {
+        "title": "下方信息与操作区块停留较少",
+        "text": "「区域 2：产品规格/40…」硬归属停留时长为{{scene.000001.group-4.hard_s}}，硬归属占比为{{scene.000001.group-4.hard_fraction}}；首次注视出现在{{scene.000001.group-4.first_fixation_s}}，进入次数为{{scene.000001.group-4.entries}}。",
+        "evidence": [
+          {
+            "metric_id": "scene.000001.group-4.hard_s",
+            "value": 2.548,
+            "unit": "s"
+          },
+          {
+            "metric_id": "scene.000001.group-4.hard_fraction",
+            "value": 0.283187,
+            "unit": "ratio"
+          },
+          {
+            "metric_id": "scene.000001.group-4.first_fixation_s",
+            "value": 0.286,
+            "unit": "s"
+          },
+          {
+            "metric_id": "scene.000001.group-4.entries",
+            "value": 3.0,
+            "unit": "count"
+          }
+        ]
+      },
+      {
+        "title": "软归属与硬归属差异",
+        "text": "「图片：产品示意…」的软归属停留时长为{{scene.000001.group-5.soft_s}}、软归属占比为{{scene.000001.group-5.soft_fraction}}；「区域 2：产品规格/40…」的软归属停留时长为{{scene.000001.group-4.soft_s}}。硬归属占比区间约66.7%–85.3%，因此结论只做块级判断。",
+        "evidence": [
+          {
+            "metric_id": "scene.000001.group-5.soft_s",
+            "value": 5.613,
+            "unit": "s"
+          },
+          {
+            "metric_id": "scene.000001.group-5.soft_fraction",
+            "value": 0.62392,
+            "unit": "ratio"
+          },
+          {
+            "metric_id": "scene.000001.group-4.soft_s",
+            "value": 2.179,
+            "unit": "s"
+          }
+        ]
+      }
+    ],
+    "recommendations": [
+      {
+        "text": "主视觉区块已获得{{scene.000001.group-5.hard_s}}的硬归属停留，可保留其主导地位，同时微调图像与标题的层次，避免视觉焦点过度集中在耳机图形而忽略文案。",
+        "evidence": [
+          {
+            "metric_id": "scene.000001.group-5.hard_s",
+            "value": 5.344,
+            "unit": "s"
+          }
+        ]
+      },
+      {
+        "text": "「区域 2：产品规格/40…」硬归属停留为{{scene.000001.group-4.hard_s}}，建议强化价格与「立即体验」按钮的视觉入口，例如扩大按钮或提高对比，并做A/B对照测试。",
+        "evidence": [
+          {
+            "metric_id": "scene.000001.group-4.hard_s",
+            "value": 2.548,
+            "unit": "s"
+          }
+        ]
+      },
+      {
+        "text": "下方区块首次注视为{{scene.000001.group-4.first_fixation_s}}，说明它较晚被注意；可在滚动路径上增加指向价格与体验入口的引导，再以对照测试验证是否改善块级停留。",
+        "evidence": [
+          {
+            "metric_id": "scene.000001.group-4.first_fixation_s",
+            "value": 0.286,
+            "unit": "s"
+          }
+        ]
+      }
+    ]
+  },
+  "metrics": {
+    "calibration.sigma_cm": {
+      "value": 2.0,
+      "unit": "cm",
+      "label": "九点误差核尺度 sigma_cm",
+      "decimal_places": 3
+    },
+    "sample.N_total": {
+      "value": 1.0,
+      "unit": "count",
+      "label": "本次单人会话",
+      "decimal_places": 0
+    },
+    "scene.000001.group-4.entries": {
+      "value": 3.0,
+      "unit": "count",
+      "label": "000001 / group-4 / entries",
+      "decimal_places": 0
+    },
+    "scene.000001.group-4.first_fixation_s": {
+      "value": 0.286,
+      "unit": "s",
+      "label": "000001 / group-4 / first_fixation_s",
+      "decimal_places": 3
+    },
+    "scene.000001.group-4.hard_fraction": {
+      "value": 0.283187,
+      "unit": "ratio",
+      "label": "000001 / group-4 / hard_fraction",
+      "decimal_places": 6
+    },
+    "scene.000001.group-4.hard_s": {
+      "value": 2.548,
+      "unit": "s",
+      "label": "000001 / group-4 / hard_s",
+      "decimal_places": 3
+    },
+    "scene.000001.group-4.soft_s": {
+      "value": 2.179,
+      "unit": "s",
+      "label": "000001 / group-4 / soft_s",
+      "decimal_places": 3
+    },
+    "scene.000001.group-5.entries": {
+      "value": 3.0,
+      "unit": "count",
+      "label": "000001 / group-5 / entries",
+      "decimal_places": 0
+    },
+    "scene.000001.group-5.first_fixation_s": {
+      "value": 0.93,
+      "unit": "s",
+      "label": "000001 / group-5 / first_fixation_s",
+      "decimal_places": 3
+    },
+    "scene.000001.group-5.hard_fraction": {
+      "value": 0.594004,
+      "unit": "ratio",
+      "label": "000001 / group-5 / hard_fraction",
+      "decimal_places": 6
+    },
+    "scene.000001.group-5.hard_s": {
+      "value": 5.344,
+      "unit": "s",
+      "label": "000001 / group-5 / hard_s",
+      "decimal_places": 3
+    },
+    "scene.000001.group-5.soft_fraction": {
+      "value": 0.62392,
+      "unit": "ratio",
+      "label": "000001 / group-5 / soft_fraction",
+      "decimal_places": 6
+    },
+    "scene.000001.group-5.soft_s": {
+      "value": 5.613,
+      "unit": "s",
+      "label": "000001 / group-5 / soft_s",
+      "decimal_places": 3
+    },
+    "scene.000001.valid_s": {
+      "value": 8.997,
+      "unit": "s",
+      "label": "000001 有效注视",
+      "decimal_places": 3
+    }
+  },
+  "aois": {
+    "group-5": "图片：产品示意…",
+    "group-4": "区域 2：产品规格/40…"
+  },
+  "allowed_literals": [
+    "区域 1",
+    "区域 2",
+    "AOI 1",
+    "AOI 2"
+  ]
+}

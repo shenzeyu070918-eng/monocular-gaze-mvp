@@ -162,7 +162,8 @@ def save_rejected(artifact, raw, provider, key, *, prepared_body, removed=None):
         except (ValueError, RecursionError):
             pass
     if removed is not None:
-        value = [dict(item, original=value[item['section']][item['index']]) for item in removed]
+        value = [dict(item, original=value.get(item['section']) if item['index'] is None
+                      else value[item['section']][item['index']]) for item in removed]
     forms = {key, json.dumps(key, ensure_ascii=True)[1:-1], json.dumps(key, ensure_ascii=False)[1:-1]} if key else set()
     echoes = _request_echoes(prepared_body)
     structured_echoes = []

@@ -10,7 +10,9 @@ from .labels import region_rows
 from gaze_core.attention.aoi import primary_regions,AOIStatistics,blocks,AOI_ALGORITHM_VERSION
 from gaze_core.attention.manual_aoi import read_template,select_document
 
-LIMITATION='经验精度约1.3–2.5 cm；M9四轮硬归属66.7%–85.3%。只做块级结论，不做逐行逐字结论。未记录到注视不等于未看见或未理解。'
+from .references import PRECISION_RANGE, M9_HARD_RANGE
+
+LIMITATION=f'经验精度约{PRECISION_RANGE}；M9四轮硬归属{M9_HARD_RANGE}。只做块级结论，不做逐行逐字结论。未记录到注视不等于未看见或未理解。'
 
 
 def safe_file(root,name):

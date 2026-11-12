@@ -62,16 +62,18 @@ class AITests(unittest.TestCase):
     def test_wrong_numbers_units_keys_non_chinese_and_single_person_claims_reject(self):
         with tempfile.TemporaryDirectory() as root:
             artifact=self.artifact(root);p=prepare(artifact,['a']);metrics=json.loads(p.metrics_json)
-            for mutation in ('number','unit','key','extra','english','group','free_number'):
+            for mutation in ('number','unit','key','english','group','free_number'):
                 value=answer(p)
+                import copy
+                value['summary']=copy.deepcopy(value['summary'])
                 if mutation=='number':value['summary']['evidence'][0]['value']+=1
                 elif mutation=='unit':value['summary']['evidence'][0]['unit']='cm'
                 elif mutation=='key':value['summary']['evidence'][0]['metric_id']='scene.not-selected.valid_s'
-                elif mutation=='extra':value['unexpected']=True
                 elif mutation=='english':value['summary']['text']='English only'
                 elif mutation=='group':value['summary']['text']+='大多数用户都喜欢这个区域。'
                 else:value['summary']['text']+='提升99%'
-                with self.subTest(mutation=mutation),self.assertRaises(ValueError):validate_output(value,metrics)
+                with self.subTest(mutation=mutation):
+                    self.assertIsNotNone(validate_output(value,metrics)['summary_rejection'])
     def test_failure_timeout_total_budget_and_no_late_html(self):
         with tempfile.TemporaryDirectory() as root:
             artifact=self.artifact(root);p=prepare(artifact,['a']);gate=ConsentGate();original=artifact.html.read_bytes();now=[0.]

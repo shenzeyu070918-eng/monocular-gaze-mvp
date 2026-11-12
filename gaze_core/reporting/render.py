@@ -63,7 +63,22 @@ def _short_references(text):
     return re.sub(r'区域\s*(「[^」]+」)',r'\1',text)
 
 
-def _claim_html(claim,names,legacy=None):
+def _display_references(text,references):
+    def replace(match):
+        key=match[1]
+        if key not in references:
+            return match[0]
+        if key.startswith('aoi:'):
+            return '「'+references[key]+'」'
+        return references[key]
+    # Older responses sometimes wrap references in quotes or add an AOI prefix.
+    text=re.sub(r'(?:区域\s*)?「(\{\{aoi:[^{}]+\}\})」',r'\1',text)
+    text=re.sub(r'区域\s*(\{\{aoi:[^{}]+\}\})',r'\1',text)
+    text=re.sub(r'(\{\{const\.sample_n\}\})\s*名',r'\1',text)
+    return re.sub(r'\{\{((?:aoi:|const\.)[^{}]+)\}\}',replace,_short_references(text))
+
+
+def _claim_html(claim,names,legacy=None,*,references=None):
     # Older ai.json files store evidence as display strings.
     if isinstance(claim,str):
         text,separator,tail=claim.rpartition('（')
@@ -88,7 +103,7 @@ def _claim_html(claim,names,legacy=None):
             return match[0]
         return values[key]+(suffix if suffix and suffix.strip() not in redundant.get(units[key],()) else '')
 
-    body=_DISPLAY_PLACEHOLDER.sub(replace,_short_references(claim['text']))
+    body=_display_references(_DISPLAY_PLACEHOLDER.sub(replace,claim['text']),references or {})
     parts=['<p>'+esc(body)+'</p>']
     if evidence:
         labels=[]
@@ -256,15 +271,18 @@ def render_html(data,*,options=None,ai=None,ai_reason=None,generated_at='',gener
             from .ai import registry
             metrics=registry(data,tuple(scene['id'] for scene in data['scenes']))
             legacy={m['label']:dict(metric_id=key,value=m['value'],unit=m['unit']) for key,m in metrics.items()}
-        parts.append(_claim_html(ai['summary'],evidence_names,legacy))
+        references=ai.get('references',{})
+        if ai.get('summary_rejection'):
+            parts.append('<p class="note">AI 摘要未通过校验，已替换为统计摘要。原因：'+esc(ai['summary_rejection'])+'。</p>')
+        parts.append(_claim_html(ai['summary'],evidence_names,legacy,references=references))
         removed=ai.get('removed',[])
         if removed:
             reasons='、'.join(dict.fromkeys(item['reason'] for item in removed))
             parts.append(f'<p class="note">已移除 {len(removed)} 条未通过本地校验的内容。原因：'+esc(reasons)+'。'+esc(ai.get('diagnostic_error',''))+'</p>')
         for finding in ai['findings']:
-            parts.append('<h3>'+esc(_short_references(finding['title']))+'</h3>'+_claim_html(finding,evidence_names,legacy))
+            parts.append('<h3>'+esc(_display_references(finding['title'],references))+'</h3>'+_claim_html(finding,evidence_names,legacy,references=references))
         if ai['recommendations']:
-            parts.append('<h3>面向设计者的建议</h3><ul>'+''.join('<li>'+_claim_html(r,evidence_names,legacy)+'</li>' for r in ai['recommendations'])+'</ul>')
+            parts.append('<h3>面向设计者的建议</h3><ul>'+''.join('<li>'+_claim_html(r,evidence_names,legacy,references=references)+'</li>' for r in ai['recommendations'])+'</ul>')
         parts.append('<p>'+esc(ai['limitations'])+'</p>')
         prov=ai['provenance'];usage=prov['usage'];cost=prov['computed_usd']
         parts.append('<p class="meta">模型 '+esc(prov['model'])+' · '+esc(prov['time'])+' · 提示词 '+esc(prov['prompt_version'])+'<br>实际输入 / 输出 token：'+esc(str(usage['input_tokens']) if usage['input_tokens'] is not None else '未知')+' / '+esc(str(usage['output_tokens']) if usage['output_tokens'] is not None else '未知')+' · 费用估算（USD，非账单）：'+('未知' if cost is None else f'${cost:.6f}')+'<br>'+esc(prov['cost_definition'])+'</p><details><summary>发送与价格快照</summary><pre>'+esc(str(prov))+'</pre></details>')

@@ -188,7 +188,7 @@ class AttentionUI:
         if self.service.path is None:return
         answer=QMessageBox.question(self.controls.panel,'删除整个注意力会话','删除本会话全部截图、OCR与数值数据？此操作不能撤销。',QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.Cancel,QMessageBox.StandardButton.Cancel)
         if answer==QMessageBox.StandardButton.Yes:
-            if self.reports.future is not None or self.reports.busy_editing:self.notice('报告正在处理中，请完成或退出后再删除会话',True);return
+            if self.reports.busy or self.reports.busy_editing:self.notice('报告正在处理中，请完成或退出后再删除会话',True);return
             self.reports.cancel_editors(self.service.path)
             self.reports.artifact=None;self._close_stimulus();self.service.delete()
 

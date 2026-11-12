@@ -1,6 +1,6 @@
 """Ordinary, interactive controls. No camera access or calibration arithmetic."""
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QToolButton, QPlainTextEdit,QScrollArea
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QToolButton, QPlainTextEdit,QScrollArea,QComboBox
 
 
 class ControlPanel(QWidget):
@@ -22,14 +22,26 @@ class ControlPanel(QWidget):
         self.heatmap_sigma=QLabel('核尺度 sigma：等待相机条件')
         self.heatmap_notice=QLabel(NOTICE)
         self.attention=QLabel('屏幕注意力：关闭 · 只存本机，需九点校准')
-        self.report_status=QLabel('分析报告：完全离线；AI需逐次确认发送')
+        self.report_status=QLabel('请选择会话并生成报告')
+        self.report_status.setWordWrap(True)
+        self.report_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.report_session=QComboBox()
+        self.report_session.setAccessibleName('当前报告会话')
+        self.report_session.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.report_session.setMinimumContentsLength(24)
         self.hotkeys = QLabel('系统热键：等待注册')
         self.notice = QLabel('托盘不可见时请保留此面板。关闭仅隐藏，退出请使用退出按钮或终端 Ctrl+C。')
-        for label in (self.mode, self.radius, self.recording, self.clicks,self.autocal,self.demo_status, self.heatmap,self.heatmap_sigma,self.heatmap_notice,self.attention,self.report_status,self.hotkeys, self.notice):
+        for label in (self.mode, self.radius, self.recording, self.clicks,self.autocal,self.demo_status, self.heatmap,self.heatmap_sigma,self.heatmap_notice,self.attention,self.hotkeys, self.notice):
             label.setWordWrap(True); layout.addWidget(label)
         self.buttons = {}
         for name in ('demo','demo_practice','presentation','calibrate','check','load_web','reset','record','clicks','click_session','abort_click_session','autocal',
                      'heatmap_toggle','heatmap_view','heatmap_clear','heatmap_export','attention_guide','attention_guide_skip','attention_start','attention_stimulus','attention_pause','attention_end','attention_ring','attention_delete','report_generate','report_edit','report_open','report_ai','report_pdf','report_aggregate','toggle','pause','web','quit'):
+            if name=='report_generate':
+                session_label=QLabel('当前会话')
+                session_label.setBuddy(self.report_session)
+                layout.addWidget(session_label)
+                layout.addWidget(self.report_session)
+                layout.addWidget(self.report_status)
             button = QToolButton(self); button.setDefaultAction(actions[name])
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             self.buttons[name] = button; layout.addWidget(button)

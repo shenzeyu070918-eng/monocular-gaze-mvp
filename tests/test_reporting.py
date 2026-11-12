@@ -83,5 +83,12 @@ class ReportTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError,'Chrome'):export_pdf(artifact)
             def runner(args,**kwargs):
                 self.assertTrue(any(arg.startswith('--user-data-dir=') for arg in args));self.assertIn('--disable-background-networking',args)
-                self.assertEqual(args[-1],artifact.html.as_uri());(artifact.directory/'report.pdf').write_bytes(b'%PDF-synthetic');return NS(returncode=0)
-            self.assertTrue(export_pdf(artifact,executable='/fake/chrome',runner=runner).exists());self.assertEqual(artifact.html.read_bytes(),original)
+                self.assertEqual(args[-1],artifact.html.as_uri())
+                target=next(arg.split('=',1)[1] for arg in args if arg.startswith('--print-to-pdf='))
+                Path(target).write_bytes(b'%PDF-synthetic')
+                return NS(returncode=0)
+            pdf=export_pdf(artifact,executable='/fake/chrome',runner=runner)
+            self.assertTrue(pdf.exists());self.assertEqual(artifact.html.read_bytes(),original)
+            with self.assertRaisesRegex(RuntimeError,'未生成PDF'):
+                export_pdf(artifact,executable='/fake/chrome',runner=lambda *a,**kw:NS(returncode=0))
+            self.assertEqual(pdf.read_bytes(),b'%PDF-synthetic')

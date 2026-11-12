@@ -57,9 +57,76 @@ class DeepSeekTests(unittest.TestCase):
     def test_empty_json_truncation_and_inconsistent_usage_rejected(self):
         with tempfile.TemporaryDirectory() as root:
             artifact=self.artifact(root);p=prepare(artifact,['a'],now_utc=NOW)
-            for change in ('blank','length','cache'):
-                raw=self.response(p)
-                if change=='blank':raw['choices'][0]['message']['content']='   '
-                elif change=='length':raw['choices'][0]['finish_reason']='length'
-                else:raw['usage']['prompt_cache_miss_tokens']=901
-                gate=ConsentGate();send=Mock(return_value=raw);result=interpret(artifact,p,gate.approve(p),gate,transport=send,key_reader=lambda _:KEY,utc_clock=lambda:NOW);self.assertFalse(result['ok']);self.assertEqual(send.call_count,1)
+            for change, reason in (
+                ('blank','AI未返回完整解读'),
+                ('json','AI正文不是有效 JSON'),
+                ('length','AI未完整完成输出'),
+                ('cache','DeepSeek缓存usage不一致'),
+            ):
+                with self.subTest(change=change):
+                    raw=self.response(p)
+                    if change=='blank':raw['choices'][0]['message']['content']='   '
+                    elif change=='json':raw['choices'][0]['message']['content']='{"summary":'
+                    elif change=='length':raw['choices'][0]['finish_reason']='length'
+                    else:raw['usage']['prompt_cache_miss_tokens']=901
+                    gate=ConsentGate();send=Mock(return_value=raw)
+                    result=interpret(artifact,p,gate.approve(p),gate,transport=send,key_reader=lambda _:KEY,utc_clock=lambda:NOW)
+                    self.assertFalse(result['ok'])
+                    self.assertIn(reason,result['reason'])
+                    self.assertEqual(send.call_count,1)
+
+    def test_model_repeating_the_sent_precision_passes_local_validation(self):
+        with tempfile.TemporaryDirectory() as root:
+            artifact = self.artifact(root, ai_text_only=True)
+            prepared = prepare(artifact, ['a'], now_utc=NOW)
+            request = json.loads(prepared.body)
+            sent = json.loads(request['messages'][1]['content'])
+            value = answer(prepared)
+            value['limitations'] = sent['precision']
+            example = json.loads(request['messages'][0]['content'].split('勿照抄结论）: ', 1)[1])
+            self.assertIn('合成标题区', example['findings'][0]['title'])
+            self.assertIn('{{', example['summary']['text'])
+            raw = self.response(prepared)
+            raw['choices'][0]['message']['content'] = json.dumps(value, ensure_ascii=False)
+            send = Mock(return_value=raw)
+            gate = ConsentGate()
+            result = interpret(artifact, prepared, gate.approve(prepared), gate, transport=send,
+                               key_reader=lambda _: KEY, utc_clock=lambda: NOW)
+            self.assertTrue(result['ok'], result)
+            self.assertEqual(result['result']['limitations'], sent['precision'])
+            self.assertFalse((artifact.directory / 'ai-rejected.json').exists())
+
+    def test_rejected_response_explains_reason_and_only_saves_scrubbed_diagnostic(self):
+        with tempfile.TemporaryDirectory() as root:
+            artifact = self.artifact(root, ai_text_only=True)
+            prepared = prepare(artifact, ['a'], now_utc=NOW)
+            value = answer(prepared)
+            value['summary']['text'] += '提高了99%。'
+            value['limitations'] += ' ' + KEY
+            raw = self.response(prepared)
+            raw['choices'][0]['message']['content'] = json.dumps(value, ensure_ascii=False)
+            raw['headers'] = {'Authorization': 'Bearer '+KEY}
+            raw['request_body'] = prepared.body
+            send = Mock(return_value=raw)
+            gate = ConsentGate()
+            diagnostic_path = artifact.directory / 'ai-rejected.json'
+            denied = interpret(artifact, prepared, None, gate, transport=send,
+                               key_reader=lambda _: KEY, utc_clock=lambda: NOW)
+            self.assertFalse(denied['ok'])
+            send.assert_not_called()
+            self.assertFalse(diagnostic_path.exists())
+            result = interpret(artifact, prepared, gate.approve(prepared), gate, transport=send,
+                               key_reader=lambda _: KEY, utc_clock=lambda: NOW)
+            send.assert_called_once()
+            self.assertFalse(result['ok'])
+            reason = result['reason']
+            self.assertIn('AI包含无证据数字', reason)
+            self.assertEqual(json.loads((artifact.directory / 'ai-status.json').read_text())['reason'], reason)
+            self.assertIn(reason, (artifact.directory / 'report.html').read_text())
+            diagnostic = json.loads(diagnostic_path.read_text())
+            self.assertEqual(set(diagnostic), {'output', 'usage'})
+            self.assertEqual(diagnostic['output']['summary'], value['summary'])
+            self.assertEqual(diagnostic['usage'], raw['usage'])
+            self.assertNotIn(KEY, diagnostic_path.read_text())
+            self.assertNotIn('Authorization', diagnostic_path.read_text())
+            self.assertNotIn(prepared.body, diagnostic_path.read_text())

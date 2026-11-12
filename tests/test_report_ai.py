@@ -69,7 +69,7 @@ class AITests(unittest.TestCase):
                 elif mutation=='key':value['summary']['evidence'][0]['metric_id']='scene.not-selected.valid_s'
                 elif mutation=='extra':value['unexpected']=True
                 elif mutation=='english':value['limitations']='English only'
-                elif mutation=='group':value['limitations']='大多数用户都喜欢这个区域。'
+                elif mutation=='group':value['summary']['text']+='大多数用户都喜欢这个区域。'
                 else:value['summary']['text']+='提升99%'
                 with self.subTest(mutation=mutation),self.assertRaises(ValueError):validate_output(value,metrics)
     def test_failure_timeout_total_budget_and_no_late_html(self):

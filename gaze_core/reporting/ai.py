@@ -398,16 +398,34 @@ def _metric_text(known):
     return (value.rstrip('0').rstrip('.') if '.' in value else value)+' '+known['unit']
 
 
+_GROUP_WORD = re.compile(r'大多数|多数(?:人|用户|观众|参与者)|普遍|用户们|群体|所有用户|大家都')
+_GROUP_CLAUSE = re.compile(r'[，。；！？、,.;!?\n]|但是|然而|不过|而且|并且|同时|反而|却|但|且')
+_NO_GENERALIZATION = re.compile(
+    r'(?:不能|无法|不应|不可|不足以|不宜|不得)(?:据此|由此|从中|直接|进一步|用来|用于|可靠地|合理地|从(?:本次|此次|这次)(?:单人)?(?:会话|数据|样本))*'
+    r'(?:作出?|得出|推断|推论|推广到?|外推到?|代表|说明|反映|推及|概括|推导出?)'
+    r'|不(?:代表|意味着|等于|说明|反映|足以说明)'
+)
+
+
+def _generalizes(text):
+    for clause in _GROUP_CLAUSE.split(text):
+        negation = _NO_GENERALIZATION.search(clause)
+        for word in _GROUP_WORD.finditer(clause):
+            if negation is None or word.start() < negation.end():
+                return True
+    return False
+
+
 def validate_output(value,metrics,*,allowed_literals=(),fixed_limitation=LIMITATION):
     if not isinstance(value,dict) or set(value)!={'summary','findings','recommendations','limitations'}:
         raise InvalidInterpretation('AI结构不符')
     single=metrics['sample.N_total']['value']==1
     names=_literal_pattern((*allowed_literals,*_fixed_literals(fixed_limitation),'精度约 1.3–2.5 cm','硬归属历史范围 66.7%–85.3%'))
 
-    def text(value,*,placeholders=False):
+    def text(value,*,placeholders=False,check_group=False):
         if not isinstance(value,str) or not 0<len(value)<=6000 or not re.search('[\u4e00-\u9fff]',value):
             raise InvalidInterpretation('AI需输出中文')
-        if single and any(s in value for s in ('大多数','普遍','用户们','群体','所有用户','多数人','大家都')):
+        if single and check_group and _generalizes(value):
             raise InvalidInterpretation('单人数据禁止群体推断')
         if '<' in value or 'http' in value.lower():
             raise InvalidInterpretation('AI禁止HTML与链接')
@@ -433,12 +451,12 @@ def validate_output(value,metrics,*,allowed_literals=(),fixed_limitation=LIMITAT
             if not _evidence_matches(ref,known):
                 raise InvalidInterpretation('AI数字、单位或所选场景与统计不一致')
             allowed.add(key);labels.append(known['label']+' = '+_metric_text(known))
-        t=text(item['text'],placeholders=True)
+        t=text(item['text'],placeholders=True,check_group=True)
         matches=_PLACEHOLDER.findall(t)
         if not matches or not set(matches)<=allowed:
             raise InvalidInterpretation('AI正文未引用给定证据')
         result=dict(text=_PLACEHOLDER.sub(lambda match:_metric_text(metrics[match[1]]),t),evidence_labels=labels)
-        if title:result['title']=text(item['title'])
+        if title:result['title']=text(item['title'],check_group=True)
         return result
     summary=claim(value['summary'])
     if not isinstance(value['findings'],list) or not value['findings'] or not isinstance(value['recommendations'],list) or not value['recommendations']:

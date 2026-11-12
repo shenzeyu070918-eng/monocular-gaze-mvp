@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 import unittest
 
 from gaze_core.reporting.ai import _selected_literals, registry, validate_output
@@ -96,3 +98,44 @@ class ValidationLiteralTests(unittest.TestCase):
             'sample.N_total': 0,
         }
         self.assertEqual({key: metrics[key]['decimal_places'] for key in expected}, expected)
+
+
+class SinglePersonDisclaimerTests(unittest.TestCase):
+    def setUp(self):
+        path = Path(__file__).with_name('fixtures') / 'm10_single_person_disclaimer.json'
+        fixture = json.loads(path.read_text())
+        self.answer = fixture['output']
+        self.metrics = fixture['metrics']
+        self.literals = fixture['allowed_literals']
+
+    def validate(self):
+        return validate_output(self.answer, self.metrics, allowed_literals=self.literals)
+
+    def test_complete_real_reply_with_sanitized_aoi_names(self):
+        result = self.validate()
+        self.assertEqual(len(result['findings']), 3)
+        self.assertEqual(len(result['recommendations']), 2)
+        self.assertIn('不能据此作群体结论', result['limitations'])
+        self.assertIn('8.997 s', result['summary'])
+
+    def test_negated_group_inference_in_claims_is_allowed(self):
+        self.answer['summary']['text'] += '不能据此作群体结论，无法推广到多数用户，也不代表群体偏好。'
+        self.answer['findings'][0]['title'] = '不应从本次会话推断群体偏好'
+        self.validate()
+
+    def test_group_assertions_are_rejected_in_all_claim_sections(self):
+        for claim in (self.answer['summary'], self.answer['findings'][0], self.answer['recommendations'][0]):
+            previous = claim['text']
+            with self.subTest(claim=previous):
+                claim['text'] = '本次多数用户更关注这个区块。' + previous
+                with self.assertRaisesRegex(ValueError, '单人数据禁止群体推断'):
+                    self.validate()
+                claim['text'] = previous
+        self.answer['summary']['text'] += '不能代表群体偏好，但多数用户更关注这个区块。'
+        with self.assertRaisesRegex(ValueError, '单人数据禁止群体推断'):
+            self.validate()
+
+    def test_limitations_still_require_valid_text(self):
+        self.answer['limitations'] += '另有99%未记录。'
+        with self.assertRaisesRegex(ValueError, '无证据数字'):
+            self.validate()

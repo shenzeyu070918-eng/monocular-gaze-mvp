@@ -162,3 +162,18 @@ class AIDisplayTests(unittest.TestCase):
             html=render_html(data,ai=ai)
             self.assertEqual(html.count('合成标题区 · 硬归属停留'),2)
             self.assertNotIn(label,html)
+
+
+    def test_zero_dwell_and_entries_use_no_fixation_only_in_display(self):
+        from gaze_core.reporting.render import _claim_html
+        fields=[('hard_s',0,'s'),('soft_s',0,'s'),('entries',0,'count'),
+                ('hard_fraction',0,'ratio'),('first_fixation_s',0,'s'),('sample.N_valid',0,'count'),
+                ('scene.a.right.hard_s',.01,'s')]
+        keys=[field if '.' in field else 'scene.a.left.'+field for field,_,_ in fields]
+        evidence=[dict(metric_id=key,value=value,unit=unit) for key,(_,value,unit) in zip(keys,fields)]
+        text='；'.join('{{'+key+'}}'+('次' if key.endswith('.entries') else '') for key in keys)
+        html=_claim_html(dict(text=text,evidence=evidence),{})
+        self.assertEqual(html.count('未记录到注视'),6)
+        self.assertNotIn('未记录到注视次',html)
+        self.assertIn('0.0%；0.0 秒；0 名；0.0 秒',html)
+        self.assertEqual([ref['value'] for ref in evidence],[0,0,0,0,0,0,.01])

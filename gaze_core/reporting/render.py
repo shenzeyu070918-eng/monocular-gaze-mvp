@@ -94,7 +94,10 @@ def _claim_html(claim,names,legacy=None,*,references=None):
     evidence={ref['metric_id']:ref for ref in refs}
     units={key:('people' if key.rsplit('.',1)[-1] in ('N_total','N_valid','N_seen') else ref['unit'])
            for key,ref in evidence.items()}
-    values={key:format_measure(ref['value'],units[key]) for key,ref in evidence.items()}
+    no_fixation={key for key,ref in evidence.items() if ref['value']==0 and
+                 key.rsplit('.',1)[-1] in {'hard_s','soft_s','entries'}}
+    values={key:'未记录到注视' if key in no_fixation else format_measure(ref['value'],units[key])
+            for key,ref in evidence.items()}
     redundant={'s':('秒','秒钟'),'count':('次',),'cm':('cm','厘米'),'ratio':('%',),'people':('名',)}
 
     def replace(match):
@@ -110,7 +113,7 @@ def _claim_html(claim,names,legacy=None,*,references=None):
         previous=None
         for key in evidence:
             group,name=names.get(key,('','统计值'))
-            label=(group+' · ' if group and group!=previous else '')+name+' '+values[key]
+            label=(group+' · ' if group and group!=previous else '')+name+('：' if key in no_fixation else ' ')+values[key]
             labels.append(f'<span title="{esc(key)}">{esc(label)}</span>')
             previous=group
         parts.append('<p class="meta">依据：'+'；'.join(labels)+'</p>')

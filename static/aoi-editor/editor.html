@@ -1,0 +1,62 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>编辑关注区域</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f2f7fc;color:#102f50;font:18px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}header{padding:20px 28px;border-bottom:1px solid #b3c6d8;background:#fff}h1{font-size:30px;margin:0}p{margin:8px 0;color:#4e657a}button,input,select{font:inherit;padding:8px 12px}button{cursor:pointer;border:1px solid #9db8cf;background:#fff;border-radius:5px;color:#102f50}button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #d78220}button.primary{background:#215e93;color:white;border:0}button[aria-pressed=true]{background:#d78220;color:#fff}button:disabled{opacity:.45;cursor:default}.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}main{display:grid;grid-template-columns:minmax(0,1fr) 340px;align-items:start;gap:22px;padding:22px}.stage{background:#d6e1ec;display:flex;justify-content:center;overflow:hidden;padding:12px}canvas{display:block;touch-action:none;background:#fff}aside{background:#fff;padding:18px;overflow:auto;max-height:76vh}#regions{list-style:none;padding:0}#regions button{width:100%;text-align:left;margin:4px 0}.chosen{border:2px solid #d78220;background:#fff7e9}label{display:block}#rename{width:100%}.muted{font-size:15px;color:#4e657a}#status{min-height:30px;font-weight:600}#import{display:none}@media(max-width:850px){main{grid-template-columns:1fr}aside{max-height:none}}
+</style></head><body><header><h1>编辑关注区域</h1><p>把区域画在完整的标题、图片、价格或按钮上。细文字区域无需逐字划分。</p><div class="toolbar"><label>场景 <select id="scene"></select></label><button id="draw" aria-pressed="false">新增框</button><button id="download">保存手动 AOI JSON</button><button id="load">导入 JSON</button><button class="primary" id="rebuild">保存并重新生成报告</button><input id="import" type="file" accept=".json,application/json"></div><p id="connection" class="muted"></p><div id="status" role="status" aria-live="polite"></div></header><main><div class="stage"><canvas id="canvas" aria-label="拖框编辑区域"></canvas></div><aside><label>所选区域名称<input id="rename" maxlength="80" placeholder="例如：主图、价格、报名入口"></label><div class="toolbar"><button id="delete">删除所选框</button><button id="clear" title="清空当前场景的全部框">清空全部框</button></div><p id="coverage-hint" class="muted" hidden>先删除或清空自动框再拖动新建</p><p class="muted">拖空白处新建；拖已有框移动；拖四角调整。删除键可删除所选框。</p><label id="share-label"><input type="checkbox" id="share" checked> 按图片 SHA256 复用到同图会话与多人汇总</label><p class="muted">保存后标注为手动区域。JSON不包含图片；所有操作仅在本机。</p><ol id="regions"></ol></aside></main>
+<script id="bootstrap" type="application/json">__BOOTSTRAP__</script>
+<script>__LOGIC__
+const bootstrap=JSON.parse(document.getElementById('bootstrap').textContent),meta=bootstrap.meta;
+let scenes=bootstrap.scenes,current=0,chosen=-1,drawMode=false,gesture=null,image=new Image();
+const $=id=>document.getElementById(id),canvas=$('canvas'),stage=canvas.parentElement,ctx=canvas.getContext('2d'),status=text=>$('status').textContent=text;
+function fitCanvas(){
+ if(!image.naturalWidth)return;
+ const style=getComputedStyle(stage),bounds=stage.getBoundingClientRect();
+ const width=stage.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);
+ const pagePadding=parseFloat(getComputedStyle(stage.parentElement).paddingBottom);
+ const height=window.innerHeight-bounds.top-window.scrollY-parseFloat(style.paddingTop)-parseFloat(style.paddingBottom)-pagePadding;
+ const [w,h]=fitImage(image.naturalWidth,image.naturalHeight,Math.max(1,width),Math.max(1,height));
+ canvas.style.width=w+'px';canvas.style.height=h+'px';
+}
+window.addEventListener('resize',fitCanvas);
+new ResizeObserver(fitCanvas).observe(document.querySelector('header'));
+const row=()=>scenes[current],point=e=>{const b=canvas.getBoundingClientRect();return [clamp((e.clientX-b.left)/b.width),clamp((e.clientY-b.top)/b.height)]};
+function paint(){if(!image.complete||!image.naturalWidth)return;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(image,0,0);row().regions.forEach((r,i)=>{let [a,b,c,d]=r.rect.map((v,j)=>v*(j%2?canvas.height:canvas.width));ctx.strokeStyle=i===chosen?'#d78220':'#215e93';ctx.lineWidth=Math.max(2,canvas.width/400);ctx.fillStyle=i===chosen?'#d7822018':'#215e930a';ctx.fillRect(a,b,c-a,d-b);ctx.strokeRect(a,b,c-a,d-b);ctx.fillStyle='#102f50';ctx.font=`${Math.max(16,canvas.width/55)}px sans-serif`;ctx.fillText(String(i+1),a+5,b+25);if(i===chosen){ctx.fillStyle='#d78220';for(const [x,y] of [[a,b],[c,b],[c,d],[a,d]])ctx.fillRect(x-5,y-5,10,10);}});}
+function list(){const target=$('regions');target.replaceChildren();row().regions.forEach((r,i)=>{const li=document.createElement('li'),button=document.createElement('button');button.textContent=`${i+1} · ${r.name||'未命名区域'}`;button.className=i===chosen?'chosen':'';button.onclick=()=>{chosen=i;list();paint();};li.append(button);target.append(li);});$('rename').value=chosen<0?'':row().regions[chosen].name;$('rename').disabled=chosen<0;$('delete').disabled=chosen<0;$('clear').disabled=!row().regions.length;$('coverage-hint').hidden=drawMode||!automaticFramesFillImage(row().regions);}
+function selectScene(){
+ chosen=-1;gesture=null;
+ const next=new Image();
+ image=next;
+ next.onload=()=>{
+  if(image!==next)return;
+  canvas.width=next.naturalWidth;canvas.height=next.naturalHeight;
+  fitCanvas();paint();list();
+ };
+ next.src=row().image;
+}
+scenes.forEach((s,i)=>{const option=document.createElement('option');option.value=String(i);option.textContent=`场景 ${s.id}`;$('scene').append(option);});$('scene').onchange=e=>{current=Number(e.target.value);selectScene();};
+$('draw').onclick=()=>{drawMode=!drawMode;$('draw').setAttribute('aria-pressed',String(drawMode));list();};
+canvas.onpointerdown=e=>{if(!image.naturalWidth||gesture||e.button!==0)return;const p=point(e);canvas.setPointerCapture(e.pointerId);let mode='draw',startRect=null,corner=-1,index=drawMode?-1:hitRegion(row().regions,p);
+ if(!drawMode&&chosen>=0){const r=row().regions[chosen].rect,corners=[[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]],b=canvas.getBoundingClientRect();corner=corners.findIndex(q=>Math.hypot((p[0]-q[0])*b.width,(p[1]-q[1])*b.height)<12);if(corner>=0){index=chosen;mode='resize';}}
+ if(index>=0){chosen=index;startRect=[...row().regions[index].rect];if(mode!=='resize')mode='move';}
+ else{const id='manual-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7);row().regions.push({id,name:'',rect:[p[0],p[1],p[0],p[1]]});chosen=row().regions.length-1;}
+ gesture={p,startRect,mode,corner};list();paint();};
+canvas.onpointermove=e=>{if(!gesture)return;const p=point(e),g=gesture;row().regions[chosen].rect=g.mode==='move'?moveRect(g.startRect,[p[0]-g.p[0],p[1]-g.p[1]]):g.mode==='resize'?resizeRect(g.startRect,g.corner,p):rectFromPoints(g.p,p);paint();};
+function finish(event){
+ if(!gesture)return;
+ const {mode,startRect}=gesture,r=row().regions[chosen],cancelled=event?.type==='pointercancel';
+ if(cancelled&&mode!=='draw')r.rect=startRect;
+ if((cancelled&&mode==='draw')||!(r.rect[0]<r.rect[2]&&r.rect[1]<r.rect[3])){
+  row().regions.splice(chosen,1);chosen=-1;
+ }
+ gesture=null;list();paint();
+ if(event?.type==='pointerup'&&mode==='draw'&&chosen>=0)$('rename').focus();
+}
+canvas.onpointerup=finish;canvas.onpointercancel=finish;
+$('rename').oninput=e=>{if(chosen>=0){row().regions[chosen].name=e.target.value;const button=$('regions').children[chosen]?.firstChild;if(button)button.textContent=`${chosen+1} · ${e.target.value||'未命名区域'}`;}};
+function remove(){if(chosen>=0){gesture=null;row().regions.splice(chosen,1);chosen=-1;list();paint();}}$('delete').onclick=remove;
+$('clear').onclick=()=>{gesture=null;row().regions=[];chosen=-1;list();paint();status('已清空当前场景的框，可以拖动新建。');};document.addEventListener('keydown',e=>{if((e.key==='Delete'||e.key==='Backspace')&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){e.preventDefault();remove();}});
+$('download').onclick=()=>{try{finish();const value=makeDocument(scenes,meta),blob=new Blob([JSON.stringify(value,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='manual-aoi-'+(meta.stimulus_sha256?.slice(0,12)||meta.session_id)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);status('JSON已保存；不含图片。');}catch(e){status(e.message);}};
+$('load').onclick=()=>$('import').click();$('import').onchange=async e=>{try{if(!e.target.files[0])return;scenes=importDocument(JSON.parse(await e.target.files[0].text()),scenes,meta);selectScene();status('已导入，保存后可重新生成报告。');}catch(e){status(e.message);}};
+$('share-label').hidden=meta.mode!=='stimulus';$('rebuild').disabled=!bootstrap.endpoint;$('connection').textContent=bootstrap.endpoint?'已连接本机项目；重新生成会保留原会话，写入新派生版本。':'独立离线编辑：可保存JSON。从项目控制面板“编辑 AOI”打开，可一键重新生成报告。';
+$('rebuild').onclick=async()=>{try{finish();$('rebuild').disabled=true;status('正在本机保存与重新生成…');const response=await fetch(bootstrap.endpoint+'/save',{method:'POST',headers:{'Content-Type':'application/json','X-AOI-Token':bootstrap.token},body:JSON.stringify({document:makeDocument(scenes,meta),save_template:meta.mode==='stimulus'&&$('share').checked})});const value=await response.json();if(!response.ok)throw Error(value.error||'重新生成失败');status('已生成，正在打开新报告…');location.assign(value.report_url);}catch(e){status(e instanceof TypeError?'本机辅助服务未连接；请从项目重新打开编辑器。当前修改仍可保存为JSON。':e.message);$('rebuild').disabled=false;}};
+selectScene();window.__aoiEditor={getDocument:()=>makeDocument(scenes,meta),getScenes:()=>scenes,selectScene:i=>{current=i;$('scene').value=String(i);selectScene();}};
+</script></body></html>

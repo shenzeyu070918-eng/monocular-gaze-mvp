@@ -9,7 +9,8 @@ from gaze_core.config import ScreenGeometry,FixationSettings,HeatmapSettings
 from gaze_core.heatmap import HeatmapAccumulator
 from gaze_core.heatmap_render import render_heatmap
 from .binding import Timeline,extract_fixations
-from .aoi import blocks,AOIStatistics
+from .aoi import blocks,AOIStatistics,AOI_ALGORITHM_VERSION
+from .manual_aoi import resolve_manual
 from .storage import read_jsonl
 from .ocr import OCRProcess
 
@@ -22,7 +23,7 @@ def process_session(store,options,*,reocr=True,prefix='',ocr_function=None,cance
     scale=metadata['kernel'];matrix=metadata['profile']['matrix'];mode=metadata['mode'];size=tuple(metadata['analysis_size'])
     cached={}
     if (root/'aoi.json').exists():cached=json.loads((root/'aoi.json').read_text(encoding='utf-8')).get('scenes',{})
-    manual=[]
+    manual=None
     if options.manual_aoi:
         from gaze_core.config import ROOT
         manual_path=Path(options.manual_aoi)
@@ -39,10 +40,10 @@ def process_session(store,options,*,reocr=True,prefix='',ocr_function=None,cance
             check();name=scene['scene_id'];path=store.destination(scene['image']);image_bytes=path.read_bytes()
             if hashlib.sha256(image_bytes).hexdigest()!=scene['sha256']:raise ValueError('场景PNG校验和不匹配，拒绝错误绑定：'+name)
             pixels=np.asarray(Image.open(io.BytesIO(image_bytes)).convert('RGB'))
+            # Reuse OCR, regenerate hierarchy even for legacy flat caches.
+            # This is an AOI version change, not a refit/recalibration of gaze.
             if name in cached and not reocr:
                 lines=cached[name].get('ocr_lines',[])
-                selected=(manual.get(name,[]) if isinstance(manual,dict) else manual) or [r for r in cached.get(name,{}).get('regions',[]) if r.get('source')=='manual']
-                regions=blocks(lines,pixels,scale,options,selected) if options.manual_aoi else cached[name]['regions']
             else:
                 began=time.perf_counter_ns();lines=[]
                 try:
@@ -51,9 +52,10 @@ def process_session(store,options,*,reocr=True,prefix='',ocr_function=None,cance
                 except InterruptedError:raise
                 except Exception as exc:warnings.append('场景 '+name+' OCR未完成：'+str(exc))
                 ocr_times.append((time.perf_counter_ns()-began)/1e6);check()
-                selected=(manual.get(name,[]) if isinstance(manual,dict) else manual) or [r for r in cached.get(name,{}).get('regions',[]) if r.get('source')=='manual']
-                regions=blocks(lines,pixels,scale,options,selected)
-            aoi[name]=dict(regions=regions,ocr_lines=lines,coordinate_space='image_normalized' if mode=='stimulus' else 'full_screen_normalized',image_sha256=scene['sha256'])
+            selected,manual_source=resolve_manual(metadata,name,manual,cached.get(name,{}),store.root)
+            regions=blocks(lines,pixels,scale,options,selected)
+            aoi[name]=dict(regions=regions,ocr_lines=lines,algorithm_version=AOI_ALGORITHM_VERSION,aoi_source='manual' if selected is not None else 'auto',manual_source=manual_source,manual_scope=(manual.get('template_scope','session') if isinstance(manual,dict) else 'session') if manual_source=='manual_document' else cached.get(name,{}).get('manual_scope','shared'),
+                           coordinate_space='image_normalized' if mode=='stimulus' else 'full_screen_normalized',image_sha256=scene['sha256'])
             stats[name]=AOIStatistics(regions,scale,options.soft_grid_width,size[0]/size[1])
             maps[name]=HeatmapAccumulator(heat,size,decay=False,start_s=0.)
     finally:
@@ -94,8 +96,8 @@ def process_session(store,options,*,reocr=True,prefix='',ocr_function=None,cance
         store.write_bytes(prefix+f'heatmaps/{name}.csv',('\n'.join(','.join(format(v,'.12g') for v in row) for row in grid)+'\n').encode())
         rgba=render_heatmap(grid,size,max_opacity=heat.max_opacity,alpha_threshold=heat.alpha_threshold,render_scale=heat.render_scale,dither_strength=heat.dither_strength)
         store.write_image(prefix+f'heatmaps/{name}.png',rgba);results[name]=result
-    store.write_json(prefix+'aoi.json',dict(schema_version=1,scenes=aoi))
-    summary=dict(timeline.summary(),synthetic_input=bool(metadata.get('synthetic',False)),scene_count=len(scenes),bound_fixation_parts=bound_count,
+    store.write_json(prefix+'aoi.json',dict(schema_version=2,algorithm_version=AOI_ALGORITHM_VERSION,stimulus_filename=metadata.get('stimulus',{}).get('filename'),filename_source=metadata.get('stimulus',{}).get('filename_source','recorded'),scenes=aoi))
+    summary=dict(timeline.summary(),aoi_algorithm_version=AOI_ALGORITHM_VERSION,synthetic_input=bool(metadata.get('synthetic',False)),scene_count=len(scenes),bound_fixation_parts=bound_count,
                  valid_bound_fixation_s=sum(s['valid_fixation_s'] for s in results.values()),excluded_fixation_s=excluded,
                  frame_interval_state_s=state_durations,ocr_ms=ocr_times,warnings=warnings,
                  interpretation='块级注意力；AOI为候选，不做逐行逐字结论；未归属、背景和屏外概率不丢弃。')

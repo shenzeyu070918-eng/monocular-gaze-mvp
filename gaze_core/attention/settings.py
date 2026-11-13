@@ -45,19 +45,44 @@ class AttentionSettings:
     ocr_timeout_s: float = 120.
     stimulus_max_pixels: int = 32000000
     stimulus_max_mb: int = 64
+    aoi_detection_width: int = 1280
+    aoi_container_min_area: float = .006
+    aoi_container_max_area: float = .85
+    aoi_container_fill: float = .75
+    aoi_border_support: float = .6
+    aoi_border_sides: int = 3
+    aoi_color_rectangular_fill: float = .85
+    aoi_container_iou: float = .85
+    aoi_container_max_aspect: float = 12.
+    aoi_nested_ratio: float = .9
+    aoi_containment: float = .9
+    aoi_wrapper_width: float = .85
+    aoi_wrapper_child_coverage: float = .5
+    aoi_reading_row_tolerance: float = .02
+    aoi_column_width_ratio: float = 1.35
+    aoi_ocr_min_chars: int = 2
+    aoi_ocr_min_area: float = .00004
+    aoi_ocr_min_confidence: float = .25
+    aoi_min_sigma_scale: float = 2.0
+    aoi_max_primary: int = 12
+    aoi_merge_center_weight: float = 1.0
+    aoi_merge_area_weight: float = .25
+    aoi_image_text_fraction: float = .08
+    aoi_image_visual_fraction: float = .5
     aoi_title_height_ratio: float = 1.35
     aoi_button_height_ratio: float = 3.5
 
     def __post_init__(self):
-        for key in ('capture_hz','stable_ms','min_scene_interval_ms','max_unstable_ms','pixel_delta','scroll_max_horizontal_px','aoi_merge_gap_sigma','screenshot_timeout_s','ocr_timeout_s','aoi_title_height_ratio','aoi_button_height_ratio','guide_action_s','guide_stable_s','guide_feedback_s'):
+        for key in ('capture_hz','stable_ms','min_scene_interval_ms','max_unstable_ms','pixel_delta','scroll_max_horizontal_px','aoi_merge_gap_sigma','screenshot_timeout_s','ocr_timeout_s','aoi_title_height_ratio','aoi_button_height_ratio','aoi_container_max_aspect','aoi_min_sigma_scale','aoi_merge_center_weight','aoi_merge_area_weight','aoi_column_width_ratio','guide_action_s','guide_stable_s','guide_feedback_s'):
             v=getattr(self,key)
             if isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) or v<=0:raise ValueError('attention.'+key+' 必须为有限正数')
+        if self.aoi_border_sides>4 or self.aoi_detection_width>4096 or self.aoi_container_min_area>=self.aoi_container_max_area or self.aoi_column_width_ratio<1:raise ValueError('AOI视觉容器/列宽配置无效')
         if self.capture_hz>5:raise ValueError('attention.capture_hz 不得超过5')
         if self.max_unstable_ms<max(self.stable_ms,self.min_scene_interval_ms):raise ValueError('不稳定上限不得小于稳定时间')
-        for key in ('thumbnail_width','tile_px','repeat_samples','repeat_count','max_disk_mb','queue_size','soft_grid_width','scroll_width','aoi_color_bin','aoi_max_colors','aoi_edge_low','aoi_edge_high','aoi_close_px','stimulus_max_pixels','stimulus_max_mb'):
+        for key in ('aoi_max_primary','aoi_border_sides','aoi_detection_width','aoi_ocr_min_chars','thumbnail_width','tile_px','repeat_samples','repeat_count','max_disk_mb','queue_size','soft_grid_width','scroll_width','aoi_color_bin','aoi_max_colors','aoi_edge_low','aoi_edge_high','aoi_close_px','stimulus_max_pixels','stimulus_max_mb'):
             if type(getattr(self,key)) is not int or getattr(self,key)<1:raise ValueError('attention.'+key+' 必须为正整数')
         if self.repeat_count>self.repeat_samples:raise ValueError('repeat_count 不得超过 repeat_samples')
-        for key in ('min_changed_area','max_dynamic_area','max_dynamic_extent','scroll_min_confidence','aoi_visual_min_area','aoi_color_min_area','aoi_color_max_area','aoi_line_overlap'):
+        for key in ('min_changed_area','max_dynamic_area','max_dynamic_extent','scroll_min_confidence','aoi_visual_min_area','aoi_color_min_area','aoi_color_max_area','aoi_line_overlap','aoi_container_min_area','aoi_container_max_area','aoi_container_fill','aoi_border_support','aoi_color_rectangular_fill','aoi_container_iou','aoi_nested_ratio','aoi_containment','aoi_wrapper_width','aoi_wrapper_child_coverage','aoi_image_text_fraction','aoi_image_visual_fraction','aoi_reading_row_tolerance','aoi_ocr_min_area','aoi_ocr_min_confidence'):
             v=getattr(self,key)
             if isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) or not 0<v<1:raise ValueError('attention.'+key+' 必须在(0,1)')
         if not isinstance(self.output_dir,str) or not self.output_dir:raise ValueError('attention.output_dir 必须为路径字符串')

@@ -5,6 +5,7 @@ from pathlib import Path
 from .starfield import StarfieldSettings
 from .galaxy import GalaxySettings
 from .attention.settings import AttentionSettings
+from .reporting.settings import ReportSettings
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / 'config/default.yaml'
@@ -422,6 +423,7 @@ class Settings:
     starfield: StarfieldSettings = StarfieldSettings()
     galaxy: GalaxySettings = GalaxySettings()
     attention: AttentionSettings = AttentionSettings()
+    report: ReportSettings = ReportSettings()
 
 
 def select_device(requested, cuda_available, mps_available=False):
@@ -480,7 +482,7 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
         note(override, str(local))
         sources.append(str(local))
     required = {'inference', 'camera', 'geometry', 'recording', 'jump'}
-    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay', 'click_session', 'heatmap', 'autocal', 'demo', 'starfield', 'galaxy', 'attention'}:
+    if not isinstance(data, dict) or not required <= set(data) or set(data)-required-{'device_file', 'calibration', 'distance_check', 'evaluation', 'filter', 'fixation', 'offline_filter', 'display', 'overlay', 'click_session', 'heatmap', 'autocal', 'demo', 'starfield', 'galaxy', 'attention', 'report'}:
         raise ValueError('配置必须包含 inference、camera、geometry、recording、jump 五部分')
     settings = Settings(InferenceSettings(**data['inference']), CameraSettings(**data['camera']),
                         ScreenGeometry(**data['geometry']), RecordingSettings(**data['recording']), JumpSettings(**data['jump']),
@@ -498,7 +500,8 @@ def load_settings(path=DEFAULT_CONFIG, *, use_local=True):
                        demo=DemoSettings(**data.get('demo', {})),
                        starfield=StarfieldSettings(**data.get('starfield', {})),
                        galaxy=GalaxySettings(**data.get('galaxy', {})),
-                       attention=AttentionSettings(**data.get('attention', {})))
+                       attention=AttentionSettings(**data.get('attention', {})),
+                       report=ReportSettings(**data.get('report', {})))
     attention_path=Path(settings.attention.output_dir)
     if not attention_path.is_absolute():attention_path=ROOT/attention_path
     if not attention_path.resolve().is_relative_to((ROOT/'data/attention').resolve()):raise ValueError('attention.output_dir 只能位于 data/attention/ 下')

@@ -12,7 +12,7 @@
 | --- | --- |
 | `python3.12 setup_mvp.py --overlay` | `py -3.12 setup_mvp.py --overlay` |
 
-首次下载依赖和模型不保证 30 秒完成。[安装与完整用法](docs/使用手册.md) · [Windows 排错](docs/Windows安装说明.md) · [现有 Release](https://github.com/shenzeyu070918-eng/monocular-gaze-mvp/releases)（v1.0.0 已发布，含 M0–M9，不含 M10）。[在线星系预览](https://shenzeyu070918-eng.github.io/monocular-gaze-mvp/galaxy/?preview) · [合成海报报告（非实测）](https://shenzeyu070918-eng.github.io/monocular-gaze-mvp/report.html)。无需摄像头，M10报告仅样式示例。
+首次下载依赖和模型不保证 30 秒完成。[安装与完整用法](docs/使用手册.md) · [Windows 排错](docs/Windows安装说明.md) · [现有 Release](https://github.com/shenzeyu070918-eng/monocular-gaze-mvp/releases)（v1.1.0 对应 M10 分析报告）。[在线星系预览](https://shenzeyu070918-eng.github.io/monocular-gaze-mvp/galaxy/?preview) · [合成海报报告（非实测）](https://shenzeyu070918-eng.github.io/monocular-gaze-mvp/report.html)。无需摄像头，M10报告仅样式示例。
 
 ## 3 分钟验收路径
 
@@ -28,7 +28,7 @@
 | 热力图 | 后台累加、按需查看及本地导出，不表示看了什么内容 |
 | 眼手星系 | 浏览器 WebGL 粒子；预览不访问摄像头，实时链路数值本地传递 |
 | 屏幕注意力记录 | M9 Mac 单用户验收通过；主动记录、AOI、绑定及本地统计 |
-| 分析报告 | M10 [PR #17](https://github.com/shenzeyu070918-eng/monocular-gaze-mvp/pull/17) 暂停、未合并，不属于当前 main 交付功能 |
+| 分析报告 | M10 [PR #17](https://github.com/shenzeyu070918-eng/monocular-gaze-mvp/pull/17) Mac 实机验收通过。使用方法与钥匙串设置见 [M10 使用说明](docs/m10-report.md) |
 
 ## 精度与已知限制
 
@@ -44,7 +44,7 @@
 
 ## 数据与隐私
 
-摄像头/人脸图像不保存、不上传；数值录制、档案和本机配置不进 git。仅主动 M9 会话可在本地保存屏幕场景与 OCR，支持应用排除、暂停和整会话删除；默认不记录窗口标题。点击默认关闭，只监听鼠标按下，不记录键盘。M10 可选 AI 尚未合并，逐次确认例外不等于默认上传。[详细约定](AGENTS.md)。
+摄像头/人脸图像不保存、不上传；数值录制、档案和本机配置不进 git。仅主动 M9 会话可在本地保存屏幕场景与 OCR，支持应用排除、暂停和整会话删除；默认不记录窗口标题。点击默认关闭，只监听鼠标按下，不记录键盘。M10 报告默认离线，可选 AI 每次发送前都需要确认。[详细约定](AGENTS.md)。
 
 ## 致谢与第三方协议
 
